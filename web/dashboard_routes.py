@@ -617,7 +617,7 @@ async function saveGroupModal(){
 async function doSearch(o,allowEmpty){
     var q=document.getElementById('q').value.trim();
     if(!q && !allowEmpty){showToast('Please enter a movie name','error');return;}
-    curQ=q;curOff=o;if(o===0)curPage=1;
+    curQ=q;curOff=o;if(o===0){curPage=1;offHist=[];pageGroups={};}
     if(q){sessionStorage.setItem('ff_dash_q',q);}else{sessionStorage.removeItem('ff_dash_q');}
 
     var myReq=++searchReqId;
@@ -654,7 +654,12 @@ async function doSearch(o,allowEmpty){
         }
         var h='';
         isAdminView=!!d.is_admin;
-        d.results.forEach(function(f){
+        /* Saved group ka poora card ek hi baar: pichhle pages par dikh chuka ho to dobara nahi */
+        var earlier={};
+        offHist.forEach(function(oo){(pageGroups[oo]||[]).forEach(function(k){earlier[k]=1;});});
+        var rows=d.results.filter(function(f){return !(f.group&&f.manual&&earlier[f.key]);});
+        pageGroups[o]=rows.filter(function(f){return f.group&&f.manual;}).map(function(f){return f.key;});
+        rows.forEach(function(f){
             h+=f.group?groupHtml(f):cardHtml(f,false);
         });
         resDiv.className='res-grid mode-'+pMode+(selMode?' sel-mode':'');
@@ -673,7 +678,7 @@ async function doSearch(o,allowEmpty){
     }catch(e){clearTimeout(loadTimer);if(qWrap)qWrap.classList.remove('loading');showToast('Network error','error');}
 }
 
-var offHist=[];
+var offHist=[],pageGroups={};
 function next(){if(nextOff){offHist.push(curOff);curPage++;doSearch(nextOff);scrollTo(0,0);}}
 function prev(){if(curPage>1){curPage--;doSearch(offHist.length?offHist.pop():0);scrollTo(0,0);}}
 
