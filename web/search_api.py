@@ -230,14 +230,14 @@ async def _backfill_duration(col, fid, existing, msg):
 # ─────────────────────────────────────────────────────────
 # 🔄 BACKGROUND PRE-FETCH WORKER (Controlled Warmup Load)
 # ─────────────────────────────────────────────────────────
-async def bg_prefetch_worker(tg_id, q, col, mode, prefetch_offset, lim, group=False):
+async def bg_prefetch_worker(tg_id, q, col, mode, prefetch_offset, lim, group=False, gf="all"):
     try:
-        gflag = "g1" if group else "g0"
+        gflag = ("g1" + gf) if group else "g0"
         cache_key = f"{tg_id}_{q}_{col}_{mode}_{prefetch_offset}_{gflag}"
         if cache_key in PREFETCH_CACHE:
             return
 
-        docs, next_off = await _fetch_page(q, col, prefetch_offset, lim, group)
+        docs, next_off = await _fetch_page(q, col, prefetch_offset, lim, group, gf)
 
         if docs:
             PREFETCH_CACHE[cache_key] = (docs, next_off)
@@ -553,8 +553,10 @@ async def _finalize(results_list, want_group):
 # Pehle 21 *files* aati thi aur grouping ke baad 5-6 card bachte the. Ab group=1 me
 # itni files uthayi jaati hain ki poore `lim` (21) CARDS ban jaayein. Offset hamesha
 # raw-file position hai, isliye pagination me na koi file repeat hoti hai na chhutti hai.
-async def _fetch_page(q, col, off, lim, group):
-    """(docs, next_offset). group=False → purana behaviour (lim raw files)."""
+async def _fetch_page(q, col, off, lim, group, gf="all"):
+    """(docs, next_offset). group=False → purana behaviour (lim raw files).
+    gf: "all" | "group" (sirf 2+ quality wale cards) | "single" (sirf ungrouped files).
+    Filter laga ho to bhi page me `lim` matching cards banane ki koshish hoti hai."""
     async def raw_fetch(o, n):
         if not q:
             return await get_recent_files(n, offset=o, collection_type=col)
@@ -566,8 +568,13 @@ async def _fetch_page(q, col, off, lim, group):
         return await raw_fetch(off, lim)
 
     batch = lim * 4
+    hops_max = 4 if gf == "all" else 12
     raw, cur, more, manual = [], off, True, {}
-    for _hop in range(4):
+
+    def kof(d):
+        return _bucket_key(d.get("_id"), d.get("file_name"), manual)
+
+    for _hop in range(hops_max):
         docs, nxt = await raw_fetch(cur, batch)
         if not docs:
             more = False
@@ -577,19 +584,59 @@ async def _fetch_page(q, col, off, lim, group):
         more = bool(nxt)
         cur = nxt if nxt != "" else None
 
+        cnt = {}
+        for d in raw:
+            k = kof(d)
+            cnt[k] = cnt.get(k, 0) + 1
+
+        def ok(k):
+            if gf == "group":
+                return cnt[k] >= 2
+            if gf == "single":
+                return cnt[k] == 1
+            return True
+
         keys, cut = set(), None
         for i, d in enumerate(raw):
-            k = _bucket_key(d.get("_id"), d.get("file_name"), manual)
+            k = kof(d)
+            if not ok(k):
+                continue
             if k not in keys:
                 if len(keys) >= lim:
                     cut = i
                     break
                 keys.add(k)
         if cut is not None:
-            return raw[:cut], off + cut
+            return [d for d in raw[:cut] if ok(kof(d))], off + cut
         if not more:
             break
-    return raw, (off + len(raw) if more else "")
+
+    cnt = {}
+    for d in raw:
+        k = kof(d)
+        cnt[k] = cnt.get(k, 0) + 1
+    if gf == "group":
+        raw = [d for d in raw if cnt[kof(d)] >= 2]
+    elif gf == "single":
+        raw = [d for d in raw if cnt[kof(d)] == 1]
+    return raw, (off + _scanned(cnt) if more else "")
+
+
+def _scanned(cnt):
+    """Ab tak scan hui raw files ki ginti (filter se pehle ki)."""
+    return sum(cnt.values())
+
+
+async def _finalize(results_list, want_group, gf="all"):
+    if not want_group:
+        return results_list
+    manual = await _manual_map([(r.get("file_id"), r.get("name")) for r in results_list])
+    out = group_results(results_list, manual)
+    if gf == "group":
+        out = [r for r in out if r.get("group")]
+    elif gf == "single":
+        out = [r for r in out if not r.get("group")]
+    return out
 
 
 @search_routes.get("/api/search")
@@ -603,7 +650,9 @@ async def api_search(req):
     col = req.query.get("col", "all").lower()
     mode = req.query.get("mode", DEFAULT_MEDIA_MODE).lower()
     want_group = req.query.get("group", "") == "1"     # dashboard hi bhejta hai; baaki users raw list
-    gflag = "g1" if want_group else "g0"
+    gf = req.query.get("gf", "all").lower()
+    gf = {"ungroup": "single", "single": "single", "group": "group"}.get(gf, "all") if want_group else "all"
+    gflag = ("g1" + gf) if want_group else "g0"
 
     try:
         off = max(0, int(off))
@@ -614,11 +663,11 @@ async def api_search(req):
 
     # 🆕 कोई query नहीं दी गई — सबसे नई अपलोड की गई फाइलें (Recently Added)
     if not q:
-        recent_docs, recent_next_offset = await _fetch_page("", col, off, lim, want_group)
+        recent_docs, recent_next_offset = await _fetch_page("", col, off, lim, want_group, gf)
         results_list = _build_results_list(recent_docs, mode)
         has_more = bool(recent_next_offset)
         return web.json_response({
-            "results": await _finalize(results_list, want_group),
+            "results": await _finalize(results_list, want_group, gf),
             "total": off + len(results_list) + (1 if has_more else 0),
             "next_offset": recent_next_offset,
             "is_admin": role == "admin",
@@ -632,10 +681,10 @@ async def api_search(req):
             cached = TRENDING_CACHE[trend_key]
 
             if cached["next_offset"]:
-                asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, cached["next_offset"], lim, want_group))
+                asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, cached["next_offset"], lim, want_group, gf))
 
             return web.json_response({
-                "results": await _finalize(cached["results"], want_group),
+                "results": await _finalize(cached["results"], want_group, gf),
                 "total": off + len(cached["results"]) + (1 if cached["next_offset"] else 0),
                 "next_offset": cached["next_offset"],
                 "is_admin": role == "admin"
@@ -650,12 +699,12 @@ async def api_search(req):
         del PREFETCH_CACHE[current_cache_key]
 
     if not all_m:
-        all_m, next_offset = await _fetch_page(q, col, off, lim, want_group)
+        all_m, next_offset = await _fetch_page(q, col, off, lim, want_group, gf)
 
     has_more = bool(next_offset)
 
     if has_more:
-        asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, next_offset, lim, want_group))
+        asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, next_offset, lim, want_group, gf))
 
     results_list = _build_results_list(all_m, mode)
 
@@ -667,7 +716,7 @@ async def api_search(req):
         }
 
     return web.json_response({
-        "results": await _finalize(results_list, want_group),
+        "results": await _finalize(results_list, want_group, gf),
         "total": off + len(results_list) + (1 if has_more else 0),
         "next_offset": next_offset,
         "is_admin": role == "admin",
@@ -910,6 +959,7 @@ async def api_group_save(req):
             upd["$pull"] = {"excluded": {"$in": file_ids}}
             await groups.update_one({"_id": gid}, upd)
             num = g.get("num", "")
+            name = g.get("name", "")
         else:
             if not name:
                 return web.json_response({"error": "Group ka naam likhiye!"}, status=400, dumps=fast_json)
@@ -921,7 +971,7 @@ async def api_group_save(req):
                 "thumb_fid": "", "thumb_col": "", "thumb_url": "",
                 "created_at": now, "updated_at": now})
         await _group_cleanup()
-        return web.json_response({"success": True, "group_id": gid, "num": num}, dumps=fast_json)
+        return web.json_response({"success": True, "group_id": gid, "num": num, "group_name": name}, dumps=fast_json)
     except Exception as e:
         logger.error(f"group save error: {e}")
         return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
@@ -1003,6 +1053,40 @@ async def api_group_delete(req):
         await _group_cleanup()
         return web.json_response({"success": True}, dumps=fast_json)
     except Exception as e:
+        return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
+
+
+@search_routes.post("/api/group/merge")
+async def api_group_merge(req):
+    """Source group ki saari files (aur auto-keys) target group (number) me daalo; source hat jaata hai."""
+    data, err = await _admin_json(req)
+    if err:
+        return err
+    try:
+        src_id = str(data.get("source") or "").strip()
+        tgt_id = str(data.get("target") or "").strip().lstrip("#")
+        if not src_id or not tgt_id:
+            return web.json_response({"error": "Group number likhiye!"}, status=400, dumps=fast_json)
+        if src_id == tgt_id:
+            return web.json_response({"error": "Same group me merge nahi ho sakta!"}, status=400, dumps=fast_json)
+        src = await groups.find_one({"_id": src_id})
+        tgt = await groups.find_one({"_id": tgt_id})
+        if not src:
+            return web.json_response({"error": "Source group nahi mila!"}, status=404, dumps=fast_json)
+        if not tgt:
+            return web.json_response({"error": f"Group #{tgt_id} nahi mila!"}, status=404, dumps=fast_json)
+        add = {"members": {"$each": src.get("members", [])}}
+        if src.get("auto_keys"):
+            add["auto_keys"] = {"$each": src["auto_keys"]}
+        if src.get("excluded"):
+            add["excluded"] = {"$each": src["excluded"]}
+        await groups.update_one({"_id": tgt_id}, {"$addToSet": add, "$set": {"updated_at": int(time.time())}})
+        await groups.delete_one({"_id": src_id})
+        thumb_cache.pop(f"g:{src_id}", None)
+        await _group_cleanup()
+        return web.json_response({"success": True, "num": tgt.get("num", ""), "group_name": tgt.get("name", "")}, dumps=fast_json)
+    except Exception as e:
+        logger.error(f"group merge error: {e}")
         return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
 
 
