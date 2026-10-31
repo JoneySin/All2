@@ -297,7 +297,7 @@ function groupHtml(g){
     /* Admin buttons — file card ki tarah click par popup hote hain */
     var adm='';
     if(isAdminView){
-        adm='<button class="btn-edit" onclick="event.stopPropagation();editGroup(\\''+g.key+'\\')">&#9999; '+(g.manual?'Edit Group':'Save as Group')+'</button>'+
+        adm='<button class="btn-edit" onclick="event.stopPropagation();editGroup(\\''+g.key+'\\')">&#9999; '+(g.manual?'Edit Group #'+g.num:'Save as Group')+'</button>'+
             (g.manual?'<button class="btn-del" onclick="event.stopPropagation();ungroup(\\''+g.gid+'\\')">&#128465; Ungroup</button>':'');
     }
     var poster='';
@@ -395,8 +395,18 @@ function openSelectedGroup(){
 }
 function editGroup(key){
     var g=GROUP_DATA[key];if(!g)return;
-    if(g.manual){openGroupModal({mode:'edit',gid:g.gid,name:unesc(g.title),members:g.variants.slice(),thumbFid:g.thumb_fid||''});}
-    else{openGroupModal({mode:'create',name:unesc(g.title),members:g.variants.slice(),fromAuto:true});}
+    if(g.manual){openGroupModal({mode:'edit',gid:g.gid,num:g.num,name:unesc(g.title),members:g.variants.slice(),thumbFid:g.thumb_fid||'',custom:!!g.custom_thumb});}
+    else{saveAutoGroup(key);}
+}
+/* "Save as Group": ek click me DB me save (apna group number milta hai). Baad me is naam ki
+   nayi quality upload hogi to wo bhi apne-aap isi group me judegi. */
+async function saveAutoGroup(key){
+    var g=GROUP_DATA[key];if(!g)return;
+    try{
+        var d=await grpPost('/api/group/save',{items:g.variants.map(function(f){return {id:f.file_id,name:f.name};}),name:unesc(g.title)});
+        showToast('Group #'+d.num+' save ho gaya. Naam/thumbnail badalne ke liye Edit Group dabayein');
+        refreshGridAfterEdit();
+    }catch(e){showToast(e.message,'error');}
 }
 async function ungroup(gid){
     if(!confirm('Group hata dein? Files delete nahi hongi, bas ye group khul jaayega.'))return;
@@ -409,23 +419,26 @@ async function removeFromGroup(gid,fid){
     catch(e){showToast(e.message,'error');}
 }
 
-var GM={};
-function closeGroupModal(){var m=document.getElementById('grpModal');if(m)m.remove();}
+var GM={},gmCropper=null;
+function closeGroupModal(){if(gmCropper){gmCropper.destroy();gmCropper=null;}var m=document.getElementById('grpModal');if(m)m.remove();}
 function gmThumbUrl(f){return '/api/thumb?file_id='+encodeURIComponent(f.file_id)+'&col='+encodeURIComponent(f.raw_collection||'primary');}
 function openGroupModal(o){
-    GM={mode:o.mode,gid:o.gid||'',members:o.members||[],thumbFid:o.thumbFid||'',pick:null};
+    var mode0=o.custom?'custom':(o.thumbFid?'member':'auto');
+    GM={mode:o.mode,gid:o.gid||'',num:o.num||'',members:o.members||[],thumbFid:o.thumbFid||'',thumbMode:mode0,hasCustom:!!o.custom,pick:null,ts:Date.now()};
     closeGroupModal();
     var edit=o.mode==='edit';
     var h='<div class="edit-modal open" id="grpModal" onclick="if(event.target===this)closeGroupModal()"><div class="em-card gm-card">'+
-        '<div style="font-size:17px;font-weight:800;margin-bottom:4px;color:var(--text)">'+(edit?'&#9999; Edit Group':'&#128279; Group banayein')+'</div>'+
+        '<div style="font-size:17px;font-weight:800;margin-bottom:4px;color:var(--text)">'+(edit?'&#9999; Edit Group #'+GM.num:'&#128279; Group banayein')+'</div>'+
         '<div style="font-size:12px;color:var(--muted)">'+GM.members.length+' files</div>';
     h+='<div class="gm-label">GROUP KA NAAM</div><input class="gm-input" id="gmName" value="'+esc(o.name||'')+'" placeholder="Group name">';
     if(!edit){
-        h+='<div class="gm-label">YA PEHLE SE BANE GROUP ME JODEIN</div>'+
-           '<input class="gm-input" id="gmSearch" placeholder="Group ka naam search karein..." oninput="gmSearchGroups(this.value)">'+
+        h+='<div class="gm-label">YA PEHLE SE BANE GROUP ME JODEIN (naam ya number se search)</div>'+
+           '<input class="gm-input" id="gmSearch" placeholder="Group ka naam ya number..." oninput="gmSearchGroups(this.value)">'+
            '<div id="gmGroupList"></div>';
     }
-    h+='<div class="gm-label">MASTER THUMBNAIL</div><div class="gm-thumbs" id="gmThumbs"></div>';
+    h+='<div class="gm-label">MASTER THUMBNAIL</div><div class="gm-thumbs" id="gmThumbs"></div>'+
+       '<input type="file" id="gmFile" accept="image/*" style="display:none" onchange="gmLocalPreview(this)">'+
+       '<div id="gmCropWrap" style="display:none;margin-top:10px"></div>';
     h+='<div class="gm-label">FILES</div><div id="gmMembers"></div>';
     h+='<div class="gm-row"><button class="gm-btn alt" onclick="closeGroupModal()">Cancel</button>'+
        (edit?'<button class="gm-btn" style="background:rgba(160,8,8,.85)" onclick="ungroup(GM.gid);closeGroupModal()">Ungroup</button>':'')+
@@ -436,14 +449,43 @@ function openGroupModal(o){
     if(!edit)gmSearchGroups('');
 }
 function gmRenderThumbs(){
-    var h='<div class="gm-th gm-auto'+(GM.thumbFid?'':' on')+'" onclick="gmPickThumb(\\'\\')">AUTO</div>';
+    var tm=GM.thumbMode;
+    var h='<div class="gm-th gm-auto'+(tm==='auto'?' on':'')+'" onclick="gmPickThumb(\\'auto\\',\\'\\')">AUTO</div>';
+    if(GM.hasCustom){
+        h+='<div class="gm-th'+(tm==='custom'?' on':'')+'" onclick="gmPickThumb(\\'custom\\',\\'\\')"><img src="/api/group/thumb?gid='+encodeURIComponent(GM.gid)+'&v='+GM.ts+'"><em>CUSTOM</em></div>';
+    }
+    h+='<div class="gm-th gm-auto'+(tm==='newupload'?' on':'')+'" onclick="document.getElementById(\\'gmFile\\').click()">&#128206; UPLOAD</div>';
     GM.members.forEach(function(f){
-        h+='<div class="gm-th'+(GM.thumbFid===f.file_id?' on':'')+'" onclick="gmPickThumb(\\''+f.file_id+'\\')">'+
+        h+='<div class="gm-th'+(tm==='member'&&GM.thumbFid===f.file_id?' on':'')+'" onclick="gmPickThumb(\\'member\\',\\''+f.file_id+'\\')">'+
            '<img src="'+gmThumbUrl(f)+'" loading="lazy"><em>'+esc(qlabel(f))+'</em></div>';
     });
     var el=document.getElementById('gmThumbs');if(el)el.innerHTML=h;
 }
-function gmPickThumb(fid){GM.thumbFid=fid;gmRenderThumbs();}
+function gmPickThumb(mode,fid){
+    GM.thumbMode=mode;GM.thumbFid=(mode==='member')?fid:'';
+    if(mode!=='newupload'){
+        if(gmCropper){gmCropper.destroy();gmCropper=null;}
+        var w=document.getElementById('gmCropWrap');if(w){w.style.display='none';w.innerHTML='';}
+        var fi=document.getElementById('gmFile');if(fi)fi.value='';
+    }
+    gmRenderThumbs();
+}
+function gmLocalPreview(input){
+    if(!input.files||!input.files[0])return;
+    var reader=new FileReader();
+    reader.onload=function(e){
+        if(gmCropper){gmCropper.destroy();gmCropper=null;}
+        var w=document.getElementById('gmCropWrap');
+        w.style.display='block';
+        w.innerHTML='<img id="gmCropImg" src="'+e.target.result+'" style="max-width:100%;display:block">';
+        if(typeof Cropper!=='undefined'){
+            gmCropper=new Cropper(document.getElementById('gmCropImg'),{aspectRatio:16/9,viewMode:1,background:false,zoomable:true,movable:true});
+        }
+        GM.thumbMode='newupload';GM.thumbFid='';
+        gmRenderThumbs();
+    };
+    reader.readAsDataURL(input.files[0]);
+}
 function gmRenderMembers(){
     var h='';
     GM.members.forEach(function(f,i){
@@ -454,11 +496,11 @@ function gmRenderMembers(){
 }
 async function gmRemoveMember(i){
     var f=GM.members[i];if(!f)return;
-    if(GM.members.length<=2&&!confirm('Sirf 2 files bachi hain — hatane par group asal me khatam ho jaayega. Aage badhein?'))return;
+    if(GM.members.length<=2&&!confirm('Sirf 2 files bachi hain, hatane par group asal me khatam ho jaayega. Aage badhein?'))return;
     try{
         await grpPost('/api/group/remove_file',{group_id:GM.gid,file_id:f.file_id});
         GM.members.splice(i,1);
-        if(GM.thumbFid===f.file_id)GM.thumbFid='';
+        if(GM.thumbFid===f.file_id){GM.thumbFid='';GM.thumbMode='auto';}
         gmRenderThumbs();gmRenderMembers();
         showToast('Group se hata di');
         if(GM.members.length<2){closeGroupModal();}
@@ -472,7 +514,7 @@ function gmSearchGroups(q){
         try{
             var r=await fetch('/api/group/list?q='+encodeURIComponent(q||'')),d=await r.json(),h='';
             (d.groups||[]).forEach(function(g){
-                h+='<div class="gm-pick'+(GM.pick===g.id?' on':'')+'" onclick="gmPickGroup(\\''+g.id+'\\',this)"><span>'+esc(g.name)+'</span><span>'+g.count+' files</span></div>';
+                h+='<div class="gm-pick'+(GM.pick===g.id?' on':'')+'" onclick="gmPickGroup(\\''+g.id+'\\',this)"><span>#'+g.num+' '+esc(g.name)+'</span><span>'+g.count+' files</span></div>';
             });
             var el=document.getElementById('gmGroupList');if(el)el.innerHTML=h;
         }catch(e){}
@@ -487,20 +529,43 @@ function gmPickGroup(id,el){
 async function saveGroupModal(){
     var btn=document.getElementById('gmSave');
     var name=(document.getElementById('gmName').value||'').trim();
-    if(GM.mode==='create'&&!GM.pick&&!name){showToast('Group ka naam likhiye','error');return;}
-    if(GM.mode==='create'&&!GM.pick&&GM.members.length<2){showToast('Kam se kam 2 files chunein','error');return;}
+    var create=(GM.mode==='create');
+    if(create&&!GM.pick&&!name){showToast('Group ka naam likhiye','error');return;}
+    if(create&&!GM.pick&&GM.members.length<2){showToast('Kam se kam 2 files chunein','error');return;}
     btn.disabled=true;btn.textContent='Saving...';
     try{
-        var gid=GM.gid;
-        if(GM.mode==='create'){
-            var d=await grpPost('/api/group/save',{file_ids:GM.members.map(function(f){return f.file_id;}),group_id:GM.pick||'',name:name});
-            gid=d.group_id;
+        var gid=GM.gid,num=GM.num;
+        if(create){
+            var d=await grpPost('/api/group/save',{items:GM.members.map(function(f){return {id:f.file_id,name:f.name};}),group_id:GM.pick||'',name:name});
+            gid=d.group_id;num=d.num;
         }
-        var upd={group_id:gid,thumb_file_id:GM.thumbFid||'',thumb_col:''};
-        if(GM.thumbFid){var tf=GM.members.filter(function(f){return f.file_id===GM.thumbFid;})[0];upd.thumb_col=(tf&&tf.raw_collection)||'primary';}
-        if(name&&!(GM.mode==='create'&&GM.pick))upd.name=name;
+        var tm=GM.thumbMode;
+        var upd={group_id:gid};
+        if(name&&!(create&&GM.pick))upd.name=name;
+        if(tm==='member'){
+            var tf=GM.members.filter(function(f){return f.file_id===GM.thumbFid;})[0];
+            upd.thumb_file_id=GM.thumbFid;upd.thumb_col=(tf&&tf.raw_collection)||'primary';upd.clear_custom=true;
+        }else if(tm==='auto'){
+            if(!(create&&GM.pick)){upd.thumb_file_id='';upd.clear_custom=true;}
+        }else if(tm==='newupload'){
+            upd.thumb_file_id='';
+        }
         await grpPost('/api/group/update',upd);
-        showToast('Group save ho gaya');
+        if(tm==='newupload'){
+            var fi=document.getElementById('gmFile'),file=fi&&fi.files&&fi.files[0],blob=null;
+            if(gmCropper){
+                var canvas=gmCropper.getCroppedCanvas({width:1280,height:720,imageSmoothingEnabled:true,imageSmoothingQuality:'high'});
+                blob=await new Promise(function(r){canvas.toBlob(r,'image/jpeg',0.9);});
+            }else if(file){blob=file;}
+            if(blob){
+                showToast('Thumbnail upload ho raha hai...');
+                var fd=new FormData();fd.append('group_id',gid);fd.append('image',blob,'group.jpg');
+                var ur=await fetch('/api/group/upload_thumb',{method:'POST',body:fd}),ud={};
+                try{ud=await ur.json();}catch(e){}
+                if(!ur.ok||ud.error){throw new Error(ud.error||'Thumbnail upload failed');}
+            }
+        }
+        showToast('Group #'+num+' save ho gaya');
         closeGroupModal();
         toggleSelMode(false);
         refreshGridAfterEdit();
