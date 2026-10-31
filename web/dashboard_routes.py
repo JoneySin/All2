@@ -68,6 +68,8 @@ CARD_CSS = """
 .cdd-item.selected .cdd-radio{border-color:var(--accent)}
 .cdd-radio-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:none}
 .cdd-item.selected .cdd-radio-dot{display:block}
+.source-pill.mixed{color:#ffd166;border-color:rgba(255,209,102,.55);background:rgba(120,90,0,.4)}
+.source-pill.mixed .source-dot{background:#ffd166}
 /* ── Group filter button (red, small) ── */
 .gf-btn{width:auto!important;min-width:74px;background:var(--accent)!important;border-color:var(--accent)!important;color:#fff!important;padding:8px 26px 8px 14px!important;justify-content:center}
 .gf-wrap{flex:0 0 auto}
@@ -298,9 +300,11 @@ function groupHtml(g){
     (g.chips||[]).forEach(function(c){
         chips+='<span class="grp-chip">'+c.label+(c.count>1?' <i>x'+c.count+'</i>':'')+'</span>';
     });
-    var sc=(g.source||'primary').toLowerCase();
-    if(!['primary','cloud','archive'].includes(sc))sc='primary';
-    var pill='<span class="source-pill '+sc+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>';
+    /* Group ki files alag-alag collection me ho sakti hain: ek hi source ho to wahi tag, warna MIXED */
+    var srcs=(g.sources&&g.sources.length)?g.sources:[(g.source||'primary').toLowerCase()];
+    var sc=srcs.length>1?'mixed':srcs[0];
+    if(!['primary','cloud','archive','mixed'].includes(sc))sc='primary';
+    var pill='<span class="source-pill '+sc+'" title="'+srcs.join(' + ').toUpperCase()+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>';
     var dur=g.duration?'<span class="dur-chip">'+g.duration+'</span>':'';
     var badge='<span class="grp-badge">'+g.count+' QUALITIES</span>';
     var type=String(g.type||'VIDEO').toUpperCase();
