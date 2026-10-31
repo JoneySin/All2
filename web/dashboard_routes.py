@@ -68,27 +68,59 @@ CARD_CSS = """
 .cdd-item.selected .cdd-radio{border-color:var(--accent)}
 .cdd-radio-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:none}
 .cdd-item.selected .cdd-radio-dot{display:block}
-/* ── Quality group card ── */
-.grp-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s,box-shadow .2s}
+/* ── Quality group card (master thumbnail = single file jaisa bada poster) ── */
+.grp-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;position:relative;cursor:pointer;box-shadow:0 4px 10px rgba(0,0,0,.2);transition:border-color .2s,box-shadow .2s}
 .grp-card:hover,.grp-card.open{border-color:var(--accent)}
-.grp-card.open{grid-column:1/-1;box-shadow:0 8px 28px rgba(0,0,0,.45)}
-.grp-head{display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent}
-.grp-poster{width:54px;height:76px;object-fit:cover;border-radius:6px;flex-shrink:0;background:var(--bg3)}
-.grp-main{flex:1;min-width:0}
-.grp-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.grp-type{background:var(--bg3);color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.6px;padding:3px 7px;border-radius:5px;border:1px solid var(--border)}
-.grp-count{background:rgba(229,9,20,.14);color:var(--accent);font-size:9px;font-weight:800;letter-spacing:.5px;padding:3px 8px;border-radius:20px;border:1px solid rgba(229,9,20,.45)}
-.grp-arrow{margin-left:auto;color:var(--muted);font-size:13px;transition:transform .2s}
-.grp-card.open .grp-arrow{transform:rotate(180deg)}
-.grp-title{color:var(--text);font-size:12.5px;font-weight:700;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.grp-card:hover .fc-poster{transform:scale(1.08)}
+.grp-card.open{grid-column:1/-1;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:default}
+.grp-badge{background:rgba(229,9,20,.92);color:#fff;border-radius:5px;padding:3px 8px;font-size:10px;font-weight:800;letter-spacing:.5px;border:1px solid rgba(255,255,255,.18);line-height:1.4;white-space:nowrap}
+.grp-bottom{position:absolute;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;gap:5px;padding:28px 8px 8px;background:linear-gradient(transparent,rgba(0,0,0,.88));z-index:3}
+.grp-chip{background:rgba(0,0,0,.65);backdrop-filter:blur(6px);color:#ffd166;border:1px solid rgba(255,209,102,.38);border-radius:5px;font-size:10px;font-weight:800;padding:2px 8px;line-height:1.5}
+.grp-chip i{font-style:normal;opacity:.75}
+.grp-body{padding:10px 11px 12px}
+.grp-title{color:var(--text);font-size:12.5px;font-weight:600;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .grp-card.open .grp-title{-webkit-line-clamp:unset}
-.grp-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
-.grp-chip{background:var(--bg3);color:#fbbf24;border:1px solid var(--border);border-radius:6px;font-size:10px;font-weight:800;padding:2px 7px}
-.grp-chip i{font-style:normal;opacity:.7}
+.grp-textinfo{display:none;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.res-grid.mode-none .grp-textinfo{display:flex}
+.grp-textinfo .grp-chip{background:var(--bg3)}
+.grp-openhead{display:none;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;cursor:pointer}
+.grp-openhead .grp-title{flex:1;min-width:140px}
+.grp-openhead .grp-chip{background:var(--bg3)}
+.grp-arrow{margin-left:auto;color:var(--muted);font-size:13px;transform:rotate(180deg)}
+.grp-card.open .grp-openhead{display:flex}
+.grp-card.open .poster-box,.grp-card.open .grp-body{display:none}
+.grp-admin{display:flex;gap:5px;padding:0 11px 10px}
 .grp-variants{display:none;border-top:1px solid var(--border)}
 .grp-card.open .grp-variants{display:grid;grid-template-columns:1fr;gap:8px;padding:10px}
 @media(min-width:600px){.grp-card.open .grp-variants{grid-template-columns:repeat(3,1fr)}}
 .grp-variants .file-card:hover{transform:none}
+/* ── Group select mode + modal (admin) ── */
+.sel-mode .file-card{cursor:pointer}
+.sel-mode .file-card::after{content:'';position:absolute;top:8px;right:8px;width:22px;height:22px;border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.55);z-index:7;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:900}
+.file-card.sel{outline:2px solid #22c55e;outline-offset:-2px}
+.sel-mode .file-card.sel::after{content:'✓';background:#22c55e;border-color:#22c55e}
+.sel-bar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:150;background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:9px 12px;display:flex;align-items:center;gap:8px;box-shadow:0 8px 30px rgba(0,0,0,.55);max-width:96vw}
+.sel-bar span{font-size:12px;font-weight:700;color:var(--text);white-space:nowrap}
+.sel-bar button,.gm-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer;color:#fff;background:var(--accent)}
+.sel-bar button.alt,.gm-btn.alt{background:var(--bg4)}
+.sel-fab{position:fixed;right:16px;bottom:18px;z-index:140;background:var(--accent);color:#fff;border:none;border-radius:999px;padding:11px 16px;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(229,9,20,.45)}
+.gm-card{max-width:560px!important}
+.gm-label{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:.5px;margin:14px 0 6px}
+.gm-input{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:11px;border-radius:8px;font-size:13px;font-family:inherit;outline:none}
+.gm-thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}
+.gm-th{position:relative;border:2px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;background:var(--bg3);aspect-ratio:16/9}
+.gm-th img{width:100%;height:100%;object-fit:cover;display:block}
+.gm-th.on{border-color:#22c55e}
+.gm-th em{position:absolute;left:0;right:0;bottom:0;font-style:normal;font-size:10px;font-weight:800;color:#ffd166;background:rgba(0,0,0,.75);padding:2px 5px}
+.gm-auto{display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--muted)}
+.gm-mem{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--text)}
+.gm-mem b{color:#ffd166;font-size:11px;min-width:46px}
+.gm-mem span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gm-mem button{background:rgba(160,8,8,.78);border:none;color:#fff;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:800;cursor:pointer}
+.gm-row{display:flex;gap:8px;margin-top:18px}
+.gm-row .gm-btn{flex:1;padding:12px}
+.gm-pick{padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-top:6px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;display:flex;justify-content:space-between}
+.gm-pick.on{border-color:#22c55e;color:#22c55e}
 </style>
 """
 
@@ -167,6 +199,7 @@ var openGroups={};
 /* 📄 Ek file ka card (pehle doSearch ke andar forEach me tha — bina badle yahan aa gaya).
    nested=true: group ke andar wala variant card (card-enter animation nahi). */
 function cardHtml(f,nested){
+            FILE_DATA[f.file_id]=f;
             var sc=(f.source||'primary').toLowerCase();
             if(!['primary','cloud','archive'].includes(sc))sc='primary';
 
@@ -178,6 +211,7 @@ function cardHtml(f,nested){
                 adminBtns='<div class="poster-admin">'+
                     '<button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\',\\''+encName+'\\', \\''+encCap+'\\')">&#9999; Edit</button>'+
                     '<button class="btn-del" onclick="event.stopPropagation();deleteFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\')">&#128465; Delete</button>'+
+                    '<button class="btn-edit" onclick="event.stopPropagation();quickGroup(\\''+f.file_id+'\\')">&#128279; Group</button>'+(f.gid?'<button class="btn-edit" onclick="event.stopPropagation();removeFromGroup(\\''+f.gid+'\\',\\''+f.file_id+'\\')">&#10006; Remove</button>':'')+
                 '</div>';
             }
 
@@ -217,11 +251,12 @@ function cardHtml(f,nested){
                     textInfo+='<div class="text-admin-row">'+
                         '<button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\',\\''+encName+'\\', \\''+encCap+'\\')">&#9999; Edit</button>'+
                         '<button class="btn-del" onclick="event.stopPropagation();deleteFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\')">&#128465; Delete</button>'+
+                    '<button class="btn-edit" onclick="event.stopPropagation();quickGroup(\\''+f.file_id+'\\')">&#128279; Group</button>'+(f.gid?'<button class="btn-edit" onclick="event.stopPropagation();removeFromGroup(\\''+f.gid+'\\',\\''+f.file_id+'\\')">&#10006; Remove</button>':'')+
                     '</div>';
                 }
             }
 
-            return '<div class="file-card'+(nested?'':' card-enter')+'">'+
+            return '<div class="file-card'+(nested?'':' card-enter')+(SEL[f.file_id]?' sel':'')+'" data-fid="'+f.file_id+'">'+
                 posterHtml+
                 textInfo+
                 '<div class="fc-body">'+
@@ -230,33 +265,51 @@ function cardHtml(f,nested){
             '</div>';
 }
 
-/* 🗂️ Ek title ki alag-alag quality ka group card. Header par title + quality chips;
-   tap par andar har quality ka poora card (naam-click, Edit, Delete sab pehle jaise). */
+var GROUP_DATA={},FILE_DATA={},SEL={},selMode=false;
+function esc(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function unesc(x){var t=document.createElement('textarea');t.innerHTML=String(x||'');return t.value;}
+function qlabel(f){var m=String(f.res||'').match(/(\\d{3,5})\\D+(\\d{3,5})/);if(m){var h=Math.max(+m[2],Math.round(+m[1]*9/16));var L=[[4000,'8K'],[2000,'2160p'],[1300,'1440p'],[1000,'1080p'],[650,'720p'],[450,'480p'],[330,'360p'],[220,'240p']];for(var i=0;i<L.length;i++){if(h>=L[i][0])return L[i][1];}return h+'p';}return f.ql||'?';}
+
+/* 🗂️ Group card: bina-group file jaisa hi bada master thumbnail; thumbnail ke andar
+   upar "N QUALITIES" aur neeche har quality ka chip. Tap par poora group khulta hai. */
 function groupHtml(g){
+    GROUP_DATA[g.key]=g;
+    g.variants.forEach(function(v){FILE_DATA[v.file_id]=v;});
     var open=openGroups[g.key]?' open':'';
     var chips='';
     (g.chips||[]).forEach(function(c){
         chips+='<span class="grp-chip">'+c.label+(c.count>1?' <i>x'+c.count+'</i>':'')+'</span>';
     });
+    var sc=(g.source||'primary').toLowerCase();
+    if(!['primary','cloud','archive'].includes(sc))sc='primary';
+    var pill='<span class="source-pill '+sc+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>';
+    var dur=g.duration?'<span class="dur-chip">'+g.duration+'</span>':'';
+    var badge='<span class="grp-badge">'+g.count+' QUALITIES</span>';
+    var type=String(g.type||'VIDEO').toUpperCase();
     var poster='';
-    if(pMode!=='none' && g.tg_thumb){
-        poster='<img class="grp-poster" src="'+g.tg_thumb+'" loading="lazy" decoding="async" onerror="this.style.display=\\'none\\'">';
+    if(pMode!=='none'){
+        poster='<div class="poster-box">'+
+            (g.tg_thumb?'<img src="'+g.tg_thumb+'" class="fc-poster" onload="this.classList.add(\\'loaded\\')" onerror="this.style.display=\\'none\\'" loading="lazy" decoding="async">':'')+
+            '<div class="poster-top"><span class="type-chip">'+type+'</span>'+badge+dur+pill+'</div>'+
+            '<div class="grp-bottom">'+chips+'</div>'+
+        '</div>';
+    }
+    var textInfo='<div class="grp-textinfo"><span class="tc-type">'+type+'</span>'+badge+dur+chips+pill+'</div>';
+    var admin='';
+    if(isAdminView){
+        admin='<div class="grp-admin">'+
+            '<button class="btn-edit" onclick="event.stopPropagation();editGroup(\\''+g.key+'\\')">&#9999; '+(g.manual?'Edit Group':'Save as Group')+'</button>'+
+            (g.manual?'<button class="btn-del" onclick="event.stopPropagation();ungroup(\\''+g.gid+'\\')">&#128465; Ungroup</button>':'')+
+        '</div>';
     }
     var inner='';
     g.variants.forEach(function(v){inner+=cardHtml(v,true);});
     return '<div class="grp-card card-enter'+open+'" data-gk="'+g.key+'">'+
-        '<div class="grp-head" onclick="toggleGroup(this.parentNode)">'+
-            poster+
-            '<div class="grp-main">'+
-                '<div class="grp-top">'+
-                    '<span class="grp-type">'+String(g.type||'VIDEO')+'</span>'+
-                    '<span class="grp-count">'+g.count+' QUALITIES</span>'+
-                    '<span class="grp-arrow">&#9662;</span>'+
-                '</div>'+
-                '<div class="grp-title">'+g.title+'</div>'+
-                '<div class="grp-chips">'+chips+'</div>'+
-            '</div>'+
+        '<div onclick="toggleGroup(this.parentNode)">'+poster+
+            '<div class="grp-body"><div class="grp-title">'+g.title+'</div>'+textInfo+'</div>'+
         '</div>'+
+        '<div class="grp-openhead" onclick="toggleGroup(this.parentNode)">'+badge+'<div class="grp-title">'+g.title+'</div><span class="grp-chips" style="display:flex;gap:5px;flex-wrap:wrap">'+chips+'</span><span class="grp-arrow">&#9662;</span></div>'+
+        admin+
         '<div class="grp-variants">'+inner+'</div>'+
     '</div>';
 }
@@ -264,6 +317,173 @@ function toggleGroup(el){
     var k=el.getAttribute('data-gk');
     var isOpen=el.classList.toggle('open');
     if(isOpen){openGroups[k]=1;}else{delete openGroups[k];}
+}
+
+/* ───────── 🛠️ ADMIN: group banana / edit / select-mode ───────── */
+async function grpPost(url,body){
+    var r=await fetch(url,{method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'application/json'}});
+    var d={};try{d=await r.json();}catch(e){}
+    if(!r.ok||d.error){throw new Error(d.error||('HTTP '+r.status));}
+    return d;
+}
+function selCount(){return Object.keys(SEL).length;}
+function renderSelBar(){
+    var bar=document.getElementById('selBar'),fab=document.getElementById('selFab');
+    if(!isAdminView){if(bar)bar.remove();if(fab)fab.remove();return;}
+    if(!fab){fab=document.createElement('button');fab.id='selFab';fab.className='sel-fab';fab.onclick=function(){toggleSelMode();};document.body.appendChild(fab);}
+    fab.style.display=selMode?'none':'block';
+    fab.innerHTML='&#9745; Group Mode';
+    if(!selMode){if(bar)bar.remove();return;}
+    if(!bar){bar=document.createElement('div');bar.id='selBar';bar.className='sel-bar';document.body.appendChild(bar);}
+    var n=selCount();
+    bar.innerHTML='<span>'+n+' selected</span>'+
+        '<button onclick="openSelectedGroup()"'+(n?'':' disabled style="opacity:.5"')+'>&#128279; Group</button>'+
+        '<button class="alt" onclick="toggleSelMode()">Cancel</button>';
+}
+function toggleSelMode(on){
+    selMode=(typeof on==='boolean')?on:!selMode;
+    var rd=document.getElementById('results');
+    if(rd)rd.classList.toggle('sel-mode',selMode);
+    if(!selMode){SEL={};document.querySelectorAll('.file-card.sel').forEach(function(c){c.classList.remove('sel');});}
+    renderSelBar();
+}
+function toggleSel(card){
+    var fid=card.getAttribute('data-fid');if(!fid)return;
+    if(SEL[fid]){delete SEL[fid];card.classList.remove('sel');}
+    else{SEL[fid]=FILE_DATA[fid]||{file_id:fid};card.classList.add('sel');}
+    renderSelBar();
+}
+function quickGroup(fid){
+    toggleSelMode(true);
+    var c=document.querySelector('.file-card[data-fid="'+fid+'"]');
+    if(c&&!SEL[fid])toggleSel(c);
+}
+document.addEventListener('click',function(e){
+    if(!selMode)return;
+    var c=e.target.closest&&e.target.closest('.file-card[data-fid]');
+    if(!c)return;
+    e.preventDefault();e.stopPropagation();
+    toggleSel(c);
+},true);
+
+function openSelectedGroup(){
+    var m=Object.keys(SEL).map(function(k){return FILE_DATA[k]||SEL[k];});
+    if(!m.length)return;
+    var nm=unesc(m[0].name||'').replace(/[.](mp4|mkv|avi|mov|webm|m4v|ts)$/i,'').replace(/(^|[^A-Za-z0-9])(240|360|480|540|576|720|1080|1440|2160)[pP]([^A-Za-z0-9]|$)/g,' ').replace(/ +/g,' ').trim();
+    openGroupModal({mode:'create',name:nm,members:m});
+}
+function editGroup(key){
+    var g=GROUP_DATA[key];if(!g)return;
+    if(g.manual){openGroupModal({mode:'edit',gid:g.gid,name:unesc(g.title),members:g.variants.slice(),thumbFid:g.thumb_fid||''});}
+    else{openGroupModal({mode:'create',name:unesc(g.title),members:g.variants.slice(),fromAuto:true});}
+}
+async function ungroup(gid){
+    if(!confirm('Group hata dein? Files delete nahi hongi, bas ye group khul jaayega.'))return;
+    try{await grpPost('/api/group/delete',{group_id:gid});showToast('Group hata diya');refreshGridAfterEdit();}
+    catch(e){showToast(e.message,'error');}
+}
+async function removeFromGroup(gid,fid){
+    if(!confirm('Is file ko group se hata dein?'))return;
+    try{await grpPost('/api/group/remove_file',{group_id:gid,file_id:fid});showToast('Group se hata di');refreshGridAfterEdit();}
+    catch(e){showToast(e.message,'error');}
+}
+
+var GM={};
+function closeGroupModal(){var m=document.getElementById('grpModal');if(m)m.remove();}
+function gmThumbUrl(f){return '/api/thumb?file_id='+encodeURIComponent(f.file_id)+'&col='+encodeURIComponent(f.raw_collection||'primary');}
+function openGroupModal(o){
+    GM={mode:o.mode,gid:o.gid||'',members:o.members||[],thumbFid:o.thumbFid||'',pick:null};
+    closeGroupModal();
+    var edit=o.mode==='edit';
+    var h='<div class="edit-modal open" id="grpModal" onclick="if(event.target===this)closeGroupModal()"><div class="em-card gm-card">'+
+        '<div style="font-size:17px;font-weight:800;margin-bottom:4px;color:var(--text)">'+(edit?'&#9999; Edit Group':'&#128279; Group banayein')+'</div>'+
+        '<div style="font-size:12px;color:var(--muted)">'+GM.members.length+' files</div>';
+    h+='<div class="gm-label">GROUP KA NAAM</div><input class="gm-input" id="gmName" value="'+esc(o.name||'')+'" placeholder="Group name">';
+    if(!edit){
+        h+='<div class="gm-label">YA PEHLE SE BANE GROUP ME JODEIN</div>'+
+           '<input class="gm-input" id="gmSearch" placeholder="Group ka naam search karein..." oninput="gmSearchGroups(this.value)">'+
+           '<div id="gmGroupList"></div>';
+    }
+    h+='<div class="gm-label">MASTER THUMBNAIL</div><div class="gm-thumbs" id="gmThumbs"></div>';
+    h+='<div class="gm-label">FILES</div><div id="gmMembers"></div>';
+    h+='<div class="gm-row"><button class="gm-btn alt" onclick="closeGroupModal()">Cancel</button>'+
+       (edit?'<button class="gm-btn" style="background:rgba(160,8,8,.85)" onclick="ungroup(GM.gid);closeGroupModal()">Ungroup</button>':'')+
+       '<button class="gm-btn" id="gmSave" onclick="saveGroupModal()">Save</button></div>';
+    h+='</div></div>';
+    document.body.insertAdjacentHTML('beforeend',h);
+    gmRenderThumbs();gmRenderMembers();
+    if(!edit)gmSearchGroups('');
+}
+function gmRenderThumbs(){
+    var h='<div class="gm-th gm-auto'+(GM.thumbFid?'':' on')+'" onclick="gmPickThumb(\\'\\')">AUTO</div>';
+    GM.members.forEach(function(f){
+        h+='<div class="gm-th'+(GM.thumbFid===f.file_id?' on':'')+'" onclick="gmPickThumb(\\''+f.file_id+'\\')">'+
+           '<img src="'+gmThumbUrl(f)+'" loading="lazy"><em>'+esc(qlabel(f))+'</em></div>';
+    });
+    var el=document.getElementById('gmThumbs');if(el)el.innerHTML=h;
+}
+function gmPickThumb(fid){GM.thumbFid=fid;gmRenderThumbs();}
+function gmRenderMembers(){
+    var h='';
+    GM.members.forEach(function(f,i){
+        h+='<div class="gm-mem"><b>'+esc(qlabel(f))+'</b><span title="'+esc(unesc(f.name))+'">'+f.name+'</span>'+
+           (GM.mode==='edit'?'<button onclick="gmRemoveMember('+i+')">&#10006;</button>':'')+'</div>';
+    });
+    var el=document.getElementById('gmMembers');if(el)el.innerHTML=h;
+}
+async function gmRemoveMember(i){
+    var f=GM.members[i];if(!f)return;
+    if(GM.members.length<=2&&!confirm('Sirf 2 files bachi hain — hatane par group asal me khatam ho jaayega. Aage badhein?'))return;
+    try{
+        await grpPost('/api/group/remove_file',{group_id:GM.gid,file_id:f.file_id});
+        GM.members.splice(i,1);
+        if(GM.thumbFid===f.file_id)GM.thumbFid='';
+        gmRenderThumbs();gmRenderMembers();
+        showToast('Group se hata di');
+        if(GM.members.length<2){closeGroupModal();}
+        refreshGridAfterEdit();
+    }catch(e){showToast(e.message,'error');}
+}
+var gmSearchTimer;
+function gmSearchGroups(q){
+    clearTimeout(gmSearchTimer);
+    gmSearchTimer=setTimeout(async function(){
+        try{
+            var r=await fetch('/api/group/list?q='+encodeURIComponent(q||'')),d=await r.json(),h='';
+            (d.groups||[]).forEach(function(g){
+                h+='<div class="gm-pick'+(GM.pick===g.id?' on':'')+'" onclick="gmPickGroup(\\''+g.id+'\\',this)"><span>'+esc(g.name)+'</span><span>'+g.count+' files</span></div>';
+            });
+            var el=document.getElementById('gmGroupList');if(el)el.innerHTML=h;
+        }catch(e){}
+    },q?250:0);
+}
+function gmPickGroup(id,el){
+    var same=(GM.pick===id);
+    GM.pick=same?null:id;
+    document.querySelectorAll('#gmGroupList .gm-pick').forEach(function(x){x.classList.remove('on');});
+    if(!same&&el)el.classList.add('on');
+}
+async function saveGroupModal(){
+    var btn=document.getElementById('gmSave');
+    var name=(document.getElementById('gmName').value||'').trim();
+    if(GM.mode==='create'&&!GM.pick&&!name){showToast('Group ka naam likhiye','error');return;}
+    if(GM.mode==='create'&&!GM.pick&&GM.members.length<2){showToast('Kam se kam 2 files chunein','error');return;}
+    btn.disabled=true;btn.textContent='Saving...';
+    try{
+        var gid=GM.gid;
+        if(GM.mode==='create'){
+            var d=await grpPost('/api/group/save',{file_ids:GM.members.map(function(f){return f.file_id;}),group_id:GM.pick||'',name:name});
+            gid=d.group_id;
+        }
+        var upd={group_id:gid,thumb_file_id:GM.thumbFid||'',thumb_col:''};
+        if(GM.thumbFid){var tf=GM.members.filter(function(f){return f.file_id===GM.thumbFid;})[0];upd.thumb_col=(tf&&tf.raw_collection)||'primary';}
+        if(name&&!(GM.mode==='create'&&GM.pick))upd.name=name;
+        await grpPost('/api/group/update',upd);
+        showToast('Group save ho gaya');
+        closeGroupModal();
+        toggleSelMode(false);
+        refreshGridAfterEdit();
+    }catch(e){showToast(e.message,'error');btn.disabled=false;btn.textContent='Save';}
 }
 
 async function doSearch(o,allowEmpty){
@@ -309,8 +529,9 @@ async function doSearch(o,allowEmpty){
         d.results.forEach(function(f){
             h+=f.group?groupHtml(f):cardHtml(f,false);
         });
-        resDiv.className='res-grid mode-'+pMode;
+        resDiv.className='res-grid mode-'+pMode+(selMode?' sel-mode':'');
         resDiv.innerHTML=h;
+        renderSelBar();
         staggerCards(resDiv);
         nextOff=d.next_offset;
         document.getElementById('pageBox').style.display='flex';
@@ -319,7 +540,7 @@ async function doSearch(o,allowEmpty){
         document.getElementById('pgInfo').textContent='Page '+curPage;
 
         if(nextOff) {
-            fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+nextOff+'&col='+curCol+'&mode='+pMode);
+            fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+nextOff+'&col='+curCol+'&mode='+pMode+'&group=1');
         }
     }catch(e){clearTimeout(loadTimer);if(qWrap)qWrap.classList.remove('loading');showToast('Network error','error');}
 }
