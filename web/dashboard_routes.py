@@ -2,6 +2,7 @@ import time
 from aiohttp import web
 from web.web_assets import build_page, get_auth, form_wrapper, MAX_WEB_RESULTS, require_active_plan, DEFAULT_MEDIA_MODE
 from utils import temp
+from database.users_chats_db import web_db
 
 dashboard_routes = web.RouteTableDef()
 
@@ -67,6 +68,27 @@ CARD_CSS = """
 .cdd-item.selected .cdd-radio{border-color:var(--accent)}
 .cdd-radio-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:none}
 .cdd-item.selected .cdd-radio-dot{display:block}
+/* ── Quality group card ── */
+.grp-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s,box-shadow .2s}
+.grp-card:hover,.grp-card.open{border-color:var(--accent)}
+.grp-card.open{grid-column:1/-1;box-shadow:0 8px 28px rgba(0,0,0,.45)}
+.grp-head{display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.grp-poster{width:54px;height:76px;object-fit:cover;border-radius:6px;flex-shrink:0;background:var(--bg3)}
+.grp-main{flex:1;min-width:0}
+.grp-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.grp-type{background:var(--bg3);color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.6px;padding:3px 7px;border-radius:5px;border:1px solid var(--border)}
+.grp-count{background:rgba(229,9,20,.14);color:var(--accent);font-size:9px;font-weight:800;letter-spacing:.5px;padding:3px 8px;border-radius:20px;border:1px solid rgba(229,9,20,.45)}
+.grp-arrow{margin-left:auto;color:var(--muted);font-size:13px;transition:transform .2s}
+.grp-card.open .grp-arrow{transform:rotate(180deg)}
+.grp-title{color:var(--text);font-size:12.5px;font-weight:700;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.grp-card.open .grp-title{-webkit-line-clamp:unset}
+.grp-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.grp-chip{background:var(--bg3);color:#fbbf24;border:1px solid var(--border);border-radius:6px;font-size:10px;font-weight:800;padding:2px 7px}
+.grp-chip i{font-style:normal;opacity:.7}
+.grp-variants{display:none;border-top:1px solid var(--border)}
+.grp-card.open .grp-variants{display:grid;grid-template-columns:1fr;gap:8px;padding:10px}
+@media(min-width:600px){.grp-card.open .grp-variants{grid-template-columns:repeat(3,1fr)}}
+.grp-variants .file-card:hover{transform:none}
 </style>
 """
 
@@ -139,46 +161,12 @@ function changeCol(val){curCol=val;doSearch(0,true);}
 
 function triggerRipple(btn){btn.classList.remove('ripple-go');void btn.offsetWidth;btn.classList.add('ripple-go');setTimeout(function(){btn.classList.remove('ripple-go');},460);}
 
-async function doSearch(o,allowEmpty){
-    var q=document.getElementById('q').value.trim();
-    if(!q && !allowEmpty){showToast('Please enter a movie name','error');return;}
-    curQ=q;curOff=o;if(o===0)curPage=1;
-    if(q){sessionStorage.setItem('ff_dash_q',q);}else{sessionStorage.removeItem('ff_dash_q');}
+var isAdminView=false;
+var openGroups={};
 
-    var myReq=++searchReqId;
-    var resDiv=document.getElementById('results');
-    var qWrap=document.getElementById('qWrap');
-    var loadTimer=setTimeout(function(){
-        if(myReq!==searchReqId)return;
-        if(qWrap)qWrap.classList.add('loading');
-    },150);
-
-    try{
-        var r=await fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+o+'&col='+curCol+'&mode='+pMode);
-        if(myReq!==searchReqId){clearTimeout(loadTimer);if(qWrap)qWrap.classList.remove('loading');return;}
-        clearTimeout(loadTimer);
-        if(qWrap)qWrap.classList.remove('loading');
-        var d=null;
-        try{d=await r.json();}catch(parseErr){d=null;}
-        if(myReq!==searchReqId)return;
-        if(!r.ok || (d && d.error)){
-            var msg=(d && d.error)?d.error:('Error fetching (HTTP '+r.status+')');
-            showToast(msg,'error');
-            if(!allowEmpty || q){
-                resDiv.innerHTML='<div class="empty"><div class="empty-icon">&#9888;</div><p>'+msg+'</p></div>';
-                document.getElementById('pageBox').style.display='none';
-            }
-            return;
-        }
-        document.getElementById('resInfo').style.display='none';
-        if(!d.results||!d.results.length){
-            resDiv.innerHTML = q
-                ? '<div class="empty"><div class="empty-icon">&#9888;</div><p>No titles found for "'+q+'"</p></div>'
-                : '<div class="empty"><div class="empty-icon">&#8981;</div><p>No files added yet.</p></div>';
-            document.getElementById('pageBox').style.display='none';return;
-        }
-        var h='';
-        d.results.forEach(function(f){
+/* 📄 Ek file ka card (pehle doSearch ke andar forEach me tha — bina badle yahan aa gaya).
+   nested=true: group ke andar wala variant card (card-enter animation nahi). */
+function cardHtml(f,nested){
             var sc=(f.source||'primary').toLowerCase();
             if(!['primary','cloud','archive'].includes(sc))sc='primary';
 
@@ -186,7 +174,7 @@ async function doSearch(o,allowEmpty){
             var encCap = encodeURIComponent(f.caption || '').replace(/'/g, "%27").replace(/"/g, "%22");
 
             var adminBtns='';
-            if(d.is_admin){
+            if(isAdminView){
                 adminBtns='<div class="poster-admin">'+
                     '<button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\',\\''+encName+'\\', \\''+encCap+'\\')">&#9999; Edit</button>'+
                     '<button class="btn-del" onclick="event.stopPropagation();deleteFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\')">&#128465; Delete</button>'+
@@ -225,7 +213,7 @@ async function doSearch(o,allowEmpty){
                     durText+resText+
                     '<span class="source-pill '+sc+'" style="margin-left:auto"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+
                 '</div>';
-                if(d.is_admin){
+                if(isAdminView){
                     textInfo+='<div class="text-admin-row">'+
                         '<button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\',\\''+encName+'\\', \\''+encCap+'\\')">&#9999; Edit</button>'+
                         '<button class="btn-del" onclick="event.stopPropagation();deleteFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\')">&#128465; Delete</button>'+
@@ -233,13 +221,93 @@ async function doSearch(o,allowEmpty){
                 }
             }
 
-            h+='<div class="file-card card-enter">'+
+            return '<div class="file-card'+(nested?'':' card-enter')+'">'+
                 posterHtml+
                 textInfo+
                 '<div class="fc-body">'+
                     '<div class="fc-name" id="name-title-'+f.file_id+'" onclick="window.open(\\''+f.watch+'\\',\\'_blank\\')">'+f.name+'</div>'+
                 '</div>'+
             '</div>';
+}
+
+/* 🗂️ Ek title ki alag-alag quality ka group card. Header par title + quality chips;
+   tap par andar har quality ka poora card (naam-click, Edit, Delete sab pehle jaise). */
+function groupHtml(g){
+    var open=openGroups[g.key]?' open':'';
+    var chips='';
+    (g.chips||[]).forEach(function(c){
+        chips+='<span class="grp-chip">'+c.label+(c.count>1?' <i>x'+c.count+'</i>':'')+'</span>';
+    });
+    var poster='';
+    if(pMode!=='none' && g.tg_thumb){
+        poster='<img class="grp-poster" src="'+g.tg_thumb+'" loading="lazy" decoding="async" onerror="this.style.display=\\'none\\'">';
+    }
+    var inner='';
+    g.variants.forEach(function(v){inner+=cardHtml(v,true);});
+    return '<div class="grp-card card-enter'+open+'" data-gk="'+g.key+'">'+
+        '<div class="grp-head" onclick="toggleGroup(this.parentNode)">'+
+            poster+
+            '<div class="grp-main">'+
+                '<div class="grp-top">'+
+                    '<span class="grp-type">'+String(g.type||'VIDEO')+'</span>'+
+                    '<span class="grp-count">'+g.count+' QUALITIES</span>'+
+                    '<span class="grp-arrow">&#9662;</span>'+
+                '</div>'+
+                '<div class="grp-title">'+g.title+'</div>'+
+                '<div class="grp-chips">'+chips+'</div>'+
+            '</div>'+
+        '</div>'+
+        '<div class="grp-variants">'+inner+'</div>'+
+    '</div>';
+}
+function toggleGroup(el){
+    var k=el.getAttribute('data-gk');
+    var isOpen=el.classList.toggle('open');
+    if(isOpen){openGroups[k]=1;}else{delete openGroups[k];}
+}
+
+async function doSearch(o,allowEmpty){
+    var q=document.getElementById('q').value.trim();
+    if(!q && !allowEmpty){showToast('Please enter a movie name','error');return;}
+    curQ=q;curOff=o;if(o===0)curPage=1;
+    if(q){sessionStorage.setItem('ff_dash_q',q);}else{sessionStorage.removeItem('ff_dash_q');}
+
+    var myReq=++searchReqId;
+    var resDiv=document.getElementById('results');
+    var qWrap=document.getElementById('qWrap');
+    var loadTimer=setTimeout(function(){
+        if(myReq!==searchReqId)return;
+        if(qWrap)qWrap.classList.add('loading');
+    },150);
+
+    try{
+        var r=await fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+o+'&col='+curCol+'&mode='+pMode+'&group=1');
+        if(myReq!==searchReqId){clearTimeout(loadTimer);if(qWrap)qWrap.classList.remove('loading');return;}
+        clearTimeout(loadTimer);
+        if(qWrap)qWrap.classList.remove('loading');
+        var d=null;
+        try{d=await r.json();}catch(parseErr){d=null;}
+        if(myReq!==searchReqId)return;
+        if(!r.ok || (d && d.error)){
+            var msg=(d && d.error)?d.error:('Error fetching (HTTP '+r.status+')');
+            showToast(msg,'error');
+            if(!allowEmpty || q){
+                resDiv.innerHTML='<div class="empty"><div class="empty-icon">&#9888;</div><p>'+msg+'</p></div>';
+                document.getElementById('pageBox').style.display='none';
+            }
+            return;
+        }
+        document.getElementById('resInfo').style.display='none';
+        if(!d.results||!d.results.length){
+            resDiv.innerHTML = q
+                ? '<div class="empty"><div class="empty-icon">&#9888;</div><p>No titles found for "'+q+'"</p></div>'
+                : '<div class="empty"><div class="empty-icon">&#8981;</div><p>No files added yet.</p></div>';
+            document.getElementById('pageBox').style.display='none';return;
+        }
+        var h='';
+        isAdminView=!!d.is_admin;
+        d.results.forEach(function(f){
+            h+=f.group?groupHtml(f):cardHtml(f,false);
         });
         resDiv.className='res-grid mode-'+pMode;
         resDiv.innerHTML=h;
@@ -368,8 +436,10 @@ async def dash(req):
 async def logout(req):
     s_user = req.cookies.get('user_session')
     temp.USER_SESSIONS.pop(s_user, None)
+    if s_user:
+        await web_db.delete_session(s_user)
     res = web.HTTPFound('/login')
-    res.del_cookie('user_session')
+    res.del_cookie('user_session', path='/')
     return res
 
 
