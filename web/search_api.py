@@ -21,7 +21,7 @@ from utils import temp, get_size, is_premium, get_duration_str
 # ✅ SYNC: THUMBNAIL_STORAGE_CHANNEL को इम्पोर्ट किया गया है पृथक स्टोरेज के लिए
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
-from database.ia_filterdb import COLLECTIONS, groups, group_seq, get_files_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
+from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, get_files_by_ids, find_phrase_files, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
 from media_probe import probe_telegram_file, should_probe_media
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
@@ -415,7 +415,7 @@ def _quality_label(res_text, name=""):
 # Naam alag hone par jo files auto-group nahi hoti, admin unhe khud ek group me jod sakta hai.
 # Ye DB (Groups collection) me save rehta hai, isliye baar-baar grouping nahi karni padti.
 # Manual membership hamesha auto-grouping se upar chalti hai.
-async def _manual_map(items):
+async def _manual_map(items, joins=None):
     """items = [(file_id, file_name)] → {file_id: group_doc}.
     Match: (1) group ke members me file_id, ya (2) naam ki auto-key group ki auto_keys me
     (isse baad me upload hui nayi quality bhi apne-aap isi group me aa jaati hai).
@@ -444,6 +444,8 @@ async def _manual_map(items):
             g = by_key.get(_group_key(n))
             if g and i not in (g.get("excluded") or []):
                 out[i] = g
+                if joins is not None:           # nayi file, same naam-key: group me turant joddni hai
+                    joins.append((str(g["_id"]), i, n))
     except Exception as e:
         logger.warning(f"manual group lookup failed: {e}")
     return out
@@ -624,11 +626,76 @@ async def _fetch_page(q, col, off, lim, group, gf="all"):
     return raw, (off + scanned if more else "")
 
 
-async def _expand_groups(results_list, manual, mode):
-    """Search me kisi group ki koi bhi file aayi to us group ki BAAKI saari files bhi saath aati hain
-    (chahe primary/cloud/archive me kahin bhi ho, aur chahe search se match na hui ho) —
-    isliye group ki file kabhi akeli nahi dikhti, hamesha poora group dikhta hai."""
+GROUP_RESCAN_SECS = 6 * 3600     # saved group ko itni der me ek baar hi naye saathi ke liye scan karte hain
+
+
+async def _mark_files(ids, gid):
+    """File ke apne doc me `group_id` mark (gid="" ho to mark hata do)."""
+    ids = [i for i in ids if i]
+    if not ids:
+        return
+    upd = {"$set": {"group_id": str(gid)}} if gid else {"$unset": {"group_id": ""}}
+    for col in FILE_COLLECTIONS.values():
+        try:
+            await col.update_many({"_id": {"$in": ids}}, upd)
+        except Exception as e:
+            logger.warning(f"mark group_id failed ({col.name}): {e}")
+
+
+async def _persist_joins(joins):
+    """Search/scan me mili nayi files ko saved group ke members me DB me jod do + file par mark."""
+    try:
+        by = {}
+        for gid, i, n in joins:
+            by.setdefault(gid, {})[i] = n
+        for gid, m in by.items():
+            await groups.update_one({"_id": gid}, {"$addToSet": {
+                "members": {"$each": list(m)},
+                "files": {"$each": [{"id": i, "name": n or ""} for i, n in m.items()]}}})
+            await _mark_files(list(m), gid)
+            logger.info(f"🗂️ Group #{gid}: {len(m)} nayi file(s) DB me jodi gayi")
+    except Exception as e:
+        logger.warning(f"persist group joins failed: {e}")
+
+
+async def _mark_scanned(gids):
+    try:
+        await groups.update_many({"_id": {"$in": list(gids)}}, {"$set": {"scanned_at": int(time.time())}})
+    except Exception as e:
+        logger.warning(f"mark scanned failed: {e}")
+
+
+_SIB_CACHE = {}
+_SIB_TTL = 300
+
+
+async def _siblings(key):
+    """Is naam-key wali SAARI files (search se independent). 5 min cache."""
+    now = time.time()
+    c = _SIB_CACHE.get(key)
+    if c and c[0] > now:
+        return c[1]
+    try:
+        docs = await asyncio.wait_for(find_phrase_files(key, 100), timeout=4)
+    except Exception as e:
+        logger.warning(f"siblings lookup failed for '{key}': {e}")
+        return None
+    docs = [d for d in docs if _group_key(d.get("file_name")) == key]
+    if len(_SIB_CACHE) > 800:
+        _SIB_CACHE.clear()
+    _SIB_CACHE[key] = (now + _SIB_TTL, docs)
+    return docs
+
+
+async def _expand_groups(results_list, manual, mode, joins=None):
+    """Group kabhi adhoora nahi dikhna chahiye. Isliye:
+    (1) Saved group ki saari members (kisi bhi collection se, search se match ho ya na ho)
+    (2) Har group/file ki same-naam wali baaki saari files (auto-group ki siblings;
+        saved group ke auto_keys wali nayi quality bhi) — search query kuch bhi ho, count same."""
     have = {r.get("file_id") for r in results_list}
+    results_list = list(results_list)
+
+    # (1) saved-group members
     need, seen_g = [], set()
     for g in list(manual.values()):
         if g["_id"] in seen_g:
@@ -637,25 +704,87 @@ async def _expand_groups(results_list, manual, mode):
         for m in g.get("members", []):
             if m not in have:
                 need.append((m, g))
-    if not need:
-        return results_list
+    if need:
+        try:
+            docs = await get_files_by_ids([m for m, _ in need])
+            owner = {m: g for m, g in need}
+            extra = _build_results_list(docs, mode)
+            for r in extra:
+                manual[r["file_id"]] = owner[r["file_id"]]
+                have.add(r["file_id"])
+            results_list += extra
+        except Exception as e:
+            logger.warning(f"group expand failed: {e}")
+
+    # (2) same-naam siblings.
+    #     Saved group ko DB me `scanned_at` se yaad rehta hai: ek baar scan hone ke baad
+    #     GROUP_RESCAN_SECS tak dobara scan nahi hota (members DB se hi aate hain).
+    #     Scan me jo nayi file mile wo turant group ke members me DB me jud jaati hai.
     try:
-        docs = await get_files_by_ids([m for m, _ in need])
+        joins = joins if joins is not None else []
+        now = time.time()
+        targets, key_groups = {}, {}
+        for r in results_list:
+            g = manual.get(r.get("file_id"))
+            if g:
+                if (g.get("scanned_at") or 0) + GROUP_RESCAN_SECS > now:
+                    continue
+                for k in (g.get("auto_keys") or [])[:6]:
+                    targets.setdefault(k, g)
+                    key_groups.setdefault(g["_id"], set()).add(k)
+            else:
+                k = _group_key(r.get("name"))
+                if k:
+                    targets.setdefault(k, None)
+        keys = list(targets)[:40]
+        if keys:
+            sibs = await asyncio.gather(*[_siblings(k) for k in keys])
+            sib_of = dict(zip(keys, sibs))
+            cand = {}
+            for k, docs in sib_of.items():
+                owner = targets[k]
+                for d in (docs or []):
+                    i = d["_id"]
+                    if i in have or i in cand:
+                        continue
+                    if owner and i in (owner.get("excluded") or []):
+                        continue
+                    cand[i] = (d, owner)
+            if cand:
+                m2 = await _manual_map([(i, d.get("file_name")) for i, (d, _) in cand.items()])
+                use = []
+                for i, (d, owner) in cand.items():
+                    g2 = m2.get(i)
+                    if owner:
+                        if g2 and g2["_id"] != owner["_id"]:
+                            continue
+                        manual[i] = owner
+                        joins.append((str(owner["_id"]), i, d.get("file_name")))
+                    elif g2:
+                        continue                      # kisi saved group ki hai, auto-sibling nahi
+                    use.append(d)
+                if use:
+                    results_list += _build_results_list(use, mode)
+            done = [gid for gid, ks in key_groups.items()
+                    if all(k in sib_of and sib_of[k] is not None for k in ks)]
+            if done:
+                asyncio.create_task(_mark_scanned(done))
+                for g in manual.values():
+                    if g["_id"] in done:
+                        g["scanned_at"] = int(now)
     except Exception as e:
-        logger.warning(f"group expand failed: {e}")
-        return results_list
-    owner = {m: g for m, g in need}
-    extra = _build_results_list(docs, mode)
-    for r in extra:
-        manual[r["file_id"]] = owner[r["file_id"]]
-    return results_list + extra
+        logger.warning(f"sibling expand failed: {e}")
+    return results_list
 
 
 async def _finalize(results_list, want_group, gf="all", mode=DEFAULT_MEDIA_MODE):
     if not want_group:
         return results_list
-    manual = await _manual_map([(r.get("file_id"), r.get("name")) for r in results_list])
-    results_list = await _expand_groups(results_list, manual, mode)
+    joins = []
+    manual = await _manual_map([(r.get("file_id"), r.get("name")) for r in results_list], joins)
+    results_list = await _expand_groups(results_list, manual, mode, joins)
+    if joins:
+        asyncio.create_task(_persist_joins(joins))      # nayi files DB me group me jod do (background)
     out = group_results(results_list, manual)
     if gf == "group":
         out = [r for r in out if r.get("group")]
@@ -978,7 +1107,7 @@ async def api_group_save(req):
             g = await groups.find_one({"_id": gid})
             if not g:
                 return web.json_response({"error": "Group nahi mila!"}, status=404, dumps=fast_json)
-            upd = {"$addToSet": {"members": {"$each": file_ids}, "files": {"$each": [{"id": i, "name": n} for i, n in items]}}, "$set": {"updated_at": now}}
+            upd = {"$addToSet": {"members": {"$each": file_ids}, "files": {"$each": [{"id": i, "name": n} for i, n in items]}}, "$set": {"updated_at": now, "scanned_at": 0}}
             if auto_keys:
                 upd["$addToSet"]["auto_keys"] = {"$each": auto_keys}
             upd["$pull"] = {"excluded": {"$in": file_ids}}
@@ -994,9 +1123,10 @@ async def api_group_save(req):
                 "_id": gid, "num": num, "name": name, "members": file_ids,
                 "files": [{"id": i, "name": n} for i, n in items],
                 "auto_keys": auto_keys, "excluded": [],
-                "thumb_fid": "", "thumb_col": "", "thumb_url": "",
+                "thumb_fid": "", "thumb_col": "", "thumb_url": "", "scanned_at": 0,
                 "created_at": now, "updated_at": now})
         await _group_cleanup()
+        await _mark_files(file_ids, gid)
         return web.json_response({"success": True, "group_id": gid, "num": num, "group_name": name}, dumps=fast_json)
     except Exception as e:
         logger.error(f"group save error: {e}")
@@ -1060,6 +1190,7 @@ async def api_group_remove_file(req):
             upd["$set"].update({"thumb_fid": "", "thumb_col": ""})
         await groups.update_one({"_id": gid}, upd)
         await _group_cleanup()
+        await _mark_files([fid], "")
         return web.json_response({"success": True}, dumps=fast_json)
     except Exception as e:
         logger.error(f"group remove error: {e}")
@@ -1074,9 +1205,12 @@ async def api_group_delete(req):
         return err
     try:
         gid = str(data.get("group_id") or "").strip()
+        old = await groups.find_one({"_id": gid}, {"members": 1})
         await groups.delete_one({"_id": gid})
         thumb_cache.pop(f"g:{gid}", None)
         await _group_cleanup()
+        if old:
+            await _mark_files(old.get("members", []), "")
         return web.json_response({"success": True}, dumps=fast_json)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
@@ -1108,8 +1242,9 @@ async def api_group_merge(req):
             add["auto_keys"] = {"$each": src["auto_keys"]}
         if src.get("excluded"):
             add["excluded"] = {"$each": src["excluded"]}
-        await groups.update_one({"_id": tgt_id}, {"$addToSet": add, "$set": {"updated_at": int(time.time())}})
+        await groups.update_one({"_id": tgt_id}, {"$addToSet": add, "$set": {"updated_at": int(time.time()), "scanned_at": 0}})
         await groups.delete_one({"_id": src_id})
+        await _mark_files(src.get("members", []), tgt_id)
         thumb_cache.pop(f"g:{src_id}", None)
         await _group_cleanup()
         return web.json_response({"success": True, "num": tgt.get("num", ""), "group_name": tgt.get("name", "")}, dumps=fast_json)
