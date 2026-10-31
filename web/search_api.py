@@ -7,6 +7,7 @@ import time
 import hmac
 import hashlib
 import zlib
+import uuid
 import html as _html
 import asyncio
 import logging
@@ -19,7 +20,7 @@ from utils import temp, get_size, is_premium, get_duration_str
 # ✅ SYNC: THUMBNAIL_STORAGE_CHANNEL को इम्पोर्ट किया गया है पृथक स्टोरेज के लिए
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
-from database.ia_filterdb import COLLECTIONS, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
+from database.ia_filterdb import COLLECTIONS, groups, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
 from media_probe import probe_telegram_file, should_probe_media
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
@@ -228,15 +229,14 @@ async def _backfill_duration(col, fid, existing, msg):
 # ─────────────────────────────────────────────────────────
 # 🔄 BACKGROUND PRE-FETCH WORKER (Controlled Warmup Load)
 # ─────────────────────────────────────────────────────────
-async def bg_prefetch_worker(tg_id, q, col, mode, prefetch_offset, lim):
+async def bg_prefetch_worker(tg_id, q, col, mode, prefetch_offset, lim, group=False):
     try:
-        cache_key = f"{tg_id}_{q}_{col}_{mode}_{prefetch_offset}"
+        gflag = "g1" if group else "g0"
+        cache_key = f"{tg_id}_{q}_{col}_{mode}_{prefetch_offset}_{gflag}"
         if cache_key in PREFETCH_CACHE:
             return
 
-        docs, next_off, _, _ = await get_search_results(
-            q, lim, offset=prefetch_offset, collection_type=col, bypass_count=True
-        )
+        docs, next_off = await _fetch_page(q, col, prefetch_offset, lim, group)
 
         if docs:
             PREFETCH_CACHE[cache_key] = (docs, next_off)
@@ -410,19 +410,48 @@ def _quality_label(res_text, name=""):
     return f"{eh}p", eh
 
 
-def group_results(results):
+# ── Manual (admin-bane) groups ─────────────────────────────────────────────
+# Naam alag hone par jo files auto-group nahi hoti, admin unhe khud ek group me jod sakta hai.
+# Ye DB (Groups collection) me save rehta hai, isliye baar-baar grouping nahi karni padti.
+# Manual membership hamesha auto-grouping se upar chalti hai.
+async def _manual_map(ids):
+    """{file_id: group_doc} — sirf diye gaye ids ke liye (ek indexed query)."""
+    ids = [i for i in ids if i]
+    out = {}
+    if not ids:
+        return out
+    try:
+        async for g in groups.find({"members": {"$in": ids}}):
+            for m in g.get("members", []):
+                out[m] = g
+    except Exception as e:
+        logger.warning(f"manual group lookup failed: {e}")
+    return out
+
+
+def _bucket_key(file_id, name, manual):
+    """Card-bucket ki key: manual group > auto (naam se) > akeli file."""
+    g = manual.get(file_id)
+    if g:
+        return "m:" + str(g["_id"])
+    k = _group_key(name)
+    return ("a:" + k) if k else ("s:" + str(file_id))
+
+
+def group_results(results, manual=None):
     """results_list ko quality-groups me badalta hai.
 
     - Akeli file → jaisi thi waisi (koi badlaav nahi)
-    - 2+ files same title → {"group": True, "key", "title", "count", "type", "tg_thumb",
-      "chips": [{"label","count"}], "variants": [<original result + "ql">...]}  (quality ascending)
+    - 2+ files ek bucket me → {"group": True, "key", "title", "count", "type", "tg_thumb",
+      "duration", "size", "source", "manual", "gid", "chips": [...], "variants": [...]}
     - Page me group ki jagah uski PEHLI file ki position rehti hai (search ranking bani rehti hai).
     - Input dicts mutate nahi hote (TRENDING_CACHE unhi dicts ko share karta hai).
     """
+    manual = manual or {}
     order, buckets = [], {}
     for r in results:
-        k = _group_key(r.get("name"))
-        if not k:                                   # naam me kuch bacha hi nahi → akela
+        k = _bucket_key(r.get("file_id"), r.get("name"), manual)
+        if k.startswith("s:"):                      # akeli file
             order.append(("single", r))
             continue
         if k not in buckets:
@@ -439,10 +468,12 @@ def group_results(results):
         if len(items) == 1:
             out.append(items[0])
             continue
+        is_manual = v.startswith("m:")
+        mg = manual.get(items[0].get("file_id")) if is_manual else None
         variants = []
         for it in items:
             lab, eh = _quality_label(it.get("res"), it.get("name"))
-            variants.append((eh, dict(it, ql=lab)))
+            variants.append((eh, dict(it, ql=lab, gid=(str(mg["_id"]) if mg else ""))))
         variants.sort(key=lambda x: x[0])           # stable: barabar quality me original order
         vlist = [d for _, d in variants]
         chips, seen = [], {}
@@ -453,17 +484,87 @@ def group_results(results):
             else:
                 seen[lab] = {"label": lab, "count": 1}
                 chips.append(seen[lab])
+
+        rep = vlist[-1]                              # sabse badi quality = master file
+        # 🖼️ Master thumbnail: manual group me admin ne jo chuna wo; warna sabse badi
+        # quality wali file ka thumbnail (single file jaisa hi bada poster).
+        thumb = next((d.get("tg_thumb") for d in reversed(vlist) if d.get("tg_thumb")), "")
+        if mg and thumb and mg.get("thumb_fid") and mg.get("thumb_col"):
+            thumb = (f"/api/thumb?file_id={mg['thumb_fid']}&col={mg['thumb_col']}"
+                     f"&v={int(mg.get('updated_at') or 0)}")
+        if mg:
+            title = _html.escape(str(mg.get("name") or ""))
+            key = "m" + str(mg["_id"])
+        else:
+            title = _html.escape(_group_title(items[0].get("name")) or str(items[0].get("name") or ""))
+            key = f"{zlib.crc32(v.encode('utf-8')):08x}"
         out.append({
             "group": True,
-            "key": f"{zlib.crc32(v.encode('utf-8')):08x}",
-            "title": _html.escape(_group_title(items[0].get("name")) or str(items[0].get("name") or "")),
+            "manual": bool(mg),
+            "gid": str(mg["_id"]) if mg else "",
+            "key": key,
+            "title": title,
             "count": len(vlist),
-            "type": items[0].get("type", "VIDEO"),
-            "tg_thumb": next((d.get("tg_thumb") for d in vlist if d.get("tg_thumb")), ""),
+            "type": rep.get("type", "VIDEO"),
+            "tg_thumb": thumb,
+            "thumb_fid": (mg.get("thumb_fid") or "") if mg else "",
+            "duration": rep.get("duration", ""),
+            "size": rep.get("size", ""),
+            "source": rep.get("raw_collection", "primary"),
             "chips": chips,
             "variants": vlist,
         })
     return out
+
+
+async def _finalize(results_list, want_group):
+    if not want_group:
+        return results_list
+    manual = await _manual_map([r.get("file_id") for r in results_list])
+    return group_results(results_list, manual)
+
+
+# ── 📄 Page fetch: "21 CARDS" per page ──────────────────────────────────────
+# Pehle 21 *files* aati thi aur grouping ke baad 5-6 card bachte the. Ab group=1 me
+# itni files uthayi jaati hain ki poore `lim` (21) CARDS ban jaayein. Offset hamesha
+# raw-file position hai, isliye pagination me na koi file repeat hoti hai na chhutti hai.
+async def _fetch_page(q, col, off, lim, group):
+    """(docs, next_offset). group=False → purana behaviour (lim raw files)."""
+    async def raw_fetch(o, n):
+        if not q:
+            return await get_recent_files(n, offset=o, collection_type=col)
+        docs, nxt, _, _ = await get_search_results(
+            q, n, offset=o, collection_type=col, bypass_count=True)
+        return docs, nxt
+
+    if not group:
+        return await raw_fetch(off, lim)
+
+    batch = lim * 4
+    raw, cur, more, manual = [], off, True, {}
+    for _hop in range(4):
+        docs, nxt = await raw_fetch(cur, batch)
+        if not docs:
+            more = False
+            break
+        raw.extend(docs)
+        manual.update(await _manual_map([d.get("_id") for d in docs]))
+        more = bool(nxt)
+        cur = nxt if nxt != "" else None
+
+        keys, cut = set(), None
+        for i, d in enumerate(raw):
+            k = _bucket_key(d.get("_id"), d.get("file_name"), manual)
+            if k not in keys:
+                if len(keys) >= lim:
+                    cut = i
+                    break
+                keys.add(k)
+        if cut is not None:
+            return raw[:cut], off + cut
+        if not more:
+            break
+    return raw, (off + len(raw) if more else "")
 
 
 @search_routes.get("/api/search")
@@ -477,6 +578,7 @@ async def api_search(req):
     col = req.query.get("col", "all").lower()
     mode = req.query.get("mode", DEFAULT_MEDIA_MODE).lower()
     want_group = req.query.get("group", "") == "1"     # dashboard hi bhejta hai; baaki users raw list
+    gflag = "g1" if want_group else "g0"
 
     try:
         off = max(0, int(off))
@@ -485,37 +587,36 @@ async def api_search(req):
 
     lim = MAX_WEB_RESULTS
 
-    # 🆕 कोई query नहीं दी गई — dashboard पर खाली स्क्रीन दिखाने की बजाय
-    # सबसे नई अपलोड की गई फाइलें (Recently Added) दिखाओ
+    # 🆕 कोई query नहीं दी गई — सबसे नई अपलोड की गई फाइलें (Recently Added)
     if not q:
-        recent_docs, recent_next_offset = await get_recent_files(lim, offset=off, collection_type=col)
+        recent_docs, recent_next_offset = await _fetch_page("", col, off, lim, want_group)
         results_list = _build_results_list(recent_docs, mode)
         has_more = bool(recent_next_offset)
         return web.json_response({
-            "results": group_results(results_list) if want_group else results_list,
+            "results": await _finalize(results_list, want_group),
             "total": off + len(results_list) + (1 if has_more else 0),
             "next_offset": recent_next_offset,
             "is_admin": role == "admin",
             "is_recent": True,
         }, dumps=fast_json)
 
+    trend_key = f"{col}_{mode}_{q.lower()}_{gflag}"
     if off == 0:
-        trend_key = f"{col}_{mode}_{q.lower()}"
         now_ts = time.time()
         if trend_key in TRENDING_CACHE and TRENDING_CACHE[trend_key]["expiry"] > now_ts:
             cached = TRENDING_CACHE[trend_key]
-            
+
             if cached["next_offset"]:
-                asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, cached["next_offset"], lim))
+                asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, cached["next_offset"], lim, want_group))
 
             return web.json_response({
-                "results": group_results(cached["results"]) if want_group else cached["results"],
+                "results": await _finalize(cached["results"], want_group),
                 "total": off + len(cached["results"]) + (1 if cached["next_offset"] else 0),
                 "next_offset": cached["next_offset"],
                 "is_admin": role == "admin"
             }, dumps=fast_json)
 
-    current_cache_key = f"{tg_id}_{q}_{col}_{mode}_{off}"
+    current_cache_key = f"{tg_id}_{q}_{col}_{mode}_{off}_{gflag}"
     all_m = []
     next_offset = ""
 
@@ -524,19 +625,16 @@ async def api_search(req):
         del PREFETCH_CACHE[current_cache_key]
 
     if not all_m:
-        all_m, next_offset, _, _ = await get_search_results(
-            q, lim, offset=off, collection_type=col, bypass_count=True
-        )
+        all_m, next_offset = await _fetch_page(q, col, off, lim, want_group)
 
     has_more = bool(next_offset)
 
     if has_more:
-        asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, next_offset, lim))
+        asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, next_offset, lim, want_group))
 
     results_list = _build_results_list(all_m, mode)
 
     if off == 0 and results_list:
-        trend_key = f"{col}_{mode}_{q.lower()}"
         TRENDING_CACHE[trend_key] = {
             "results": results_list,
             "next_offset": next_offset,
@@ -544,7 +642,7 @@ async def api_search(req):
         }
 
     return web.json_response({
-        "results": group_results(results_list) if want_group else results_list,
+        "results": await _finalize(results_list, want_group),
         "total": off + len(results_list) + (1 if has_more else 0),
         "next_offset": next_offset,
         "is_admin": role == "admin",
@@ -645,6 +743,8 @@ async def api_delete(req):
             return web.json_response({"error": "Invalid target collection!"}, status=400, dumps=fast_json)
         # ✅ NEW: डिलीट से पहले DELETE_CHANNEL में बैकअप भेजा जाता है (delete_single_file के अंदर)
         success = await delete_single_file(fid, col)
+        if success:
+            await _group_cleanup(pull_ids=[fid])
         return web.json_response({"success": success}, dumps=fast_json)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
@@ -692,6 +792,156 @@ async def api_edit_name(req):
         return web.json_response({"success": True}, dumps=fast_json)
     except Exception as e:
         logger.error(f"Edit/Transfer Error: {e}")
+        return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
+
+
+# ─────────────────────────────────────────────────────────
+# 🗂️ ADMIN: MANUAL QUALITY-GROUPS (DB me save — baar-baar grouping nahi karni padti)
+#   groups doc: {_id, name, members:[file_id...], thumb_fid, thumb_col, created_at, updated_at}
+# ─────────────────────────────────────────────────────────
+async def _group_cleanup(pull_ids=None):
+    """Deleted files ko groups se hatao, khali groups mitao, caches saaf karo."""
+    try:
+        if pull_ids:
+            await groups.update_many({"members": {"$in": pull_ids}}, {"$pull": {"members": {"$in": pull_ids}}})
+        await groups.delete_many({"members": {"$size": 0}})
+    except Exception as e:
+        logger.warning(f"group cleanup failed: {e}")
+    PREFETCH_CACHE.clear()
+    TRENDING_CACHE.clear()
+
+
+async def _admin_json(req):
+    role, _ = await get_user_role(req)
+    if role != "admin":
+        return None, web.json_response({"error": "Core Admin Authorization Required!"}, status=403, dumps=fast_json)
+    try:
+        return await req.json(), None
+    except Exception:
+        return None, web.json_response({"error": "Invalid request body!"}, status=400, dumps=fast_json)
+
+
+@search_routes.get("/api/group/list")
+async def api_group_list(req):
+    role, _ = await get_user_role(req)
+    if role != "admin":
+        return web.json_response({"error": "Core Admin Authorization Required!"}, status=403, dumps=fast_json)
+    q = req.query.get("q", "").strip()
+    flt = {"name": {"$regex": re.escape(q), "$options": "i"}} if q else {}
+    out = []
+    async for g in groups.find(flt).sort("updated_at", -1).limit(25):
+        out.append({"id": str(g["_id"]), "name": g.get("name", ""), "count": len(g.get("members", []))})
+    return web.json_response({"groups": out}, dumps=fast_json)
+
+
+@search_routes.post("/api/group/save")
+async def api_group_save(req):
+    """Nayi group banao (name) YA maujooda group (group_id) me files jodo.
+    Jo file kisi aur manual group me thi, wo wahan se nikal kar yahan aa jaati hai."""
+    data, err = await _admin_json(req)
+    if err:
+        return err
+    try:
+        file_ids = []
+        for x in data.get("file_ids", []):
+            if x and str(x) not in file_ids:
+                file_ids.append(str(x))
+        gid = str(data.get("group_id") or "").strip()
+        name = str(data.get("name") or "").strip()[:200]
+        if not file_ids:
+            return web.json_response({"error": "Koi file select nahi hai!"}, status=400, dumps=fast_json)
+        now = int(time.time())
+
+        # pehle in files ko baaki sab groups se nikalo
+        await groups.update_many({"members": {"$in": file_ids}}, {"$pull": {"members": {"$in": file_ids}}})
+
+        if gid:
+            if not await groups.find_one({"_id": gid}):
+                return web.json_response({"error": "Group nahi mila!"}, status=404, dumps=fast_json)
+            await groups.update_one({"_id": gid}, {
+                "$addToSet": {"members": {"$each": file_ids}}, "$set": {"updated_at": now}})
+        else:
+            if not name:
+                return web.json_response({"error": "Group ka naam likhiye!"}, status=400, dumps=fast_json)
+            gid = uuid.uuid4().hex[:10]
+            await groups.insert_one({
+                "_id": gid, "name": name, "members": file_ids,
+                "thumb_fid": "", "thumb_col": "", "created_at": now, "updated_at": now})
+        await _group_cleanup()
+        return web.json_response({"success": True, "group_id": gid}, dumps=fast_json)
+    except Exception as e:
+        logger.error(f"group save error: {e}")
+        return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
+
+
+@search_routes.post("/api/group/update")
+async def api_group_update(req):
+    """Group ka naam / master thumbnail badlo. thumb_file_id member hona chahiye;
+    khali ('') bhejne par thumbnail auto (sabse badi quality) ho jaata hai."""
+    data, err = await _admin_json(req)
+    if err:
+        return err
+    try:
+        gid = str(data.get("group_id") or "").strip()
+        g = await groups.find_one({"_id": gid})
+        if not g:
+            return web.json_response({"error": "Group nahi mila!"}, status=404, dumps=fast_json)
+        upd = {"updated_at": int(time.time())}
+        if "name" in data:
+            nm = str(data.get("name") or "").strip()[:200]
+            if not nm:
+                return web.json_response({"error": "Group ka naam khali nahi ho sakta!"}, status=400, dumps=fast_json)
+            upd["name"] = nm
+        if "thumb_file_id" in data:
+            tf = str(data.get("thumb_file_id") or "").strip()
+            tc = str(data.get("thumb_col") or "").strip().lower()
+            if tf:
+                if tf not in g.get("members", []) or tc not in COLLECTIONS:
+                    return web.json_response({"error": "Thumbnail group ki hi kisi file ka chunein!"}, status=400, dumps=fast_json)
+                upd["thumb_fid"], upd["thumb_col"] = tf, tc
+            else:
+                upd["thumb_fid"], upd["thumb_col"] = "", ""
+        await groups.update_one({"_id": gid}, {"$set": upd})
+        await _group_cleanup()
+        return web.json_response({"success": True}, dumps=fast_json)
+    except Exception as e:
+        logger.error(f"group update error: {e}")
+        return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
+
+
+@search_routes.post("/api/group/remove_file")
+async def api_group_remove_file(req):
+    data, err = await _admin_json(req)
+    if err:
+        return err
+    try:
+        gid = str(data.get("group_id") or "").strip()
+        fid = str(data.get("file_id") or "").strip()
+        if not gid or not fid:
+            return web.json_response({"error": "Missing inputs!"}, status=400, dumps=fast_json)
+        g = await groups.find_one({"_id": gid})
+        upd = {"$pull": {"members": fid}, "$set": {"updated_at": int(time.time())}}
+        if g and g.get("thumb_fid") == fid:            # hata di gayi file ka thumbnail na rahe
+            upd["$set"].update({"thumb_fid": "", "thumb_col": ""})
+        await groups.update_one({"_id": gid}, upd)
+        await _group_cleanup()
+        return web.json_response({"success": True}, dumps=fast_json)
+    except Exception as e:
+        logger.error(f"group remove error: {e}")
+        return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
+
+
+@search_routes.post("/api/group/delete")
+async def api_group_delete(req):
+    """Group hatao (files delete nahi hoti; wo wapas auto-grouping me chali jaati hain)."""
+    data, err = await _admin_json(req)
+    if err:
+        return err
+    try:
+        await groups.delete_one({"_id": str(data.get("group_id") or "").strip()})
+        await _group_cleanup()
+        return web.json_response({"success": True}, dumps=fast_json)
+    except Exception as e:
         return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
 
 
