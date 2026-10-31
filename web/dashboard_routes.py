@@ -68,6 +68,11 @@ CARD_CSS = """
 .cdd-item.selected .cdd-radio{border-color:var(--accent)}
 .cdd-radio-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:none}
 .cdd-item.selected .cdd-radio-dot{display:block}
+/* ── Group filter button (red, small) ── */
+.gf-btn{width:auto!important;min-width:74px;background:var(--accent)!important;border-color:var(--accent)!important;color:#fff!important;padding:8px 26px 8px 14px!important;justify-content:center}
+.gf-wrap{flex:0 0 auto}
+.gf-wrap .cdd-arrow{color:#fff!important}
+.gf-wrap .cdd-menu{left:auto;right:0;transform:none;min-width:130px}
 /* ── Quality group card (master thumbnail = single file jaisa bada poster) ── */
 .grp-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;position:relative;cursor:pointer;box-shadow:0 4px 10px rgba(0,0,0,.2);transition:border-color .2s,box-shadow .2s}
 .grp-card:hover,.grp-card.open{border-color:var(--accent)}
@@ -143,25 +148,30 @@ var searchReqId=0;
 var pMode=localStorage.getItem('ff_dashboard_mode')||'__DEFAULT_MEDIA_MODE__';
 var LIMIT_VAL = __LIMIT_PLACEHOLDER__;
 
+var CDDS={col:['cddColMenu','cddColBtn'],mode:['cddModeMenu','cddModeBtn'],gf:['cddGfMenu','cddGfBtn']};
 function closeCdds(){
-    document.getElementById('cddColMenu').style.display='none';
-    document.getElementById('cddColBtn').classList.remove('open');
-    document.getElementById('cddModeMenu').style.display='none';
-    document.getElementById('cddModeBtn').classList.remove('open');
+    Object.keys(CDDS).forEach(function(k){
+        var m=document.getElementById(CDDS[k][0]),b=document.getElementById(CDDS[k][1]);
+        if(m)m.style.display='none';if(b)b.classList.remove('open');
+    });
 }
 function toggleCdd(which,e){
     if(e){e.stopPropagation();}
-    var menuId=which==='col'?'cddColMenu':'cddModeMenu';
-    var btnId=which==='col'?'cddColBtn':'cddModeBtn';
-    var otherId=which==='col'?'cddModeMenu':'cddColMenu';
-    var otherBtnId=which==='col'?'cddModeBtn':'cddColBtn';
-    var menu=document.getElementById(menuId);
-    var btn=document.getElementById(btnId);
+    var menu=document.getElementById(CDDS[which][0]);
+    var btn=document.getElementById(CDDS[which][1]);
     var isOpen=menu.style.display!=='none';
-    document.getElementById(otherId).style.display='none';
-    document.getElementById(otherBtnId).classList.remove('open');
-    if(isOpen){menu.style.display='none';btn.classList.remove('open');}
-    else{menu.style.display='block';btn.classList.add('open');}
+    closeCdds();
+    if(!isOpen){menu.style.display='block';btn.classList.add('open');}
+}
+var curGF='all';
+function pickGF(val,label,el,e){
+    if(e){e.stopPropagation();}
+    curGF=val;curPage=1;
+    document.getElementById('cddGfLabel').textContent=label;
+    document.querySelectorAll('#cddGfMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
+    el.classList.add('selected');
+    closeCdds();
+    doSearch(0,true);
 }
 function pickCol(val,label,el,e){
     if(e){e.stopPropagation();}
@@ -217,7 +227,7 @@ function cardHtml(f,nested){
             var adminBtns='';
             if(isAdminView){
                 adminBtns='<div class="poster-admin">'+
-                    '<button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\',\\''+encName+'\\', \\''+encCap+'\\')">&#9999; Edit</button>'+
+                    '<button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\',\\''+encName+'\\', \\''+encCap+'\\')">&#9999; Edit</button>'+'<button class="btn-edit" onclick="event.stopPropagation();mergeFile(\\''+f.file_id+'\\')">&#128256; Merge</button>'+
                     '<button class="btn-del" onclick="event.stopPropagation();deleteFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\')">&#128465; Delete</button>'+
                     '<button class="btn-edit" onclick="event.stopPropagation();quickGroup(\\''+f.file_id+'\\')">&#128279; Group</button>'+(f.gid?'<button class="btn-edit" onclick="event.stopPropagation();removeFromGroup(\\''+f.gid+'\\',\\''+f.file_id+'\\')">&#10006; Remove</button>':'')+
                 '</div>';
@@ -257,7 +267,7 @@ function cardHtml(f,nested){
                 '</div>';
                 if(isAdminView){
                     textInfo+='<div class="text-admin-row">'+
-                        '<button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\',\\''+encName+'\\', \\''+encCap+'\\')">&#9999; Edit</button>'+
+                        '<button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\',\\''+encName+'\\', \\''+encCap+'\\')">&#9999; Edit</button>'+'<button class="btn-edit" onclick="event.stopPropagation();mergeFile(\\''+f.file_id+'\\')">&#128256; Merge</button>'+
                         '<button class="btn-del" onclick="event.stopPropagation();deleteFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\')">&#128465; Delete</button>'+
                     '<button class="btn-edit" onclick="event.stopPropagation();quickGroup(\\''+f.file_id+'\\')">&#128279; Group</button>'+(f.gid?'<button class="btn-edit" onclick="event.stopPropagation();removeFromGroup(\\''+f.gid+'\\',\\''+f.file_id+'\\')">&#10006; Remove</button>':'')+
                     '</div>';
@@ -298,6 +308,7 @@ function groupHtml(g){
     var adm='';
     if(isAdminView){
         adm='<button class="btn-edit" onclick="event.stopPropagation();editGroup(\\''+g.key+'\\')">&#9999; '+(g.manual?'Edit Group #'+g.num:'Save as Group')+'</button>'+
+            '<button class="btn-edit" onclick="event.stopPropagation();mergeGroup(\\''+g.key+'\\')">&#128256; Merge</button>'+
             (g.manual?'<button class="btn-del" onclick="event.stopPropagation();ungroup(\\''+g.gid+'\\')">&#128465; Ungroup</button>':'');
     }
     var poster='';
@@ -405,6 +416,37 @@ async function saveAutoGroup(key){
     try{
         var d=await grpPost('/api/group/save',{items:g.variants.map(function(f){return {id:f.file_id,name:f.name};}),name:unesc(g.title)});
         showToast('Group #'+d.num+' save ho gaya. Naam/thumbnail badalne ke liye Edit Group dabayein');
+        refreshGridAfterEdit();
+    }catch(e){showToast(e.message,'error');}
+}
+function askGroupNum(){
+    var v=prompt('Kis Group number me merge karna hai? (jaise 17)');
+    if(v===null)return null;
+    v=String(v).replace('#','').trim();
+    if(!/^[0-9]+$/.test(v)){showToast('Sahi group number likhiye','error');return null;}
+    return v;
+}
+async function mergeGroup(key){
+    var g=GROUP_DATA[key];if(!g)return;
+    var id=askGroupNum();if(!id)return;
+    try{
+        var d;
+        if(g.manual){
+            if(String(g.gid)===id){showToast('Same group me merge nahi ho sakta','error');return;}
+            d=await grpPost('/api/group/merge',{source:g.gid,target:id});
+        }else{
+            d=await grpPost('/api/group/save',{group_id:id,items:g.variants.map(function(f){return {id:f.file_id,name:f.name};})});
+        }
+        showToast('Group #'+d.num+' me merge ho gaya');
+        refreshGridAfterEdit();
+    }catch(e){showToast(e.message,'error');}
+}
+async function mergeFile(fid){
+    var f=FILE_DATA[fid];if(!f)return;
+    var id=askGroupNum();if(!id)return;
+    try{
+        var d=await grpPost('/api/group/save',{group_id:id,items:[{id:f.file_id,name:f.name}]});
+        showToast('File Group #'+d.num+' me merge ho gayi');
         refreshGridAfterEdit();
     }catch(e){showToast(e.message,'error');}
 }
@@ -587,7 +629,7 @@ async function doSearch(o,allowEmpty){
     },150);
 
     try{
-        var r=await fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+o+'&col='+curCol+'&mode='+pMode+'&group=1');
+        var r=await fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+o+'&col='+curCol+'&mode='+pMode+'&group=1&gf='+curGF);
         if(myReq!==searchReqId){clearTimeout(loadTimer);if(qWrap)qWrap.classList.remove('loading');return;}
         clearTimeout(loadTimer);
         if(qWrap)qWrap.classList.remove('loading');
@@ -626,13 +668,14 @@ async function doSearch(o,allowEmpty){
         document.getElementById('pgInfo').textContent='Page '+curPage;
 
         if(nextOff) {
-            fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+nextOff+'&col='+curCol+'&mode='+pMode+'&group=1');
+            fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+nextOff+'&col='+curCol+'&mode='+pMode+'&group=1&gf='+curGF);
         }
     }catch(e){clearTimeout(loadTimer);if(qWrap)qWrap.classList.remove('loading');showToast('Network error','error');}
 }
 
-function next(){if(nextOff){curPage++;doSearch(nextOff);scrollTo(0,0);}}
-function prev(){if(curPage>1){curPage--;doSearch(Math.max(0,curOff-LIMIT_VAL));scrollTo(0,0);}}
+var offHist=[];
+function next(){if(nextOff){offHist.push(curOff);curPage++;doSearch(nextOff);scrollTo(0,0);}}
+function prev(){if(curPage>1){curPage--;doSearch(offHist.length?offHist.pop():0);scrollTo(0,0);}}
 
 document.addEventListener('DOMContentLoaded',function(){
     var q=document.getElementById('q');
@@ -678,6 +721,17 @@ SEARCH_ZONE = (
             '<div class="search-wrap" id="qWrap">'
                 '<input class="search-input" id="q" placeholder="Titles, people, genres\u2026">'
                 '<span class="search-spinner" id="qSpinner"></span>'
+            '</div>'
+            '<div class="cdd-wrap gf-wrap" id="cddGfWrap">'
+                '<div class="cdd-btn gf-btn" id="cddGfBtn" onclick="toggleCdd(\'gf\')">'
+                    '<span id="cddGfLabel">All</span>'
+                '</div>'
+                '<span class="cdd-arrow">&#9660;</span>'
+                '<div class="cdd-menu" id="cddGfMenu" style="display:none">'
+                    '<div class="cdd-item selected" data-val="all" onclick="pickGF(\'all\',\'All\',this)">All<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<div class="cdd-item" data-val="group" onclick="pickGF(\'group\',\'Group\',this)">Group<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<div class="cdd-item" data-val="single" onclick="pickGF(\'single\',\'Ungroup\',this)">Ungroup<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                '</div>'
             '</div>'
         '</div>'
         '<div class="search-row2">'
