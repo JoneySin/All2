@@ -21,7 +21,7 @@ from utils import temp, get_size, is_premium, get_duration_str
 # ✅ SYNC: THUMBNAIL_STORAGE_CHANNEL को इम्पोर्ट किया गया है पृथक स्टोरेज के लिए
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
-from database.ia_filterdb import COLLECTIONS, groups, group_seq, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
+from database.ia_filterdb import COLLECTIONS, groups, group_seq, get_files_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
 from media_probe import probe_telegram_file, should_probe_media
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
@@ -542,13 +542,6 @@ def group_results(results, manual=None):
     return out
 
 
-async def _finalize(results_list, want_group):
-    if not want_group:
-        return results_list
-    manual = await _manual_map([(r.get("file_id"), r.get("name")) for r in results_list])
-    return group_results(results_list, manual)
-
-
 # ── 📄 Page fetch: "21 CARDS" per page ──────────────────────────────────────
 # Pehle 21 *files* aati thi aur grouping ke baad 5-6 card bachte the. Ab group=1 me
 # itni files uthayi jaati hain ki poore `lim` (21) CARDS ban jaayein. Offset hamesha
@@ -574,6 +567,18 @@ async def _fetch_page(q, col, off, lim, group, gf="all"):
     def kof(d):
         return _bucket_key(d.get("_id"), d.get("file_name"), manual)
 
+    def count_buckets(rows):
+        cnt = {}
+        for d in rows:
+            k = kof(d)
+            cnt[k] = cnt.get(k, 0) + 1
+        for d in rows:                       # saved group = hamesha "group" (uski baaki files bhi dikhengi)
+            g = manual.get(d.get("_id"))
+            if g:
+                k = kof(d)
+                cnt[k] = max(cnt[k], len(g.get("members", [])))
+        return cnt
+
     for _hop in range(hops_max):
         docs, nxt = await raw_fetch(cur, batch)
         if not docs:
@@ -584,10 +589,7 @@ async def _fetch_page(q, col, off, lim, group, gf="all"):
         more = bool(nxt)
         cur = nxt if nxt != "" else None
 
-        cnt = {}
-        for d in raw:
-            k = kof(d)
-            cnt[k] = cnt.get(k, 0) + 1
+        cnt = count_buckets(raw)
 
         def ok(k):
             if gf == "group":
@@ -611,26 +613,47 @@ async def _fetch_page(q, col, off, lim, group, gf="all"):
         if not more:
             break
 
-    cnt = {}
-    for d in raw:
-        k = kof(d)
-        cnt[k] = cnt.get(k, 0) + 1
+    scanned = len(raw)
+    cnt = count_buckets(raw)
     if gf == "group":
         raw = [d for d in raw if cnt[kof(d)] >= 2]
     elif gf == "single":
         raw = [d for d in raw if cnt[kof(d)] == 1]
-    return raw, (off + _scanned(cnt) if more else "")
+    return raw, (off + scanned if more else "")
 
 
-def _scanned(cnt):
-    """Ab tak scan hui raw files ki ginti (filter se pehle ki)."""
-    return sum(cnt.values())
+async def _expand_groups(results_list, manual, mode):
+    """Search me kisi group ki koi bhi file aayi to us group ki BAAKI saari files bhi saath aati hain
+    (chahe primary/cloud/archive me kahin bhi ho, aur chahe search se match na hui ho) —
+    isliye group ki file kabhi akeli nahi dikhti, hamesha poora group dikhta hai."""
+    have = {r.get("file_id") for r in results_list}
+    need, seen_g = [], set()
+    for g in list(manual.values()):
+        if g["_id"] in seen_g:
+            continue
+        seen_g.add(g["_id"])
+        for m in g.get("members", []):
+            if m not in have:
+                need.append((m, g))
+    if not need:
+        return results_list
+    try:
+        docs = await get_files_by_ids([m for m, _ in need])
+    except Exception as e:
+        logger.warning(f"group expand failed: {e}")
+        return results_list
+    owner = {m: g for m, g in need}
+    extra = _build_results_list(docs, mode)
+    for r in extra:
+        manual[r["file_id"]] = owner[r["file_id"]]
+    return results_list + extra
 
 
-async def _finalize(results_list, want_group, gf="all"):
+async def _finalize(results_list, want_group, gf="all", mode=DEFAULT_MEDIA_MODE):
     if not want_group:
         return results_list
     manual = await _manual_map([(r.get("file_id"), r.get("name")) for r in results_list])
+    results_list = await _expand_groups(results_list, manual, mode)
     out = group_results(results_list, manual)
     if gf == "group":
         out = [r for r in out if r.get("group")]
@@ -667,7 +690,7 @@ async def api_search(req):
         results_list = _build_results_list(recent_docs, mode)
         has_more = bool(recent_next_offset)
         return web.json_response({
-            "results": await _finalize(results_list, want_group, gf),
+            "results": await _finalize(results_list, want_group, gf, mode),
             "total": off + len(results_list) + (1 if has_more else 0),
             "next_offset": recent_next_offset,
             "is_admin": role == "admin",
@@ -684,7 +707,7 @@ async def api_search(req):
                 asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, cached["next_offset"], lim, want_group, gf))
 
             return web.json_response({
-                "results": await _finalize(cached["results"], want_group, gf),
+                "results": await _finalize(cached["results"], want_group, gf, mode),
                 "total": off + len(cached["results"]) + (1 if cached["next_offset"] else 0),
                 "next_offset": cached["next_offset"],
                 "is_admin": role == "admin"
@@ -716,7 +739,7 @@ async def api_search(req):
         }
 
     return web.json_response({
-        "results": await _finalize(results_list, want_group, gf),
+        "results": await _finalize(results_list, want_group, gf, mode),
         "total": off + len(results_list) + (1 if has_more else 0),
         "next_offset": next_offset,
         "is_admin": role == "admin",
@@ -886,7 +909,7 @@ async def _group_cleanup(pull_ids=None):
     """Deleted files ko groups se hatao, khali groups mitao, caches saaf karo."""
     try:
         if pull_ids:
-            await groups.update_many({"members": {"$in": pull_ids}}, {"$pull": {"members": {"$in": pull_ids}}})
+            await groups.update_many({"members": {"$in": pull_ids}}, {"$pull": {"members": {"$in": pull_ids}, "files": {"id": {"$in": pull_ids}}}})
         await groups.delete_many({"members": {"$size": 0}})
     except Exception as e:
         logger.warning(f"group cleanup failed: {e}")
@@ -947,13 +970,13 @@ async def api_group_save(req):
         now = int(time.time())
 
         # pehle in files ko baaki sab groups se nikalo
-        await groups.update_many({"members": {"$in": file_ids}}, {"$pull": {"members": {"$in": file_ids}}})
+        await groups.update_many({"members": {"$in": file_ids}}, {"$pull": {"members": {"$in": file_ids}, "files": {"id": {"$in": file_ids}}}})
 
         if gid:
             g = await groups.find_one({"_id": gid})
             if not g:
                 return web.json_response({"error": "Group nahi mila!"}, status=404, dumps=fast_json)
-            upd = {"$addToSet": {"members": {"$each": file_ids}}, "$set": {"updated_at": now}}
+            upd = {"$addToSet": {"members": {"$each": file_ids}, "files": {"$each": [{"id": i, "name": n} for i, n in items]}}, "$set": {"updated_at": now}}
             if auto_keys:
                 upd["$addToSet"]["auto_keys"] = {"$each": auto_keys}
             upd["$pull"] = {"excluded": {"$in": file_ids}}
@@ -967,6 +990,7 @@ async def api_group_save(req):
             gid = str(num)
             await groups.insert_one({
                 "_id": gid, "num": num, "name": name, "members": file_ids,
+                "files": [{"id": i, "name": n} for i, n in items],
                 "auto_keys": auto_keys, "excluded": [],
                 "thumb_fid": "", "thumb_col": "", "thumb_url": "",
                 "created_at": now, "updated_at": now})
@@ -1027,7 +1051,7 @@ async def api_group_remove_file(req):
         if not gid or not fid:
             return web.json_response({"error": "Missing inputs!"}, status=400, dumps=fast_json)
         g = await groups.find_one({"_id": gid})
-        upd = {"$pull": {"members": fid},
+        upd = {"$pull": {"members": fid, "files": {"id": fid}},
                "$addToSet": {"excluded": fid},          # auto-key se wapas na judey
                "$set": {"updated_at": int(time.time())}}
         if g and g.get("thumb_fid") == fid:
@@ -1076,6 +1100,8 @@ async def api_group_merge(req):
         if not tgt:
             return web.json_response({"error": f"Group #{tgt_id} nahi mila!"}, status=404, dumps=fast_json)
         add = {"members": {"$each": src.get("members", [])}}
+        if src.get("files"):
+            add["files"] = {"$each": src["files"]}
         if src.get("auto_keys"):
             add["auto_keys"] = {"$each": src["auto_keys"]}
         if src.get("excluded"):
