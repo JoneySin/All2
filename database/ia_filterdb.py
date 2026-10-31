@@ -918,6 +918,25 @@ async def get_file_details(file_id):
         logger.error(f"get_file_details error: {e}")
         return None
 
+async def get_files_by_ids(ids):
+    """Quality-group ki files: primary + cloud + archive teeno me se _id se, source_col tag ke saath.
+    (Group ki file chahe kisi bhi collection me ho, search me match ho ya na ho.)"""
+    remaining = {i for i in ids if i}
+    out = []
+    for col in (primary, cloud, archive):
+        if not remaining:
+            break
+        try:
+            docs = await col.find({"_id": {"$in": list(remaining)}}, FILE_PROJECTION).to_list(length=len(remaining))
+        except Exception as e:
+            logger.error(f"get_files_by_ids error ({col.name}): {e}")
+            continue
+        _tag_docs(docs, col.name.lower())
+        for d in docs:
+            remaining.discard(d["_id"])
+        out.extend(docs)
+    return out
+
 def encode_file_id(s: bytes) -> str:
     r, n = b"", 0
     for i in s + bytes([22]) + bytes([4]):
