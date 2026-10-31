@@ -35,7 +35,8 @@ cloud   = db["Cloud"]
 archive = db["Archive"]
 actors  = db["Actors"]  # 🎭 एक्टर प्रोफाइल के लिए डेटाबेस कलेक्शन
 posts   = db["Posts"]   # 📝 नया पोस्ट्स (CMS) कलेक्शन
-groups  = db["Groups"]  # 🗂️ एडमिन के बनाए मैन्युअल क्वालिटी-ग्रुप (नाम, थंबनेल, members)
+groups  = db["QualityGroups"]      # 🗂️ एडमिन के क्वालिटी-ग्रुप (नाम, थंबनेल, members) — बॉट के "Groups" (chats) से अलग
+group_seq = db["QualityGroupSeq"]  # ग्रुप नंबर (1, 2, 3...) का counter
 
 COLLECTIONS = {
     "primary": primary,
@@ -84,13 +85,19 @@ async def ensure_indexes():
         if "already exists" not in str(e) and "IndexKeySpecsConflict" not in str(e):
             logger.warning(f"Actor Index warning: {e}")
 
-    # 2b. Manual quality-groups: member -> group lookup तेज़ करने के लिए
+    # 2b. Quality-groups indexes (+ पहले गलती से बॉट के "Groups" कलेक्शन पर बने 2 index साफ़)
+    for _old in ("groups_members_idx", "groups_name_idx"):
+        try:
+            await db["Groups"].drop_index(_old)
+        except Exception:
+            pass
     try:
-        await groups.create_index("members", name="groups_members_idx")
-        await groups.create_index("name", name="groups_name_idx")
+        await groups.create_index("members", name="qg_members_idx")
+        await groups.create_index("auto_keys", name="qg_autokeys_idx")
+        await groups.create_index("name", name="qg_name_idx")
     except Exception as e:
         if "already exists" not in str(e) and "IndexKeySpecsConflict" not in str(e):
-            logger.warning(f"Groups Index warning: {e}")
+            logger.warning(f"QualityGroups Index warning: {e}")
 
     # 3. Posts Specific Indexes (NEW)
     try:
