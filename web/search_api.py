@@ -6,6 +6,8 @@ import json
 import time
 import hmac
 import hashlib
+import zlib
+import html as _html
 import asyncio
 import logging
 import urllib.parse
@@ -326,7 +328,10 @@ def _build_results_list(all_m, mode):
             poster_url = ""
         else:
             raw_thumb = d.get("thumb_url", "")
-            v_salt = raw_thumb[-8:] if (raw_thumb and raw_thumb.startswith("TG_ID:")) else "0"
+            # ⚠️ pehle yahan file_id ke sirf last 8 chars the — Telegram photo ids ka tail
+            # aksar same hota hai, to naya thumbnail upload hone par bhi URL (aur browser
+            # cache) wahi rehta tha. Ab poore thumb_url ka hash: thumbnail badla → URL badla.
+            v_salt = f"{zlib.crc32(raw_thumb.encode('utf-8')):08x}" if (raw_thumb and raw_thumb.startswith("TG_ID:")) else "0"
             tg_thumb = f"/api/thumb?file_id={db_id}&col={source_collection_name}&v={v_salt}"
             poster_url = tg_thumb
 
@@ -353,6 +358,114 @@ def _build_results_list(all_m, mode):
     return results_list
 
 
+# ─────────────────────────────────────────────────────────
+# 🗂️ QUALITY GROUPING — ek hi title ki alag-alag quality ek card me
+# Dashboard `&group=1` bhejta hai. Naam se resolution token (480p/720p/1080p/1440p/2160p/4k)
+# aur aakhri extension (mp4/mkv…) hata kar baaki naam EXACT same ho → ek group.
+# Conservative hai: codec/uploader tag (x265, Sky, UnTuch…) alag ho to alag card rahenge.
+# Grouping sirf is page ke results me hoti hai (offset-pagination ke saath safe).
+# ─────────────────────────────────────────────────────────
+_RES_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:(?:240|360|480|540|576|720|1080|1440|2160|4320)\s*[pP]|4[kK]|8[kK]|[uU][hH][dD])(?![A-Za-z0-9])")
+_EXT_TAIL_RE = re.compile(
+    r"[\s._\-]*(?<![A-Za-z0-9])(?:mp4|mkv|avi|mov|webm|m4v|ts|wmv|flv|mpg|mpeg)\s*$", re.I)
+_SEP_RE = re.compile(r"[\s|_\-–.,:;()\[\]{}+~!@#$%^&*=/\\'\"`<>?·•]+")
+
+
+def _group_key(name):
+    """Quality/extension hata kar normalized key. Khali ho to '' (matlab group mat karo)."""
+    s = _EXT_TAIL_RE.sub("", str(name or ""))
+    s = _RES_TOKEN_RE.sub(" ", s).lower()
+    return _SEP_RE.sub(" ", s).strip()
+
+
+def _group_title(name):
+    """Dikhane layak saaf title (original case me), quality + extension hata kar."""
+    s = _EXT_TAIL_RE.sub("", str(name or ""))
+    s = _RES_TOKEN_RE.sub(" ", s)
+    s = re.sub(r"([|\-–_.])(\s*\1)+", r"\1", s)          # '| |' / '..' jaise doble separator
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"^[\s|\-–_.]+|[\s|\-–_.]+$", "", s)
+    return s
+
+
+def _quality_label(res_text, name=""):
+    """(label, sort_height). res "1920×1080" se; na ho to naam ke token se; warna ('', 0)."""
+    m = re.search(r"(\d{3,5})\D+(\d{3,5})", str(res_text or ""))
+    eh = 0
+    if m:
+        w, h = int(m.group(1)), int(m.group(2))
+        eh = max(h, int(w * 9 / 16))          # 1920×800 (scope) bhi 1080p ginta hai
+    else:
+        t = _RES_TOKEN_RE.search(str(name or "")) or _RES_TOKEN_RE.search(str(res_text or ""))
+        if t:
+            tok = t.group(0).lower().replace(" ", "")
+            eh = {"4k": 2160, "8k": 4320, "uhd": 2160}.get(tok) or int(re.sub(r"\D", "", tok) or 0)
+    if not eh:
+        return "", 0
+    for lim, lab in ((4000, "8K"), (2000, "2160p"), (1300, "1440p"), (1000, "1080p"),
+                     (650, "720p"), (450, "480p"), (330, "360p"), (220, "240p")):
+        if eh >= lim:
+            return lab, eh
+    return f"{eh}p", eh
+
+
+def group_results(results):
+    """results_list ko quality-groups me badalta hai.
+
+    - Akeli file → jaisi thi waisi (koi badlaav nahi)
+    - 2+ files same title → {"group": True, "key", "title", "count", "type", "tg_thumb",
+      "chips": [{"label","count"}], "variants": [<original result + "ql">...]}  (quality ascending)
+    - Page me group ki jagah uski PEHLI file ki position rehti hai (search ranking bani rehti hai).
+    - Input dicts mutate nahi hote (TRENDING_CACHE unhi dicts ko share karta hai).
+    """
+    order, buckets = [], {}
+    for r in results:
+        k = _group_key(r.get("name"))
+        if not k:                                   # naam me kuch bacha hi nahi → akela
+            order.append(("single", r))
+            continue
+        if k not in buckets:
+            buckets[k] = []
+            order.append(("group", k))
+        buckets[k].append(r)
+
+    out = []
+    for kind, v in order:
+        if kind == "single":
+            out.append(v)
+            continue
+        items = buckets[v]
+        if len(items) == 1:
+            out.append(items[0])
+            continue
+        variants = []
+        for it in items:
+            lab, eh = _quality_label(it.get("res"), it.get("name"))
+            variants.append((eh, dict(it, ql=lab)))
+        variants.sort(key=lambda x: x[0])           # stable: barabar quality me original order
+        vlist = [d for _, d in variants]
+        chips, seen = [], {}
+        for d in vlist:
+            lab = d["ql"] or "?"
+            if lab in seen:
+                seen[lab]["count"] += 1
+            else:
+                seen[lab] = {"label": lab, "count": 1}
+                chips.append(seen[lab])
+        out.append({
+            "group": True,
+            "key": f"{zlib.crc32(v.encode('utf-8')):08x}",
+            "title": _html.escape(_group_title(items[0].get("name")) or str(items[0].get("name") or "")),
+            "count": len(vlist),
+            "type": items[0].get("type", "VIDEO"),
+            "tg_thumb": next((d.get("tg_thumb") for d in vlist if d.get("tg_thumb")), ""),
+            "chips": chips,
+            "variants": vlist,
+        })
+    return out
+
+
 @search_routes.get("/api/search")
 async def api_search(req):
     role, tg_id = await get_user_role(req)
@@ -363,6 +476,7 @@ async def api_search(req):
     off = req.query.get("offset", "0")
     col = req.query.get("col", "all").lower()
     mode = req.query.get("mode", DEFAULT_MEDIA_MODE).lower()
+    want_group = req.query.get("group", "") == "1"     # dashboard hi bhejta hai; baaki users raw list
 
     try:
         off = max(0, int(off))
@@ -378,7 +492,7 @@ async def api_search(req):
         results_list = _build_results_list(recent_docs, mode)
         has_more = bool(recent_next_offset)
         return web.json_response({
-            "results": results_list,
+            "results": group_results(results_list) if want_group else results_list,
             "total": off + len(results_list) + (1 if has_more else 0),
             "next_offset": recent_next_offset,
             "is_admin": role == "admin",
@@ -395,7 +509,7 @@ async def api_search(req):
                 asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, cached["next_offset"], lim))
 
             return web.json_response({
-                "results": cached["results"],
+                "results": group_results(cached["results"]) if want_group else cached["results"],
                 "total": off + len(cached["results"]) + (1 if cached["next_offset"] else 0),
                 "next_offset": cached["next_offset"],
                 "is_admin": role == "admin"
@@ -430,7 +544,7 @@ async def api_search(req):
         }
 
     return web.json_response({
-        "results": results_list,
+        "results": group_results(results_list) if want_group else results_list,
         "total": off + len(results_list) + (1 if has_more else 0),
         "next_offset": next_offset,
         "is_admin": role == "admin",
@@ -609,8 +723,6 @@ async def api_upload_thumb(req):
             return web.json_response({"error": "Target collection missing!"}, status=400, dumps=fast_json)
 
         cache_k = f"{collection_field}:{file_id_field}"
-        if cache_k in thumb_cache:
-            del thumb_cache[cache_k]
 
         with io.BytesIO(image_bytes) as img_buffer:
             img_buffer.name = "poster.jpg"
@@ -635,6 +747,11 @@ async def api_upload_thumb(req):
             {"_id": file_id_field},
             {"$set": {"thumb_url": db_save_value, "thumb_source": "web", "is_thumb_permanent": True}}
         )
+
+        # ✅ Cache DB update ke BAAD hatao. Pehle (Telegram upload se PEHLE) hatate the — us 1-2s
+        # ke beech koi bhi thumb request aati to DB se PURANA thumbnail wapas cache me chadh jata
+        # aur naya thumbnail LRU se nikalne tak (ya restart) tak nahi dikhta.
+        thumb_cache.pop(cache_k, None)
         
         # ❌ (Removed auto-delete so permanent thumbnails stay in channel)
         # await db.add_to_delete_queue(THUMBNAIL_STORAGE_CHANNEL, msg.id, 5)
