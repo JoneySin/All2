@@ -88,8 +88,16 @@ CARD_CSS = """
 .grp-openhead .grp-chip{background:var(--bg3)}
 .grp-arrow{margin-left:auto;color:var(--muted);font-size:13px;transform:rotate(180deg)}
 .grp-card.open .grp-openhead{display:flex}
-.grp-card.open .poster-box,.grp-card.open .grp-body{display:none}
-.grp-admin{display:flex;gap:5px;padding:0 11px 10px}
+.grp-card.open .grp-master{display:none}
+.grp-textadmin{display:none;gap:5px;padding-top:8px}
+.grp-card.grp-active .grp-textadmin{display:flex}
+.grp-card.grp-active .grp-master .poster-admin{opacity:1;transform:translateY(0);pointer-events:all}
+.grp-title{cursor:pointer}
+.grp-openhead .grp-oadmin{display:flex;gap:5px}
+.grp-openhead .grp-oadmin button{flex:none;padding:6px 10px}
+.grp-variants .poster-admin{flex-wrap:wrap}
+.grp-variants .poster-admin .btn-edit,.grp-variants .poster-admin .btn-del,.grp-variants .text-admin-row button{flex:1 1 45%}
+.grp-variants .text-admin-row{flex-wrap:wrap}
 .grp-variants{display:none;border-top:1px solid var(--border)}
 .grp-card.open .grp-variants{display:grid;grid-template-columns:1fr;gap:8px;padding:10px}
 @media(min-width:600px){.grp-card.open .grp-variants{grid-template-columns:repeat(3,1fr)}}
@@ -286,33 +294,46 @@ function groupHtml(g){
     var dur=g.duration?'<span class="dur-chip">'+g.duration+'</span>':'';
     var badge='<span class="grp-badge">'+g.count+' QUALITIES</span>';
     var type=String(g.type||'VIDEO').toUpperCase();
+    /* Admin buttons — file card ki tarah click par popup hote hain */
+    var adm='';
+    if(isAdminView){
+        adm='<button class="btn-edit" onclick="event.stopPropagation();editGroup(\\''+g.key+'\\')">&#9999; '+(g.manual?'Edit Group':'Save as Group')+'</button>'+
+            (g.manual?'<button class="btn-del" onclick="event.stopPropagation();ungroup(\\''+g.gid+'\\')">&#128465; Ungroup</button>':'');
+    }
     var poster='';
     if(pMode!=='none'){
-        poster='<div class="poster-box">'+
+        poster='<div class="poster-box" onclick="grpPoster(this,event)">'+
             (g.tg_thumb?'<img src="'+g.tg_thumb+'" class="fc-poster" onload="this.classList.add(\\'loaded\\')" onerror="this.style.display=\\'none\\'" loading="lazy" decoding="async">':'')+
             '<div class="poster-top"><span class="type-chip">'+type+'</span>'+badge+dur+pill+'</div>'+
             '<div class="grp-bottom">'+chips+'</div>'+
+            (isAdminView?'<div class="poster-admin">'+adm+'</div>':'')+
         '</div>';
     }
-    var textInfo='<div class="grp-textinfo"><span class="tc-type">'+type+'</span>'+badge+dur+chips+pill+'</div>';
-    var admin='';
-    if(isAdminView){
-        admin='<div class="grp-admin">'+
-            '<button class="btn-edit" onclick="event.stopPropagation();editGroup(\\''+g.key+'\\')">&#9999; '+(g.manual?'Edit Group':'Save as Group')+'</button>'+
-            (g.manual?'<button class="btn-del" onclick="event.stopPropagation();ungroup(\\''+g.gid+'\\')">&#128465; Ungroup</button>':'')+
-        '</div>';
-    }
+    var textInfo='<div class="grp-textinfo" onclick="grpPoster(this,event)"><span class="tc-type">'+type+'</span>'+badge+dur+chips+pill+'</div>'+
+        ((isAdminView&&pMode==='none')?'<div class="grp-textadmin">'+adm+'</div>':'');
     var inner='';
     g.variants.forEach(function(v){inner+=cardHtml(v,true);});
     return '<div class="grp-card card-enter'+open+'" data-gk="'+g.key+'">'+
-        '<div onclick="toggleGroup(this.parentNode)">'+poster+
-            '<div class="grp-body"><div class="grp-title">'+g.title+'</div>'+textInfo+'</div>'+
+        '<div class="grp-master">'+poster+
+            '<div class="grp-body"><div class="grp-title" onclick="event.stopPropagation();toggleGroup(this.closest(\\'.grp-card\\'))">'+g.title+'</div>'+textInfo+'</div>'+
         '</div>'+
-        '<div class="grp-openhead" onclick="toggleGroup(this.parentNode)">'+badge+'<div class="grp-title">'+g.title+'</div><span class="grp-chips" style="display:flex;gap:5px;flex-wrap:wrap">'+chips+'</span><span class="grp-arrow">&#9662;</span></div>'+
-        admin+
+        '<div class="grp-openhead" onclick="toggleGroup(this.parentNode)">'+badge+'<div class="grp-title">'+g.title+'</div><span class="grp-chips" style="display:flex;gap:5px;flex-wrap:wrap">'+chips+'</span>'+(isAdminView?'<span class="grp-oadmin">'+adm+'</span>':'')+'<span class="grp-arrow">&#9662;</span></div>'+
         '<div class="grp-variants">'+inner+'</div>'+
     '</div>';
 }
+/* Thumbnail click: admin ko edit popup, baaki users ke liye group khulta hai (title click se bhi khulta hai) */
+function grpPoster(el,e){
+    var card=el.closest('.grp-card');
+    if(!isAdminView){toggleGroup(card);return;}
+    e.stopPropagation();
+    var was=card.classList.contains('grp-active');
+    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');});
+    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');});
+    if(!was)card.classList.add('grp-active');
+}
+document.addEventListener('click',function(){
+    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');});
+});
 function toggleGroup(el){
     var k=el.getAttribute('data-gk');
     var isOpen=el.classList.toggle('open');
