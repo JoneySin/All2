@@ -937,6 +937,23 @@ async def get_files_by_ids(ids):
         out.extend(docs)
     return out
 
+async def find_phrase_files(phrase, limit=100):
+    """Naam me poora `phrase` rakhne wali files (text-index se), teeno collections me.
+    Auto-group ki "siblings" dhundhne ke liye — search query se bilkul independent."""
+    q = {"$text": {"$search": '"%s"' % str(phrase).replace('"', " ")}}
+
+    async def one(col):
+        try:
+            docs = await col.find(q, FILE_PROJECTION).limit(limit).to_list(length=limit)
+            _tag_docs(docs, col.name.lower())
+            return docs
+        except Exception as e:
+            logger.warning(f"find_phrase_files error ({col.name}): {e}")
+            return []
+
+    res = await asyncio.gather(one(primary), one(cloud), one(archive))
+    return [d for part in res for d in part]
+
 def encode_file_id(s: bytes) -> str:
     r, n = b"", 0
     for i in s + bytes([22]) + bytes([4]):
