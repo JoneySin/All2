@@ -536,6 +536,8 @@ def group_results(results, manual=None):
             "duration": rep.get("duration", ""),
             "size": rep.get("size", ""),
             "source": rep.get("raw_collection", "primary"),
+            "sources": [c for c in ("primary", "cloud", "archive")
+                        if any(d.get("raw_collection") == c for d in vlist)],
             "chips": chips,
             "variants": vlist,
         })
