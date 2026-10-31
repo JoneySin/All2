@@ -14,13 +14,14 @@ import logging
 import urllib.parse
 from lru import LRU
 from aiohttp import web
+from pymongo import ReturnDocument
 
 # कस्टमाइज्ड कोर यूटिल्स और कन्फर्म कंट्रोल्स इम्पोर्ट्स
 from utils import temp, get_size, is_premium, get_duration_str
 # ✅ SYNC: THUMBNAIL_STORAGE_CHANNEL को इम्पोर्ट किया गया है पृथक स्टोरेज के लिए
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
-from database.ia_filterdb import COLLECTIONS, groups, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
+from database.ia_filterdb import COLLECTIONS, groups, group_seq, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
 from media_probe import probe_telegram_file, should_probe_media
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
@@ -414,16 +415,35 @@ def _quality_label(res_text, name=""):
 # Naam alag hone par jo files auto-group nahi hoti, admin unhe khud ek group me jod sakta hai.
 # Ye DB (Groups collection) me save rehta hai, isliye baar-baar grouping nahi karni padti.
 # Manual membership hamesha auto-grouping se upar chalti hai.
-async def _manual_map(ids):
-    """{file_id: group_doc} — sirf diye gaye ids ke liye (ek indexed query)."""
-    ids = [i for i in ids if i]
+async def _manual_map(items):
+    """items = [(file_id, file_name)] → {file_id: group_doc}.
+    Match: (1) group ke members me file_id, ya (2) naam ki auto-key group ki auto_keys me
+    (isse baad me upload hui nayi quality bhi apne-aap isi group me aa jaati hai).
+    Admin ne jo file group se nikali (excluded) wo auto-key se wapas nahi judti."""
+    items = [(i, n) for i, n in items if i]
     out = {}
-    if not ids:
+    if not items:
         return out
+    ids = [i for i, _ in items]
+    keys = list({k for k in (_group_key(n) for _, n in items) if k})
     try:
-        async for g in groups.find({"members": {"$in": ids}}):
+        cond = [{"members": {"$in": ids}}]
+        if keys:
+            cond.append({"auto_keys": {"$in": keys}})
+        found = [g async for g in groups.find({"$or": cond})]
+        by_key = {}
+        for g in found:
+            for k in g.get("auto_keys", []):
+                by_key.setdefault(k, g)
+        for g in found:                              # explicit membership sabse upar
             for m in g.get("members", []):
                 out[m] = g
+        for i, n in items:
+            if i in out:
+                continue
+            g = by_key.get(_group_key(n))
+            if g and i not in (g.get("excluded") or []):
+                out[i] = g
     except Exception as e:
         logger.warning(f"manual group lookup failed: {e}")
     return out
@@ -489,9 +509,12 @@ def group_results(results, manual=None):
         # 🖼️ Master thumbnail: manual group me admin ne jo chuna wo; warna sabse badi
         # quality wali file ka thumbnail (single file jaisa hi bada poster).
         thumb = next((d.get("tg_thumb") for d in reversed(vlist) if d.get("tg_thumb")), "")
-        if mg and thumb and mg.get("thumb_fid") and mg.get("thumb_col"):
-            thumb = (f"/api/thumb?file_id={mg['thumb_fid']}&col={mg['thumb_col']}"
-                     f"&v={int(mg.get('updated_at') or 0)}")
+        if mg and thumb:
+            ts = int(mg.get("updated_at") or 0)
+            if mg.get("thumb_url"):                  # 1) admin ka upload kiya custom thumbnail
+                thumb = f"/api/group/thumb?gid={mg['_id']}&v={ts}"
+            elif mg.get("thumb_fid") and mg.get("thumb_col"):   # 2) kisi member ka chuna hua
+                thumb = (f"/api/thumb?file_id={mg['thumb_fid']}&col={mg['thumb_col']}&v={ts}")
         if mg:
             title = _html.escape(str(mg.get("name") or ""))
             key = "m" + str(mg["_id"])
@@ -502,6 +525,8 @@ def group_results(results, manual=None):
             "group": True,
             "manual": bool(mg),
             "gid": str(mg["_id"]) if mg else "",
+            "num": (mg.get("num") or "") if mg else "",
+            "custom_thumb": bool(mg and mg.get("thumb_url")),
             "key": key,
             "title": title,
             "count": len(vlist),
@@ -520,7 +545,7 @@ def group_results(results, manual=None):
 async def _finalize(results_list, want_group):
     if not want_group:
         return results_list
-    manual = await _manual_map([r.get("file_id") for r in results_list])
+    manual = await _manual_map([(r.get("file_id"), r.get("name")) for r in results_list])
     return group_results(results_list, manual)
 
 
@@ -548,7 +573,7 @@ async def _fetch_page(q, col, off, lim, group):
             more = False
             break
         raw.extend(docs)
-        manual.update(await _manual_map([d.get("_id") for d in docs]))
+        manual.update(await _manual_map([(d.get("_id"), d.get("file_name")) for d in docs]))
         more = bool(nxt)
         cur = nxt if nxt != "" else None
 
@@ -796,9 +821,18 @@ async def api_edit_name(req):
 
 
 # ─────────────────────────────────────────────────────────
-# 🗂️ ADMIN: MANUAL QUALITY-GROUPS (DB me save — baar-baar grouping nahi karni padti)
-#   groups doc: {_id, name, members:[file_id...], thumb_fid, thumb_col, created_at, updated_at}
+# 🗂️ ADMIN: QUALITY-GROUPS (DB me save, har group ka apna number)
+#   QualityGroups doc: {_id:"12", num:12, name, members:[file_id], auto_keys:[naam-key],
+#     excluded:[file_id], thumb_fid, thumb_col, thumb_url("TG_ID:.." custom upload),
+#     created_at, updated_at}
+#   auto_keys ki wajah se baad me upload hui nayi quality (same naam) apne-aap group me judti hai.
 # ─────────────────────────────────────────────────────────
+async def _next_group_num():
+    d = await group_seq.find_one_and_update(
+        {"_id": "seq"}, {"$inc": {"n": 1}}, upsert=True, return_document=ReturnDocument.AFTER)
+    return int(d["n"])
+
+
 async def _group_cleanup(pull_ids=None):
     """Deleted files ko groups se hatao, khali groups mitao, caches saaf karo."""
     try:
@@ -826,49 +860,68 @@ async def api_group_list(req):
     role, _ = await get_user_role(req)
     if role != "admin":
         return web.json_response({"error": "Core Admin Authorization Required!"}, status=403, dumps=fast_json)
-    q = req.query.get("q", "").strip()
-    flt = {"name": {"$regex": re.escape(q), "$options": "i"}} if q else {}
+    q = req.query.get("q", "").strip().lstrip("#")
+    if not q:
+        flt = {}
+    elif q.isdigit():
+        flt = {"$or": [{"_id": q}, {"name": {"$regex": re.escape(q), "$options": "i"}}]}
+    else:
+        flt = {"name": {"$regex": re.escape(q), "$options": "i"}}
     out = []
     async for g in groups.find(flt).sort("updated_at", -1).limit(25):
-        out.append({"id": str(g["_id"]), "name": g.get("name", ""), "count": len(g.get("members", []))})
+        out.append({"id": str(g["_id"]), "num": g.get("num", ""), "name": g.get("name", ""),
+                    "count": len(g.get("members", []))})
     return web.json_response({"groups": out}, dumps=fast_json)
 
 
 @search_routes.post("/api/group/save")
 async def api_group_save(req):
-    """Nayi group banao (name) YA maujooda group (group_id) me files jodo.
-    Jo file kisi aur manual group me thi, wo wahan se nikal kar yahan aa jaati hai."""
+    """Naya group banao (nayi number ke saath) YA maujooda group (group_id) me files jodo.
+    body: {items:[{id,name}], group_id?, name?}.  Jo file kisi aur group me thi wo wahan se
+    nikal kar yahan aa jaati hai."""
     data, err = await _admin_json(req)
     if err:
         return err
     try:
-        file_ids = []
-        for x in data.get("file_ids", []):
-            if x and str(x) not in file_ids:
-                file_ids.append(str(x))
+        items, seen = [], set()
+        for x in data.get("items", []):
+            fid = str((x or {}).get("id") or "").strip()
+            if fid and fid not in seen:
+                seen.add(fid)
+                items.append((fid, str((x or {}).get("name") or "")))
         gid = str(data.get("group_id") or "").strip()
         name = str(data.get("name") or "").strip()[:200]
-        if not file_ids:
+        if not items:
             return web.json_response({"error": "Koi file select nahi hai!"}, status=400, dumps=fast_json)
+        file_ids = [i for i, _ in items]
+        auto_keys = list({k for k in (_group_key(n) for _, n in items) if k})
         now = int(time.time())
 
         # pehle in files ko baaki sab groups se nikalo
         await groups.update_many({"members": {"$in": file_ids}}, {"$pull": {"members": {"$in": file_ids}}})
 
         if gid:
-            if not await groups.find_one({"_id": gid}):
+            g = await groups.find_one({"_id": gid})
+            if not g:
                 return web.json_response({"error": "Group nahi mila!"}, status=404, dumps=fast_json)
-            await groups.update_one({"_id": gid}, {
-                "$addToSet": {"members": {"$each": file_ids}}, "$set": {"updated_at": now}})
+            upd = {"$addToSet": {"members": {"$each": file_ids}}, "$set": {"updated_at": now}}
+            if auto_keys:
+                upd["$addToSet"]["auto_keys"] = {"$each": auto_keys}
+            upd["$pull"] = {"excluded": {"$in": file_ids}}
+            await groups.update_one({"_id": gid}, upd)
+            num = g.get("num", "")
         else:
             if not name:
                 return web.json_response({"error": "Group ka naam likhiye!"}, status=400, dumps=fast_json)
-            gid = uuid.uuid4().hex[:10]
+            num = await _next_group_num()
+            gid = str(num)
             await groups.insert_one({
-                "_id": gid, "name": name, "members": file_ids,
-                "thumb_fid": "", "thumb_col": "", "created_at": now, "updated_at": now})
+                "_id": gid, "num": num, "name": name, "members": file_ids,
+                "auto_keys": auto_keys, "excluded": [],
+                "thumb_fid": "", "thumb_col": "", "thumb_url": "",
+                "created_at": now, "updated_at": now})
         await _group_cleanup()
-        return web.json_response({"success": True, "group_id": gid}, dumps=fast_json)
+        return web.json_response({"success": True, "group_id": gid, "num": num}, dumps=fast_json)
     except Exception as e:
         logger.error(f"group save error: {e}")
         return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
@@ -876,8 +929,9 @@ async def api_group_save(req):
 
 @search_routes.post("/api/group/update")
 async def api_group_update(req):
-    """Group ka naam / master thumbnail badlo. thumb_file_id member hona chahiye;
-    khali ('') bhejne par thumbnail auto (sabse badi quality) ho jaata hai."""
+    """Group ka naam / thumbnail badlo.
+    thumb_file_id: member ka thumbnail (khali '' = AUTO).  clear_custom=true: upload kiya
+    custom thumbnail hata do."""
     data, err = await _admin_json(req)
     if err:
         return err
@@ -896,11 +950,14 @@ async def api_group_update(req):
             tf = str(data.get("thumb_file_id") or "").strip()
             tc = str(data.get("thumb_col") or "").strip().lower()
             if tf:
-                if tf not in g.get("members", []) or tc not in COLLECTIONS:
-                    return web.json_response({"error": "Thumbnail group ki hi kisi file ka chunein!"}, status=400, dumps=fast_json)
+                if tc not in COLLECTIONS:
+                    return web.json_response({"error": "Thumbnail ki collection galat hai!"}, status=400, dumps=fast_json)
                 upd["thumb_fid"], upd["thumb_col"] = tf, tc
             else:
                 upd["thumb_fid"], upd["thumb_col"] = "", ""
+        if data.get("clear_custom"):
+            upd["thumb_url"] = ""
+            thumb_cache.pop(f"g:{gid}", None)
         await groups.update_one({"_id": gid}, {"$set": upd})
         await _group_cleanup()
         return web.json_response({"success": True}, dumps=fast_json)
@@ -920,8 +977,10 @@ async def api_group_remove_file(req):
         if not gid or not fid:
             return web.json_response({"error": "Missing inputs!"}, status=400, dumps=fast_json)
         g = await groups.find_one({"_id": gid})
-        upd = {"$pull": {"members": fid}, "$set": {"updated_at": int(time.time())}}
-        if g and g.get("thumb_fid") == fid:            # hata di gayi file ka thumbnail na rahe
+        upd = {"$pull": {"members": fid},
+               "$addToSet": {"excluded": fid},          # auto-key se wapas na judey
+               "$set": {"updated_at": int(time.time())}}
+        if g and g.get("thumb_fid") == fid:
             upd["$set"].update({"thumb_fid": "", "thumb_col": ""})
         await groups.update_one({"_id": gid}, upd)
         await _group_cleanup()
@@ -938,11 +997,79 @@ async def api_group_delete(req):
     if err:
         return err
     try:
-        await groups.delete_one({"_id": str(data.get("group_id") or "").strip()})
+        gid = str(data.get("group_id") or "").strip()
+        await groups.delete_one({"_id": gid})
+        thumb_cache.pop(f"g:{gid}", None)
         await _group_cleanup()
         return web.json_response({"success": True}, dumps=fast_json)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
+
+
+@search_routes.post("/api/group/upload_thumb")
+async def api_group_upload_thumb(req):
+    """Group ka apna custom thumbnail (file ke thumbnail upload jaisa). multipart: group_id, image"""
+    role, _ = await get_user_role(req)
+    if role != "admin":
+        return web.json_response({"error": "Core Admin Authorization Required!"}, status=403, dumps=fast_json)
+    try:
+        reader = await req.multipart()
+        gid, image_bytes = "", None
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name == "group_id":
+                gid = (await part.read()).decode().strip()
+            elif part.name == "image":
+                image_bytes = await part.read()
+        if not gid or not image_bytes:
+            return web.json_response({"error": "Missing required assets!"}, status=400, dumps=fast_json)
+        if not await groups.find_one({"_id": gid}, {"_id": 1}):
+            return web.json_response({"error": "Group nahi mila!"}, status=404, dumps=fast_json)
+
+        with io.BytesIO(image_bytes) as buf:
+            buf.name = "group_poster.jpg"
+            msg = await temp.BOT.send_photo(chat_id=THUMBNAIL_STORAGE_CHANNEL, photo=buf)
+        if not msg or not msg.photo:
+            return web.json_response({"error": "Telegram Node failed!"}, status=500, dumps=fast_json)
+        try:
+            new_id = msg.photo.sizes[-1].file_id if getattr(msg.photo, "sizes", None) else msg.photo.file_id
+        except Exception:
+            new_id = msg.photo.file_id
+
+        await groups.update_one({"_id": gid}, {"$set": {"thumb_url": f"TG_ID:{new_id}", "updated_at": int(time.time())}})
+        thumb_cache.pop(f"g:{gid}", None)
+        await _group_cleanup()
+        return web.json_response({"success": True}, dumps=fast_json)
+    except Exception as e:
+        logger.error(f"❌ Group thumb upload crash: {e}")
+        return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
+
+
+@search_routes.get("/api/group/thumb")
+async def api_group_thumb(req):
+    gid = req.query.get("gid", "").strip()
+    if not gid:
+        return web.Response(status=400)
+    ck = f"g:{gid}"
+    img = thumb_cache.get(ck)
+    if img is None:
+        g = await groups.find_one({"_id": gid}, {"thumb_url": 1})
+        tu = (g or {}).get("thumb_url", "")
+        if not tu.startswith("TG_ID:"):
+            return web.Response(status=404)
+        try:
+            fd = await temp.BOT.download_media(tu.replace("TG_ID:", ""), in_memory=True)
+            img = fd.getvalue() if fd else None
+        except Exception as e:
+            logger.warning(f"group thumb fetch failed: {e}")
+            img = None
+        if not img:
+            return web.Response(status=404)
+        thumb_cache[ck] = img
+    return web.Response(body=img, content_type="image/jpeg",
+                        headers={"Content-Disposition": 'inline; filename="poster.jpg"', "Cache-Control": "max-age=86400"})
 
 
 # ─────────────────────────────────────────────────────────
