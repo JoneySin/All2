@@ -527,6 +527,7 @@ def group_results(results, manual=None):
             "group": True,
             "manual": bool(mg),
             "gid": str(mg["_id"]) if mg else "",
+            "nkey": "" if mg else v[2:],
             "num": (mg.get("num") or "") if mg else "",
             "custom_thumb": bool(mg and mg.get("thumb_url")),
             "key": key,
@@ -665,6 +666,41 @@ async def _mark_scanned(gids):
         logger.warning(f"mark scanned failed: {e}")
 
 
+_AUTO_SAVING = set()
+
+
+async def _auto_persist(cards):
+    """Har auto-group (2+ files) ko PERMANENT group bana do: apna number, members DB me,
+    aur har file par `group_id` mark. Uske baad wo file jab bhi dikhegi, apne group ke saath dikhegi."""
+    for c in cards:
+        k = c.get("nkey")
+        if not k or k in _AUTO_SAVING:
+            continue
+        _AUTO_SAVING.add(k)
+        try:
+            if await groups.find_one({"auto_keys": k}, {"_id": 1}):
+                continue                                  # is naam-key ka saved group pehle se hai
+            items = [(v["file_id"], v.get("name") or "") for v in c.get("variants", []) if v.get("file_id")]
+            if len(items) < 2:
+                continue
+            ids = [i for i, _ in items]
+            num = await _next_group_num()
+            gid = str(num)
+            now = int(time.time())
+            await groups.insert_one({
+                "_id": gid, "num": num, "name": _html.unescape(str(c.get("title") or ""))[:200],
+                "members": ids, "files": [{"id": i, "name": n} for i, n in items],
+                "auto_keys": [k], "excluded": [], "auto_created": True,
+                "thumb_fid": "", "thumb_col": "", "thumb_url": "",
+                "scanned_at": now, "created_at": now, "updated_at": now})
+            await _mark_files(ids, gid)
+            logger.info(f"🗂️ Auto group #{gid} permanent bana ({len(ids)} files)")
+        except Exception as e:
+            logger.warning(f"auto group persist failed: {e}")
+        finally:
+            _AUTO_SAVING.discard(k)
+
+
 _SIB_CACHE = {}
 _SIB_TTL = 300
 
@@ -786,6 +822,9 @@ async def _finalize(results_list, want_group, gf="all", mode=DEFAULT_MEDIA_MODE)
     if joins:
         asyncio.create_task(_persist_joins(joins))      # nayi files DB me group me jod do (background)
     out = group_results(results_list, manual)
+    autos = [r for r in out if r.get("group") and not r.get("manual")]
+    if autos:
+        asyncio.create_task(_auto_persist(autos))      # auto-group ko permanent group bana do (background)
     if gf == "group":
         out = [r for r in out if r.get("group")]
     elif gf == "single":
