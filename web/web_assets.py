@@ -309,7 +309,7 @@ async function saveAllChanges(){
 }
 
 function refreshGridAfterEdit() {
-    if (typeof doSearch === 'function') doSearch(curOff);
+    if (typeof doSearch === 'function') doSearch(curOff, true);
     else if (typeof triggerActorSearchAjax === 'function') triggerActorSearchAjax();
     else window.location.reload();
 }
