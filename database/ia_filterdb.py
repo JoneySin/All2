@@ -35,6 +35,7 @@ cloud   = db["Cloud"]
 archive = db["Archive"]
 actors  = db["Actors"]  # 🎭 एक्टर प्रोफाइल के लिए डेटाबेस कलेक्शन
 posts   = db["Posts"]   # 📝 नया पोस्ट्स (CMS) कलेक्शन
+groups  = db["Groups"]  # 🗂️ एडमिन के बनाए मैन्युअल क्वालिटी-ग्रुप (नाम, थंबनेल, members)
 
 COLLECTIONS = {
     "primary": primary,
@@ -82,6 +83,14 @@ async def ensure_indexes():
     except Exception as e:
         if "already exists" not in str(e) and "IndexKeySpecsConflict" not in str(e):
             logger.warning(f"Actor Index warning: {e}")
+
+    # 2b. Manual quality-groups: member -> group lookup तेज़ करने के लिए
+    try:
+        await groups.create_index("members", name="groups_members_idx")
+        await groups.create_index("name", name="groups_name_idx")
+    except Exception as e:
+        if "already exists" not in str(e) and "IndexKeySpecsConflict" not in str(e):
+            logger.warning(f"Groups Index warning: {e}")
 
     # 3. Posts Specific Indexes (NEW)
     try:
