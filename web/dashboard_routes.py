@@ -658,11 +658,11 @@ async function doSearch(o,allowEmpty){
         }
         var h='';
         isAdminView=!!d.is_admin;
-        /* Saved group ka poora card ek hi baar: pichhle pages par dikh chuka ho to dobara nahi */
+        /* Group ka poora card ek hi baar: pichhle pages par dikh chuka ho to dobara nahi */
         var earlier={};
         offHist.forEach(function(oo){(pageGroups[oo]||[]).forEach(function(k){earlier[k]=1;});});
-        var rows=d.results.filter(function(f){return !(f.group&&f.manual&&earlier[f.key]);});
-        pageGroups[o]=rows.filter(function(f){return f.group&&f.manual;}).map(function(f){return f.key;});
+        var rows=d.results.filter(function(f){return !(f.group&&earlier[f.key]);});
+        pageGroups[o]=rows.filter(function(f){return f.group;}).map(function(f){return f.key;});
         rows.forEach(function(f){
             h+=f.group?groupHtml(f):cardHtml(f,false);
         });
