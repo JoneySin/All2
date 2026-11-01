@@ -685,7 +685,7 @@ async function doSearch(o,allowEmpty){
         document.getElementById('resInfo').style.display='none';
         if(!d.results||!d.results.length){
             resDiv.innerHTML = q
-                ? '<div class="empty"><div class="empty-icon">&#9888;</div><p>No titles found for "'+q+'"</p></div>'
+                ? '<div class="empty"><div class="empty-icon">&#9888;</div><p>No titles found for "'+q+'"'+(curGF==='group'?' in Group (sirf group wale results)':'')+'</p></div>'
                 : '<div class="empty"><div class="empty-icon">&#8981;</div><p>No files added yet.</p></div>';
             document.getElementById('pageBox').style.display='none';return;
         }
