@@ -21,7 +21,7 @@ from utils import temp, get_size, is_premium, get_duration_str
 # ✅ SYNC: THUMBNAIL_STORAGE_CHANNEL को इम्पोर्ट किया गया है पृथक स्टोरेज के लिए
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
-from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, get_files_by_ids, find_phrase_files, search_groups, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
+from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, get_files_by_ids, find_phrase_files, search_groups, get_groups_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
 from media_probe import probe_telegram_file, should_probe_media
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
@@ -845,6 +845,8 @@ _GH_TTL = 60
 
 
 async def _group_hits(q):
+    """Query se jude groups: (1) group ke naam/files ke naam se, (2) jinki kisi member file ka
+    naam YA CAPTION query se match kare (file-search jaisa hi filter). None = fail (purana tareeka)."""
     key = q.lower()
     c = _GH_CACHE.get(key)
     now = time.time()
@@ -853,6 +855,20 @@ async def _group_hits(q):
     gs = await search_groups(q)
     if gs is None:
         return None
+    gs = list(gs)
+    try:
+        have = {g["_id"] for g in gs}
+        docs, _, _, _ = await get_search_results(q, 600, offset=0, collection_type="all",
+                                                 bypass_count=True, grouped_only=True)
+        gids = []
+        for d in docs:
+            gid = d.get("group_id")
+            if gid and gid not in have and gid not in gids:
+                gids.append(gid)
+        if gids:
+            gs += await get_groups_by_ids(gids)
+    except Exception as e:
+        logger.warning(f"group hits via member files failed: {e}")
     if len(_GH_CACHE) > 300:
         _GH_CACHE.clear()
     _GH_CACHE[key] = (now + _GH_TTL, gs)
@@ -911,6 +927,8 @@ async def api_search(req):
     want_group = req.query.get("group", "") == "1"     # dashboard hi bhejta hai; baaki users raw list
     gf = req.query.get("gf", "all").lower()
     gf = {"ungroup": "single", "single": "single", "group": "group"}.get(gf, "all") if want_group else "all"
+    if want_group and gf == "single":
+        want_group, gf = False, "all"      # UNGROUP = ग्रुप फीचर से पहले वाला साधारण सर्च (सारी फाइलें, कोई ग्रुपिंग नहीं)
     gflag = ("g1" + gf) if want_group else "g0"
 
     try:
