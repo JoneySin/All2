@@ -483,7 +483,7 @@ def _build_regex(query: str):
 # ─────────────────────────────────────────────────────────
 FILE_PROJECTION = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1,
                    "file_ref": 1, "caption": 1, "thumb_url": 1, "duration": 1,
-                   "meta": 1}
+                   "meta": 1, "group_id": 1}
 FILE_PROJECTION_SCORED = {**FILE_PROJECTION, "score": {"$meta": "textScore"}}
 
 # ─────────────────────────────────────────────────────────
@@ -614,7 +614,7 @@ async def get_count(col, flt, bypass):
 # ─────────────────────────────────────────────────────────
 # 🌐 PUBLIC SEARCH API (NEW UPGRADE: CROSS-COLLECTION MERGE)
 # ─────────────────────────────────────────────────────────
-async def get_search_results(query, max_results, offset=0, lang=None, collection_type="primary", bypass_count=False, cached_counts=None, counts_out=None, exclude_grouped=False):
+async def get_search_results(query, max_results, offset=0, lang=None, collection_type="primary", bypass_count=False, cached_counts=None, counts_out=None, exclude_grouped=False, grouped_only=False):
     if not query: return [], "", 0, collection_type
     raw_query  = str(query).strip()
     regex      = _build_regex(raw_query)
@@ -626,6 +626,8 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
         return [], "", 0, collection_type
     if exclude_grouped:
         flt = _not_grouped(flt)
+    elif grouped_only:                       # sirf wo files jo kisi group me hain (group dhundhne ke liye)
+        flt = {"$and": [flt, {"group_id": {"$exists": True}}]}
 
     results, total, actual_src = [], 0, collection_type
 
@@ -957,6 +959,20 @@ async def search_groups(query, limit=600):
     except Exception as e:
         logger.warning(f"search_groups failed: {e}")
         return None
+
+
+async def get_groups_by_ids(ids):
+    """Group docs, diye gaye ids ke order me."""
+    ids = [i for i in ids if i]
+    if not ids:
+        return []
+    try:
+        docs = await groups.find({"_id": {"$in": ids}}, GROUP_PROJECTION).to_list(length=len(ids))
+    except Exception as e:
+        logger.warning(f"get_groups_by_ids error: {e}")
+        return []
+    by = {d["_id"]: d for d in docs}
+    return [by[i] for i in ids if i in by]
 
 
 async def get_files_by_ids(ids):
