@@ -14,14 +14,14 @@ import logging
 import urllib.parse
 from lru import LRU
 from aiohttp import web
-from pymongo import ReturnDocument
+from pymongo import ReturnDocument, UpdateOne, UpdateMany
 
 # कस्टमाइज्ड कोर यूटिल्स और कन्फर्म कंट्रोल्स इम्पोर्ट्स
 from utils import temp, get_size, is_premium, get_duration_str
 # ✅ SYNC: THUMBNAIL_STORAGE_CHANNEL को इम्पोर्ट किया गया है पृथक स्टोरेज के लिए
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
-from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, get_files_by_ids, find_phrase_files, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
+from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, get_files_by_ids, find_phrase_files, search_groups, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
 from media_probe import probe_telegram_file, should_probe_media
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
@@ -551,7 +551,7 @@ def group_results(results, manual=None):
 # Pehle 21 *files* aati thi aur grouping ke baad 5-6 card bachte the. Ab group=1 me
 # itni files uthayi jaati hain ki poore `lim` (21) CARDS ban jaayein. Offset hamesha
 # raw-file position hai, isliye pagination me na koi file repeat hoti hai na chhutti hai.
-async def _fetch_page(q, col, off, lim, group, gf="all"):
+async def _fetch_page(q, col, off, lim, group, gf="all", exclude_grouped=False):
     """(docs, next_offset). group=False → purana behaviour (lim raw files).
     gf: "all" | "group" (sirf 2+ quality wale cards) | "single" (sirf ungrouped files).
     Filter laga ho to bhi page me `lim` matching cards banane ki koshish hoti hai."""
@@ -559,7 +559,7 @@ async def _fetch_page(q, col, off, lim, group, gf="all"):
         if not q:
             return await get_recent_files(n, offset=o, collection_type=col)
         docs, nxt, _, _ = await get_search_results(
-            q, n, offset=o, collection_type=col, bypass_count=True)
+            q, n, offset=o, collection_type=col, bypass_count=True, exclude_grouped=exclude_grouped)
         return docs, nxt
 
     if not group:
@@ -655,6 +655,7 @@ async def _persist_joins(joins):
                 "files": {"$each": [{"id": i, "name": n or ""} for i, n in m.items()]}}})
             await _mark_files(list(m), gid)
             logger.info(f"🗂️ Group #{gid}: {len(m)} nayi file(s) DB me jodi gayi")
+        _GH_CACHE.clear()
     except Exception as e:
         logger.warning(f"persist group joins failed: {e}")
 
@@ -694,6 +695,7 @@ async def _auto_persist(cards):
                 "thumb_fid": "", "thumb_col": "", "thumb_url": "",
                 "scanned_at": now, "created_at": now, "updated_at": now})
             await _mark_files(ids, gid)
+            _GH_CACHE.clear()
             logger.info(f"🗂️ Auto group #{gid} permanent bana ({len(ids)} files)")
         except Exception as e:
             logger.warning(f"auto group persist failed: {e}")
@@ -723,7 +725,7 @@ async def _siblings(key):
     return docs
 
 
-async def _expand_groups(results_list, manual, mode, joins=None):
+async def _expand_groups(results_list, manual, mode, joins=None, siblings=True):
     """Group kabhi adhoora nahi dikhna chahiye. Isliye:
     (1) Saved group ki saari members (kisi bhi collection se, search se match ho ya na ho)
     (2) Har group/file ki same-naam wali baaki saari files (auto-group ki siblings;
@@ -752,6 +754,8 @@ async def _expand_groups(results_list, manual, mode, joins=None):
         except Exception as e:
             logger.warning(f"group expand failed: {e}")
 
+    if not siblings:
+        return results_list
     # (2) same-naam siblings.
     #     Saved group ko DB me `scanned_at` se yaad rehta hai: ek baar scan hone ke baad
     #     GROUP_RESCAN_SECS tak dobara scan nahi hota (members DB se hi aate hain).
@@ -813,12 +817,12 @@ async def _expand_groups(results_list, manual, mode, joins=None):
     return results_list
 
 
-async def _finalize(results_list, want_group, gf="all", mode=DEFAULT_MEDIA_MODE):
+async def _finalize(results_list, want_group, gf="all", mode=DEFAULT_MEDIA_MODE, siblings=True):
     if not want_group:
         return results_list
     joins = []
     manual = await _manual_map([(r.get("file_id"), r.get("name")) for r in results_list], joins)
-    results_list = await _expand_groups(results_list, manual, mode, joins)
+    results_list = await _expand_groups(results_list, manual, mode, joins, siblings)
     if joins:
         asyncio.create_task(_persist_joins(joins))      # nayi files DB me group me jod do (background)
     out = group_results(results_list, manual)
@@ -830,6 +834,68 @@ async def _finalize(results_list, want_group, gf="all", mode=DEFAULT_MEDIA_MODE)
     elif gf == "single":
         out = [r for r in out if not r.get("group")]
     return out
+
+
+# ── 🗂️ GROUP-FIRST SEARCH ────────────────────────────────────────────────
+# Pehle QualityGroups me search (poore group, teeno collections ki files ke saath),
+# phir primary → cloud → archive me sirf wahi files jo kisi group me NAHI hain (group_id nahi).
+# Offset ek hi line me chalta hai: [group matches ...][ungrouped files ...]
+_GH_CACHE = {}
+_GH_TTL = 60
+
+
+async def _group_hits(q):
+    key = q.lower()
+    c = _GH_CACHE.get(key)
+    now = time.time()
+    if c and c[0] > now:
+        return c[1]
+    gs = await search_groups(q)
+    if gs is None:
+        return None
+    if len(_GH_CACHE) > 300:
+        _GH_CACHE.clear()
+    _GH_CACHE[key] = (now + _GH_TTL, gs)
+    return gs
+
+
+async def _group_cards(page_groups, mode):
+    ids = [m for g in page_groups for m in g.get("members", [])]
+    docs = await get_files_by_ids(ids) if ids else []
+    by = {d["_id"]: d for d in docs}
+    ordered, manual = [], {}
+    for g in page_groups:                      # search ka group-order bana rahe
+        for m in g.get("members", []):
+            d = by.get(m)
+            if d:
+                ordered.append(d)
+                manual[m] = g
+    return group_results(_build_results_list(ordered, mode), manual)
+
+
+async def _grouped_first_page(q, off, lim, mode, gf, gs):
+    """(cards, next_offset)"""
+    G = len(gs) if gf != "single" else 0
+    cards = []
+    if off < G:
+        page = gs[off: off + lim]
+        cards = await _group_cards(page, mode)
+        taken = len(page)
+        if off + taken < G:
+            return cards, off + taken
+        rem = lim - taken
+        if rem <= 0:                            # groups ne page bhar diya; aage files bachi hain?
+            peek, _ = await _fetch_page(q, "all", 0, 1, True, gf, True)
+            return cards, (G if peek else "")
+        fo = 0
+    else:
+        rem, fo = lim, off - G
+
+    docs, nf = await _fetch_page(q, "all", fo, rem, True, gf, True)
+    file_cards = await _finalize(_build_results_list(docs, mode), True, gf, mode, siblings=False)
+    seen = {c.get("gid") for c in cards if c.get("group") and c.get("manual")}
+    file_cards = [c for c in file_cards if not (c.get("group") and c.get("manual") and c.get("gid") in seen)]
+    return cards + file_cards, ((G + nf) if nf != "" else "")
 
 
 @search_routes.get("/api/search")
@@ -866,6 +932,18 @@ async def api_search(req):
             "is_admin": role == "admin",
             "is_recent": True,
         }, dumps=fast_json)
+
+    # 🗂️ GROUP-FIRST: pehle groups, phir ungrouped files (sirf "all" collections par)
+    if want_group and col == "all":
+        gs = await _group_hits(q)
+        if gs is not None:
+            cards, nxt = await _grouped_first_page(q, off, lim, mode, gf, gs)
+            return web.json_response({
+                "results": cards,
+                "total": off + len(cards) + (1 if nxt else 0),
+                "next_offset": nxt,
+                "is_admin": role == "admin",
+            }, dumps=fast_json)
 
     trend_key = f"{col}_{mode}_{q.lower()}_{gflag}"
     if off == 0:
@@ -1085,6 +1163,7 @@ async def _group_cleanup(pull_ids=None):
         logger.warning(f"group cleanup failed: {e}")
     PREFETCH_CACHE.clear()
     TRENDING_CACHE.clear()
+    _GH_CACHE.clear()
 
 
 async def _admin_json(req):
@@ -1095,6 +1174,159 @@ async def _admin_json(req):
         return await req.json(), None
     except Exception:
         return None, web.json_response({"error": "Invalid request body!"}, status=400, dumps=fast_json)
+
+
+SCAN_STATE = {"running": False}
+SCAN_MAX_GROUP = 30        # isse bade bucket generic naam maane jaate hain, group nahi bante
+
+
+async def _scan_all_groups():
+    """Poori library (primary+cloud+archive) ek baar scan karke PERMANENT groups banata hai.
+    - Same naam-key wali 2+ files → ek group (apna number, members DB me, file par group_id mark)
+    - Pehle se bane groups me sirf nayi files jodta hai
+    - Jo file kisi group ki `excluded` (blacklist) me hai wo wahan nahi jodi jaati
+    - Jo file kisi aur group ki member hai use chhedta nahi
+    Dobara chalana safe hai."""
+    st = SCAN_STATE
+    st.update(running=True, phase="groups load ho rahe hain", scanned=0, total=0, created=0,
+              added=0, skipped_big=0, error="", started=time.time(), finished=0)
+    try:
+        key2g, owner = {}, {}
+        async for g in groups.find({}, {"auto_keys": 1, "members": 1, "excluded": 1}):
+            gd = {"id": g["_id"], "excl": set(g.get("excluded") or [])}
+            for m in g.get("members", []):
+                owner[m] = g["_id"]
+            for k in g.get("auto_keys", []):
+                key2g.setdefault(k, gd)
+
+        total = 0
+        for col in FILE_COLLECTIONS.values():
+            try:
+                total += await col.estimated_document_count()
+            except Exception:
+                pass
+        st["total"] = total
+
+        st["phase"] = "files scan ho rahi hain"
+        buckets = {}
+        fix_set, fix_unset = {}, {}
+        for cname, col in FILE_COLLECTIONS.items():
+            async for d in col.find({}, {"file_name": 1, "group_id": 1}).batch_size(2000):
+                st["scanned"] += 1
+                og, cg = owner.get(d["_id"]), d.get("group_id")
+                if og and cg != og:
+                    fix_set.setdefault((cname, og), []).append(d["_id"])      # member hai par mark nahi/galat
+                elif not og and cg:
+                    fix_unset.setdefault(cname, []).append(d["_id"])          # mark hai par kisi group me nahi
+                nm = d.get("file_name") or ""
+                k = _group_key(nm)
+                if len(k) >= 3:
+                    buckets.setdefault(k, []).append((d["_id"], nm, cname))
+                if st["scanned"] % 2000 == 0:
+                    await asyncio.sleep(0)
+
+        st["phase"] = "groups tay ho rahe hain"
+        new_docs, adds, marks = [], {}, dict(fix_set)
+        now = int(time.time())
+        for k, items in buckets.items():
+            g = key2g.get(k)
+            if g:
+                fresh = [it for it in items if it[0] not in owner and it[0] not in g["excl"]]
+                if not fresh:
+                    continue
+                adds.setdefault(g["id"], []).extend(fresh)
+                for i, _, cn in fresh:
+                    marks.setdefault((cn, g["id"]), []).append(i)
+                st["added"] += len(fresh)
+                continue
+            if len(items) < 2:
+                continue
+            if len(items) > SCAN_MAX_GROUP:
+                st["skipped_big"] += 1
+                continue
+            cand = [it for it in items if it[0] not in owner]
+            if len(cand) < 2:
+                continue
+            new_docs.append((k, cand))
+
+        if new_docs:
+            seq = await group_seq.find_one_and_update(
+                {"_id": "seq"}, {"$inc": {"n": len(new_docs)}}, upsert=True, return_document=ReturnDocument.AFTER)
+            start = int(seq["n"]) - len(new_docs) + 1
+            docs = []
+            for idx, (k, cand) in enumerate(new_docs):
+                num = start + idx
+                gid = str(num)
+                docs.append({
+                    "_id": gid, "num": num, "name": (_group_title(cand[0][1]) or cand[0][1])[:200],
+                    "members": [i for i, _, _ in cand],
+                    "files": [{"id": i, "name": n} for i, n, _ in cand],
+                    "auto_keys": [k], "excluded": [], "auto_created": True, "scan_created": True,
+                    "thumb_fid": "", "thumb_col": "", "thumb_url": "",
+                    "scanned_at": now, "created_at": now, "updated_at": now})
+                for i, _, cn in cand:
+                    marks.setdefault((cn, gid), []).append(i)
+            st["created"] = len(docs)
+            st["phase"] = "groups DB me save ho rahe hain"
+            for n in range(0, len(docs), 500):
+                await groups.insert_many(docs[n:n + 500], ordered=False)
+
+        if adds:
+            ops = [UpdateOne({"_id": gid}, {"$addToSet": {
+                "members": {"$each": [i for i, _, _ in its]},
+                "files": {"$each": [{"id": i, "name": n} for i, n, _ in its]}},
+                "$set": {"scanned_at": now}}) for gid, its in adds.items()]
+            for n in range(0, len(ops), 500):
+                await groups.bulk_write(ops[n:n + 500], ordered=False)
+
+        st["phase"] = "files par group_id mark ho raha hai"
+        per_col = {}
+        for (cn, gid), ids in marks.items():
+            per_col.setdefault(cn, []).append(UpdateMany({"_id": {"$in": ids}}, {"$set": {"group_id": gid}}))
+        for cn, ops in per_col.items():
+            for n in range(0, len(ops), 500):
+                await FILE_COLLECTIONS[cn].bulk_write(ops[n:n + 500], ordered=False)
+                await asyncio.sleep(0)
+
+        for cn, ids in fix_unset.items():
+            ops = [UpdateMany({"_id": {"$in": ids[n:n + 1000]}}, {"$unset": {"group_id": ""}})
+                   for n in range(0, len(ids), 1000)]
+            for n in range(0, len(ops), 500):
+                await FILE_COLLECTIONS[cn].bulk_write(ops[n:n + 500], ordered=False)
+        st["fixed_marks"] = sum(len(v) for v in fix_set.values()) + sum(len(v) for v in fix_unset.values())
+
+        PREFETCH_CACHE.clear()
+        TRENDING_CACHE.clear()
+        _GH_CACHE.clear()
+        st["phase"] = "complete"
+    except Exception as e:
+        logger.error(f"group scan failed: {e}")
+        st["error"] = str(e)
+        st["phase"] = "error"
+    finally:
+        st["running"] = False
+        st["finished"] = time.time()
+        logger.info(f"🗂️ Group scan done: created={st.get('created')} added={st.get('added')} "
+                    f"skipped_big={st.get('skipped_big')} err={st.get('error')}")
+
+
+@search_routes.post("/api/group/scan_all")
+async def api_group_scan_all(req):
+    role, _ = await get_user_role(req)
+    if role != "admin":
+        return web.json_response({"error": "Core Admin Authorization Required!"}, status=403, dumps=fast_json)
+    if SCAN_STATE.get("running"):
+        return web.json_response({"started": False, "running": True}, dumps=fast_json)
+    asyncio.create_task(_scan_all_groups())
+    return web.json_response({"started": True}, dumps=fast_json)
+
+
+@search_routes.get("/api/group/scan_status")
+async def api_group_scan_status(req):
+    role, _ = await get_user_role(req)
+    if role != "admin":
+        return web.json_response({"error": "Core Admin Authorization Required!"}, status=403, dumps=fast_json)
+    return web.json_response({k: v for k, v in SCAN_STATE.items()}, dumps=fast_json)
 
 
 @search_routes.get("/api/group/list")
@@ -1140,7 +1372,11 @@ async def api_group_save(req):
         now = int(time.time())
 
         # pehle in files ko baaki sab groups se nikalo
-        await groups.update_many({"members": {"$in": file_ids}}, {"$pull": {"members": {"$in": file_ids}, "files": {"id": {"$in": file_ids}}}})
+        # jis group se file nikal rahi hai wahan BLACKLIST (excluded) ho jaati hai: wo wahan wapas
+        # tab tak nahi judegi jab tak admin khud use us group me add na kare
+        await groups.update_many({"members": {"$in": file_ids}}, {
+            "$pull": {"members": {"$in": file_ids}, "files": {"id": {"$in": file_ids}}},
+            "$addToSet": {"excluded": {"$each": file_ids}}})
 
         if gid:
             g = await groups.find_one({"_id": gid})
@@ -1282,6 +1518,7 @@ async def api_group_merge(req):
         if src.get("excluded"):
             add["excluded"] = {"$each": src["excluded"]}
         await groups.update_one({"_id": tgt_id}, {"$addToSet": add, "$set": {"updated_at": int(time.time()), "scanned_at": 0}})
+        await groups.update_one({"_id": tgt_id}, {"$pull": {"excluded": {"$in": src.get("members", [])}}})
         await groups.delete_one({"_id": src_id})
         await _mark_files(src.get("members", []), tgt_id)
         thumb_cache.pop(f"g:{src_id}", None)
