@@ -3,7 +3,7 @@ import orjson
 from aiohttp import web
 from info import ADMINS, MAX_WEB_RESULTS
 from utils import temp
-from database.users_chats_db import db as user_db
+from database.users_chats_db import db as user_db, web_db
 
 # ─────────────────────────────────────────────
 # ⚡ SHARED JSON DUMPER
@@ -338,6 +338,14 @@ def _h(html): return web.Response(text=html.encode('utf-8','replace').decode('ut
 async def get_auth(req):
     s_user = req.cookies.get('user_session')
     session = temp.USER_SESSIONS.get(s_user) if s_user else None
+    if s_user and not session:
+        # RAM में नहीं (बॉट रीस्टार्ट हुआ / दूसरा instance) → DB से सेशन वापस लाओ
+        try:
+            session = await web_db.get_session(s_user)
+            if session:
+                temp.USER_SESSIONS[s_user] = session
+        except Exception:
+            session = None
     if session and session['expiry'] > time.time():
         tg_id = session['tg_id']
         if tg_id in ADMINS: return 'admin', tg_id
