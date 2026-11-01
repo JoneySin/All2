@@ -1,8 +1,11 @@
 import logging
 import hashlib
+import hmac
 import random
+import secrets
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from pymongo import ReturnDocument
 import pytz
 from motor.motor_asyncio import AsyncIOMotorClient
 from info import (DATABASE_URL, DATABASE_NAME, FILE_CAPTION, 
@@ -47,9 +50,20 @@ DEFAULT_PLAN_STATUS = {
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+# ── 🔐 OTP / Session सेटिंग्स ──
+OTP_TTL = 600          # OTP 10 मिनट वैध
+OTP_MAX_TRIES = 5      # एक OTP पर इतने गलत प्रयास के बाद OTP रद्द
+OTP_MAX_SENDS = 3      # 10 मिनट में एक Telegram ID पर इतने OTP ही भेजे जा सकते हैं
+
+
+class OTPRateLimited(Exception):
+    """बहुत जल्दी-जल्दी OTP माँगा गया।"""
+
+
 class WebAuthDB:
     def __init__(self, db):
         self.col = db["web_users"] 
+        self.sessions = db["web_sessions"]     # लॉगिन सेशन (रीस्टार्ट पर भी बचे रहते हैं)
         
     async def create_user(self, tg_id, email, password):
         # कर्सर लोड बचाने के लिए स्ट्रिक्ट प्रोजेक्शन {"_id": 1} लागू
@@ -75,24 +89,70 @@ class WebAuthDB:
             update_data["password"] = hash_password(new_password)
         await self.col.update_one({"tg_id": tg_id}, {"$set": update_data})
 
+    # ───────────── 🔐 PASSWORD-RESET OTP ─────────────
+    # ✅ FIX: पहले otp_expiry को tz-aware datetime में सेव करके MongoDB से naive datetime में
+    # वापस पढ़ा जाता था और दोनों की तुलना TypeError देती थी — यानी सही OTP डालने पर भी
+    # रीसेट 500 एरर से क्रैश होता था। अब समय epoch (संख्या) में सेव होता है, कोई टाइमज़ोन गड़बड़ नहीं।
     async def generate_otp(self, tg_id):
-        user = await self.col.find_one({"tg_id": tg_id}, {"_id": 1})
-        if not user: return None
-        
-        otp = str(random.randint(100000, 999999))
-        expiry = get_local_now() + timedelta(minutes=10)
-        await self.col.update_one({"tg_id": tg_id}, {"$set": {"otp": otp, "otp_expiry": expiry}})
+        user = await self.col.find_one({"tg_id": tg_id}, {"otp_win": 1, "otp_sends": 1})
+        if not user:
+            return None
+        now = time.time()
+        win, sends = user.get("otp_win", 0), user.get("otp_sends", 0)
+        if now - win > OTP_TTL:                       # नई 10-मिनट की विंडो
+            win, sends = now, 0
+        if sends >= OTP_MAX_SENDS:
+            raise OTPRateLimited()
+        otp = str(secrets.randbelow(900000) + 100000)
+        await self.col.update_one({"tg_id": tg_id}, {
+            "$set": {"otp": otp, "otp_exp": now + OTP_TTL, "otp_tries": 0,
+                     "otp_win": win, "otp_sends": sends + 1},
+            "$unset": {"otp_expiry": ""}})
         return otp
 
     async def verify_otp_and_reset(self, tg_id, otp, new_password):
-        user = await self.col.find_one({"tg_id": tg_id, "otp": otp}, {"otp_expiry": 1})
-        if user and user.get("otp_expiry", get_local_now()) > get_local_now():
-            await self.col.update_one(
-                {"tg_id": tg_id}, 
-                {"$set": {"password": hash_password(new_password)}, "$unset": {"otp": "", "otp_expiry": ""}}
-            )
-            return True
-        return False
+        otp = str(otp or "").strip()
+        if not otp or not new_password:
+            return False
+        # हर प्रयास पहले गिना जाता है (atomic) ताकि एक साथ कई अंदाज़े भी सीमा पार न कर सकें
+        user = await self.col.find_one_and_update(
+            {"tg_id": tg_id, "otp": {"$exists": True}},
+            {"$inc": {"otp_tries": 1}},
+            projection={"otp": 1, "otp_exp": 1, "otp_tries": 1},
+            return_document=ReturnDocument.AFTER)
+        if not user:
+            return False
+        clear = {"$unset": {"otp": "", "otp_exp": "", "otp_tries": "", "otp_expiry": ""}}
+        if user.get("otp_exp", 0) <= time.time() or user.get("otp_tries", 0) > OTP_MAX_TRIES:
+            await self.col.update_one({"tg_id": tg_id}, clear)
+            return False
+        if not hmac.compare_digest(str(user.get("otp", "")).encode(), otp.encode()):
+            if user.get("otp_tries", 0) >= OTP_MAX_TRIES:     # आख़िरी प्रयास भी गलत → OTP रद्द
+                await self.col.update_one({"tg_id": tg_id}, clear)
+            return False
+        await self.col.update_one({"tg_id": tg_id},
+                                  {"$set": {"password": hash_password(new_password)}, **clear})
+        return True
+
+    # ───────────── 🍪 LOGIN SESSIONS (DB में, ताकि रीस्टार्ट/री-डिप्लॉय पर लॉगआउट न हो) ─────────────
+    async def create_session(self, sid, tg_id, expiry):
+        await self.sessions.replace_one(
+            {"_id": sid},
+            {"_id": sid, "tg_id": tg_id, "expiry": expiry,
+             "expire_at": datetime.fromtimestamp(expiry, tz=timezone.utc)},   # TTL index इसी से मिटाता है
+            upsert=True)
+
+    async def get_session(self, sid):
+        d = await self.sessions.find_one({"_id": sid}, {"tg_id": 1, "expiry": 1})
+        if d and d.get("expiry", 0) > time.time():
+            return {"tg_id": d["tg_id"], "expiry": d["expiry"]}
+        return None
+
+    async def delete_session(self, sid):
+        await self.sessions.delete_one({"_id": sid})
+
+    async def delete_user_sessions(self, tg_id):
+        await self.sessions.delete_many({"tg_id": tg_id})
 
 
 # =========================================
@@ -129,6 +189,9 @@ class Database:
             await web_users.create_index("tg_id", unique=True)
             await web_users.create_index("email", unique=True)
             logger.info("✅ Web Auth unique indexes (tg_id, email) initialized successfully.")
+            web_sessions = self.db["web_sessions"]
+            await web_sessions.create_index("expire_at", expireAfterSeconds=0)   # समय बीतते ही सेशन अपने-आप मिटे
+            await web_sessions.create_index("tg_id")
         except Exception as e:
             if "already exists" not in str(e):
                 logger.warning(f"Web Auth Index warn: {e}")
