@@ -72,6 +72,7 @@ async def ensure_indexes():
             
             await col.create_index("file_name", name=f"{name}_filename_idx")
             await col.create_index([("added_on", -1)], name=f"{name}_added_on_idx")
+            await col.create_index("group_id", sparse=True, name=f"{name}_group_idx")
             logger.info(f"✅ Fast Search & Non-Bloated Indexes OK: {name}")
         except Exception as e:
             if "already exists" in str(e) or "IndexKeySpecsConflict" in str(e): pass
@@ -95,6 +96,8 @@ async def ensure_indexes():
         await groups.create_index("members", name="qg_members_idx")
         await groups.create_index("auto_keys", name="qg_autokeys_idx")
         await groups.create_index("name", name="qg_name_idx")
+        # Group-first search: group ke naam + uski files ke naam par text index (file-search jaisa)
+        await groups.create_index([("name", "text"), ("files.name", "text")], name="qg_text_idx")
     except Exception as e:
         if "already exists" not in str(e) and "IndexKeySpecsConflict" not in str(e):
             logger.warning(f"QualityGroups Index warning: {e}")
@@ -557,6 +560,11 @@ def build_query_filter(raw_query: str, regex, lang=None):
 
     return None, False
 
+def _not_grouped(flt):
+    """Filter me jodo: file kisi Quality-group me nahi hai (group_id field nahi)."""
+    return {"$and": [flt, {"group_id": {"$exists": False}}]}
+
+
 def _tag_docs(docs, col_name: str):
     """हर doc पर file_id/source_col भरता है (UI/JSON दोनों को चाहिए)"""
     for doc in docs:
@@ -567,10 +575,12 @@ def _tag_docs(docs, col_name: str):
 # ─────────────────────────────────────────────────────────
 # 🚀 SMART SEARCH
 # ─────────────────────────────────────────────────────────
-async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None, bypass_count=False):
+async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None, bypass_count=False, exclude_grouped=False):
     flt, is_text = build_query_filter(raw_query, regex, lang)
     if not flt:
         return [], 0
+    if exclude_grouped:
+        flt = _not_grouped(flt)
 
     col_name = col.name.lower()
 
@@ -586,6 +596,8 @@ async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None
         flt, is_text = build_query_filter("", regex, lang)
         if not flt:
             return [], 0
+        if exclude_grouped:
+            flt = _not_grouped(flt)
 
     cursor = col.find(flt, FILE_PROJECTION).sort('_id', -1)
     cursor.skip(offset).limit(limit)
@@ -602,7 +614,7 @@ async def get_count(col, flt, bypass):
 # ─────────────────────────────────────────────────────────
 # 🌐 PUBLIC SEARCH API (NEW UPGRADE: CROSS-COLLECTION MERGE)
 # ─────────────────────────────────────────────────────────
-async def get_search_results(query, max_results, offset=0, lang=None, collection_type="primary", bypass_count=False, cached_counts=None, counts_out=None):
+async def get_search_results(query, max_results, offset=0, lang=None, collection_type="primary", bypass_count=False, cached_counts=None, counts_out=None, exclude_grouped=False):
     if not query: return [], "", 0, collection_type
     raw_query  = str(query).strip()
     regex      = _build_regex(raw_query)
@@ -612,6 +624,8 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
     flt, is_text = build_query_filter(raw_query, regex, lang)
     if not flt:
         return [], "", 0, collection_type
+    if exclude_grouped:
+        flt = _not_grouped(flt)
 
     results, total, actual_src = [], 0, collection_type
 
@@ -672,7 +686,7 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
 
     else:
         col = COLLECTIONS.get(collection_type, primary)
-        results, total = await _search(col, raw_query, regex, offset, max_results, lang, bypass_count=bypass_count)
+        results, total = await _search(col, raw_query, regex, offset, max_results, lang, bypass_count=bypass_count, exclude_grouped=exclude_grouped)
         actual_src = collection_type.capitalize()
         if not results: total = 0
         # ✅ FIX: single-collection टैब (primary/cloud/archive) के लिए भी counts_out भरो
@@ -917,6 +931,33 @@ async def get_file_details(file_id):
     except Exception as e:
         logger.error(f"get_file_details error: {e}")
         return None
+
+GROUP_PROJECTION = {"name": 1, "num": 1, "members": 1, "auto_keys": 1, "excluded": 1,
+                    "thumb_fid": 1, "thumb_col": 1, "thumb_url": 1, "updated_at": 1}
+
+
+async def search_groups(query, limit=600):
+    """GROUP-FIRST search ka pehla step: QualityGroups me naam/files ke naam se search
+    (file-search wale hi query-rules: _strict_text_query / regex). Fail ho to None."""
+    raw = str(query or "").strip()
+    if not raw:
+        return []
+    try:
+        regex = _build_regex(raw)
+        strict = _strict_text_query(raw)
+        docs = []
+        if strict:
+            cur = groups.find({"$text": {"$search": strict}}, {**GROUP_PROJECTION, "score": {"$meta": "textScore"}})
+            cur = cur.sort([("score", {"$meta": "textScore"})]).limit(limit)
+            docs = await cur.to_list(length=limit)
+        if not docs and regex:
+            docs = await groups.find({"$or": [{"name": regex}, {"files.name": regex}]},
+                                     GROUP_PROJECTION).limit(limit).to_list(length=limit)
+        return docs
+    except Exception as e:
+        logger.warning(f"search_groups failed: {e}")
+        return None
+
 
 async def get_files_by_ids(ids):
     """Quality-group ki files: primary + cloud + archive teeno me se _id se, source_col tag ke saath.
