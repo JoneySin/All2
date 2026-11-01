@@ -5,6 +5,7 @@ from info import BIN_CHANNEL
 from utils import temp
 from web.utils.custom_dl import TGCustomYield, chunk_size, offset_fix
 from web.utils.render_template import media_watch
+from web.web_assets import get_auth
 
 routes = web.RouteTableDef()
 logger = logging.getLogger(__name__)
@@ -14,6 +15,9 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
 @routes.get("/", allow_head=True)
 async def root_route_handler(request):
+    role, _ = await get_auth(request)
+    if role:                                   # लॉगिन है → लैंडिंग पेज की जगह सीधे dashboard
+        raise web.HTTPFound('/dashboard')
     # ✅ BUG FIX: pehle `getattr(temp, 'U_NAME', 'AutoFilterBot')` tha, par temp.U_NAME
     # class me already `None` declared hai — isliye getattr ka default KABHI apply nahi
     # hota tha aur bot_username `None` aata tha. Uske baad `.replace(..., None)`
