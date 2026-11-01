@@ -1,15 +1,27 @@
 import uuid
 import random
+import secrets
 import time
 from aiohttp import web
-from web.web_assets import build_page, form_wrapper
+from web.web_assets import build_page, form_wrapper, get_auth
 from utils import temp
-from database.users_chats_db import web_db, get_local_now  # <-- समय सिंक के लिए इम्पोर्ट किया
+from database.users_chats_db import web_db, get_local_now, OTPRateLimited  # <-- समय सिंक के लिए इम्पोर्ट किया
 
 login_routes = web.RouteTableDef()
 
+MIN_PASSWORD_LEN = 6
+
+
+def _is_https(req):
+    # Koyeb जैसे proxy के पीछे असली scheme X-Forwarded-Proto में आता है
+    return req.secure or req.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower() == "https"
+
+
 @login_routes.get('/login')
 async def login_user(req):
+    role, _ = await get_auth(req)
+    if role:                                   # पहले से लॉगिन है → सीधे dashboard
+        return web.HTTPFound('/dashboard')
     content = '<form action="/api/login" method="post"><input type="email" name="email" placeholder="Email Address" required><input type="password" name="password" placeholder="Password" required><button class="submit-btn" type="submit">Sign In</button></form><div style="margin-top:20px; display:flex; justify-content:space-between; font-size:14px;"><a href="/forgot_password" style="color:var(--muted); text-decoration:none;">Forgot Password?</a><a href="/register" style="color:var(--text); text-decoration:none; font-weight:700;">New? Join Now</a></div>'
     return build_page("Sign In", form_wrapper("Sign In", content, req.query.get('err',''), req.query.get('msg','')), "login-bg")
 
@@ -24,10 +36,17 @@ async def api_login_user(req):
             {"$set": {"last_login": get_local_now()}}
         )
 
-        s = str(uuid.uuid4())
-        temp.USER_SESSIONS[s] = {'tg_id': user['tg_id'], 'expiry': time.time() + 86400 * 7}
+        s = secrets.token_urlsafe(32)
+        expiry = time.time() + 86400 * 7
+        temp.USER_SESSIONS[s] = {'tg_id': user['tg_id'], 'expiry': expiry}
+        if len(temp.USER_SESSIONS) > 5000:     # RAM में पुराने expired सेशन साफ़
+            now = time.time()
+            for k in [k for k, v in temp.USER_SESSIONS.items() if v.get('expiry', 0) <= now]:
+                temp.USER_SESSIONS.pop(k, None)
+        await web_db.create_session(s, user['tg_id'], expiry)     # DB में भी — रीस्टार्ट पर बचा रहे
         res = web.HTTPFound('/dashboard')
-        res.set_cookie('user_session', s, max_age=86400 * 7)
+        res.set_cookie('user_session', s, max_age=86400 * 7, path='/',
+                       httponly=True, secure=_is_https(req), samesite='Lax')
         return res
     return web.HTTPFound('/login?err=Invalid Email or Password')
 
@@ -42,11 +61,13 @@ async def api_register_step1(req):
     try: tg_id = int(d.get('tg_id'))
     except: return web.HTTPFound('/register?err=Invalid Telegram ID')
     email, password = d.get('email'), d.get('password')
+    if not password or len(password) < MIN_PASSWORD_LEN:
+        return web.HTTPFound(f'/register?err=Password must be at least {MIN_PASSWORD_LEN} characters')
     
     if await web_db.col.find_one({"$or": [{"tg_id": tg_id}, {"email": email}]}, {"_id": 1}): 
         return web.HTTPFound('/register?err=Telegram ID or Email already registered!')
         
-    otp = str(random.randint(100000, 999999))
+    otp = str(secrets.randbelow(900000) + 100000)
     now = time.time()
     temp.REG_PENDING[tg_id] = {'email': email, 'password': password, 'otp': otp, 'expiry': now + 300}
     try: 
@@ -67,13 +88,17 @@ async def api_register_step2(req):
     d = await req.post()
     try: tg_id = int(d.get('tg_id'))
     except: return web.HTTPFound('/register?err=Invalid Request')
-    otp = d.get('otp')
+    otp = str(d.get('otp') or '').strip()
     if tg_id not in getattr(temp, 'REG_PENDING', {}): return web.HTTPFound('/register?err=Session expired. Try again.')
     pending = temp.REG_PENDING[tg_id]
     if time.time() > pending['expiry']:
         del temp.REG_PENDING[tg_id]
         return web.HTTPFound('/register?err=OTP Expired. Please restart registration.')
-    if pending['otp'] != otp: return web.HTTPFound(f'/verify_registration?tg_id={tg_id}&err=Invalid OTP')
+    pending['tries'] = pending.get('tries', 0) + 1
+    if pending['tries'] > 5:                   # बहुत गलत प्रयास → यह रजिस्ट्रेशन रद्द
+        temp.REG_PENDING.pop(tg_id, None)
+        return web.HTTPFound('/register?err=Too many wrong attempts. Please start again.')
+    if not secrets.compare_digest(str(pending['otp']).encode(), otp.encode()): return web.HTTPFound(f'/verify_registration?tg_id={tg_id}&err=Invalid OTP')
     success, msg = await web_db.create_user(tg_id, pending['email'], pending['password'])
     del temp.REG_PENDING[tg_id]
     if success:
@@ -89,7 +114,10 @@ async def forgot_password(req):
 async def api_forgot_password(req):
     try: tg_id = int((await req.post()).get('tg_id'))
     except: return web.HTTPFound('/forgot_password?err=Invalid Telegram ID')
-    otp = await web_db.generate_otp(tg_id)
+    try:
+        otp = await web_db.generate_otp(tg_id)
+    except OTPRateLimited:
+        return web.HTTPFound('/forgot_password?err=Too many OTP requests. Please try again after 10 minutes.')
     if otp:
         try:
             await temp.BOT.send_message(tg_id, f"🔐 **Fast Finder Password Reset**\n\nYour Password Reset OTP is: `{otp}`\n\nValid for 10 minutes. Do not share!")
@@ -102,5 +130,16 @@ async def api_reset_password(req):
     d = await req.post()
     try: tg_id = int(d.get('tg_id'))
     except: return web.HTTPFound('/forgot_password?err=Invalid Input')
-    if await web_db.verify_otp_and_reset(tg_id, d.get('otp'), d.get('new_password')): return web.HTTPFound('/login?msg=Password updated successfully! Please login.')
+    new_password = d.get('new_password') or ''
+    if len(new_password) < MIN_PASSWORD_LEN:
+        return web.HTTPFound(f'/forgot_password?err=Password must be at least {MIN_PASSWORD_LEN} characters')
+    if await web_db.verify_otp_and_reset(tg_id, d.get('otp'), new_password):
+        # पासवर्ड बदला है तो पुराने सारे लॉगिन सेशन बंद (RAM + DB)
+        for k in [k for k, v in temp.USER_SESSIONS.items() if v.get('tg_id') == tg_id]:
+            temp.USER_SESSIONS.pop(k, None)
+        try:
+            await web_db.delete_user_sessions(tg_id)
+        except Exception:
+            pass
+        return web.HTTPFound('/login?msg=Password updated successfully! Please login.')
     return web.HTTPFound('/forgot_password?err=Invalid or Expired OTP.')
