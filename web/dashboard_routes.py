@@ -363,7 +363,40 @@ async function grpPost(url,body){
     return d;
 }
 function selCount(){return Object.keys(SEL).length;}
+function ensureAdminMenu(){
+    var m=document.getElementById('cddGfMenu');
+    if(!m||!isAdminView||document.getElementById('gfScanItem'))return;
+    var d=document.createElement('div');
+    d.id='gfScanItem';d.className='cdd-item';d.style.borderTop='1px solid var(--border)';d.style.color='#ffd166';
+    d.innerHTML='&#9881; Scan all &amp; build groups';
+    d.onclick=function(e){scanAllGroups(e);};
+    m.appendChild(d);
+}
+var scanTimer=null;
+async function scanAllGroups(e){
+    if(e)e.stopPropagation();
+    closeCdds();
+    if(!confirm('Poori library scan karke permanent groups banayein? (40k files me kuch minute lag sakte hain)'))return;
+    try{
+        var r=await fetch('/api/group/scan_all',{method:'POST'}),d=await r.json();
+        if(d.error)throw new Error(d.error);
+        showToast(d.started?'Scan shuru ho gaya...':'Scan pehle se chal raha hai');
+        clearInterval(scanTimer);
+        scanTimer=setInterval(async function(){
+            try{
+                var s=await (await fetch('/api/group/scan_status')).json();
+                if(s.running){showToast('Scan: '+s.phase+' ('+s.scanned+'/'+s.total+')');}
+                else{
+                    clearInterval(scanTimer);
+                    if(s.error){showToast('Scan error: '+s.error,'error');}
+                    else{showToast('Scan complete: '+s.created+' naye groups, '+s.added+' files jodi');refreshGridAfterEdit();}
+                }
+            }catch(x){}
+        },3000);
+    }catch(err){showToast(err.message,'error');}
+}
 function renderSelBar(){
+    ensureAdminMenu();
     var bar=document.getElementById('selBar'),fab=document.getElementById('selFab');
     if(!isAdminView){if(bar)bar.remove();if(fab)fab.remove();return;}
     if(!fab){fab=document.createElement('button');fab.id='selFab';fab.className='sel-fab';fab.onclick=function(){toggleSelMode();};document.body.appendChild(fab);}
