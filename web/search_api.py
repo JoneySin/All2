@@ -1207,7 +1207,8 @@ async def _scan_all_groups():
     Dobara chalana safe hai."""
     st = SCAN_STATE
     st.update(running=True, phase="groups load ho rahe hain", scanned=0, total=0, created=0,
-              added=0, skipped_big=0, error="", started=time.time(), finished=0)
+              added=0, skipped_big=0, skipped_keys=[], fixed_marks=0, existing_groups=0,
+              multi_buckets=0, error="", started=time.time(), finished=0)
     try:
         key2g, owner = {}, {}
         async for g in groups.find({}, {"auto_keys": 1, "members": 1, "excluded": 1}):
@@ -1217,6 +1218,7 @@ async def _scan_all_groups():
             for k in g.get("auto_keys", []):
                 key2g.setdefault(k, gd)
 
+        st["existing_groups"] = len({g["id"] for g in key2g.values()})
         total = 0
         for col in FILE_COLLECTIONS.values():
             try:
@@ -1248,6 +1250,8 @@ async def _scan_all_groups():
         now = int(time.time())
         for k, items in buckets.items():
             g = key2g.get(k)
+            if len(items) >= 2:
+                st["multi_buckets"] += 1
             if g:
                 fresh = [it for it in items if it[0] not in owner and it[0] not in g["excl"]]
                 if not fresh:
@@ -1261,6 +1265,8 @@ async def _scan_all_groups():
                 continue
             if len(items) > SCAN_MAX_GROUP:
                 st["skipped_big"] += 1
+                if len(st["skipped_keys"]) < 20:
+                    st["skipped_keys"].append(f"{k} ({len(items)} files)")
                 continue
             cand = [it for it in items if it[0] not in owner]
             if len(cand) < 2:
@@ -1324,8 +1330,12 @@ async def _scan_all_groups():
     finally:
         st["running"] = False
         st["finished"] = time.time()
-        logger.info(f"🗂️ Group scan done: created={st.get('created')} added={st.get('added')} "
+        logger.info(f"🗂️ Group scan done: scanned={st.get('scanned')}/{st.get('total')} "
+                    f"existing_groups={st.get('existing_groups')} same-name buckets={st.get('multi_buckets')} "
+                    f"created={st.get('created')} added={st.get('added')} fixed_marks={st.get('fixed_marks')} "
                     f"skipped_big={st.get('skipped_big')} err={st.get('error')}")
+        if st.get("skipped_keys"):
+            logger.info("🗂️ Skipped (30+ files, bahut aam naam): " + " | ".join(st["skipped_keys"]))
 
 
 @search_routes.post("/api/group/scan_all")
