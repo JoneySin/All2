@@ -838,7 +838,10 @@ async def logout(req):
     s_user = req.cookies.get('user_session')
     temp.USER_SESSIONS.pop(s_user, None)
     if s_user:
-        await web_db.delete_session(s_user)
+        try:
+            await web_db.delete_session(s_user)
+        except Exception:
+            pass
     res = web.HTTPFound('/login')
     res.del_cookie('user_session', path='/')
     return res
