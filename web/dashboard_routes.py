@@ -68,8 +68,8 @@ CARD_CSS = """
 .cdd-item.selected .cdd-radio{border-color:var(--accent)}
 .cdd-radio-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:none}
 .cdd-item.selected .cdd-radio-dot{display:block}
-.source-pill.mixed{color:#ffd166;border-color:rgba(255,209,102,.55);background:rgba(120,90,0,.4)}
-.source-pill.mixed .source-dot{background:#ffd166}
+.source-pill.mixed{background:#78350f;color:#fcd34d;border:1px solid #f59e0b}
+.source-pill.mixed .source-dot{background:#fcd34d}
 /* ── Group filter button (red, small) ── */
 .gf-btn{width:auto!important;min-width:74px;background:var(--accent)!important;border-color:var(--accent)!important;color:#fff!important;padding:8px 26px 8px 14px!important;justify-content:center}
 .gf-wrap{flex:0 0 auto}
@@ -82,17 +82,15 @@ CARD_CSS = """
 .grp-card.open{grid-column:1/-1;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:default}
 .grp-badge{background:rgba(229,9,20,.92);color:#fff;border-radius:5px;padding:3px 8px;font-size:10px;font-weight:800;letter-spacing:.5px;border:1px solid rgba(255,255,255,.18);line-height:1.4;white-space:nowrap}
 .grp-bottom{position:absolute;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;gap:5px;padding:28px 8px 8px;background:linear-gradient(transparent,rgba(0,0,0,.88));z-index:3}
-.grp-chip{background:rgba(0,0,0,.65);backdrop-filter:blur(6px);color:#ffd166;border:1px solid rgba(255,209,102,.38);border-radius:5px;font-size:10px;font-weight:800;padding:2px 8px;line-height:1.5}
-.grp-chip i{font-style:normal;opacity:.75}
+.grp-chip{background:#082f49;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:5px;font-size:10px;font-weight:800;padding:2px 8px;line-height:1.5;text-shadow:none}
+.grp-chip i{font-style:normal;color:#e0f2fe;opacity:1;margin-left:2px}
 .grp-body{padding:10px 11px 12px}
 .grp-title{color:var(--text);font-size:12.5px;font-weight:600;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .grp-card.open .grp-title{-webkit-line-clamp:unset}
 .grp-textinfo{display:none;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
 .res-grid.mode-none .grp-textinfo{display:flex}
-.grp-textinfo .grp-chip{background:var(--bg3)}
 .grp-openhead{display:none;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;cursor:pointer}
 .grp-openhead .grp-title{flex:1;min-width:140px}
-.grp-openhead .grp-chip{background:var(--bg3)}
 .grp-arrow{margin-left:auto;color:var(--muted);font-size:13px;transform:rotate(180deg)}
 .grp-card.open .grp-openhead{display:flex}
 .grp-card.open .grp-master{display:none}
@@ -126,10 +124,10 @@ CARD_CSS = """
 .gm-th{position:relative;border:2px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;background:var(--bg3);aspect-ratio:16/9}
 .gm-th img{width:100%;height:100%;object-fit:cover;display:block}
 .gm-th.on{border-color:#22c55e}
-.gm-th em{position:absolute;left:0;right:0;bottom:0;font-style:normal;font-size:10px;font-weight:800;color:#ffd166;background:rgba(0,0,0,.75);padding:2px 5px}
+.gm-th em{position:absolute;left:0;right:0;bottom:0;font-style:normal;font-size:10px;font-weight:800;color:#7dd3fc;background:rgba(0,0,0,.75);padding:2px 5px}
 .gm-auto{display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--muted)}
 .gm-mem{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--text)}
-.gm-mem b{color:#ffd166;font-size:11px;min-width:46px}
+.gm-mem b{color:#38bdf8;font-size:11px;min-width:46px}
 .gm-mem span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gm-mem button{background:rgba(160,8,8,.78);border:none;color:#fff;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:800;cursor:pointer}
 .gm-row{display:flex;gap:8px;margin-top:18px}
