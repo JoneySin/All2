@@ -76,8 +76,13 @@ CARD_CSS = """
 .gf-wrap .cdd-arrow{color:#fff!important}
 .gf-wrap .cdd-menu{left:auto;right:0;transform:none;min-width:130px}
 /* ── Quality group card (master thumbnail = single file jaisa bada poster) ── */
-.grp-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;position:relative;cursor:pointer;box-shadow:0 4px 10px rgba(0,0,0,.2);transition:border-color .2s,box-shadow .2s}
-.grp-card:hover,.grp-card.open{border-color:var(--accent)}
+.grp-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;position:relative;cursor:pointer;box-shadow:0 4px 10px rgba(0,0,0,.2);transition:all .3s cubic-bezier(.25,.8,.25,1)}
+.grp-card.open{border-color:var(--accent)}
+/* ✅ file-card जैसा ही hover/press एनिमेशन (खुले हुए group पर नहीं) */
+.grp-card:not(.open):hover{transform:translateY(-6px) scale(1.02);border-color:var(--accent);box-shadow:0 15px 35px rgba(0,0,0,.6),0 0 15px rgba(229,9,20,.3);z-index:2}
+.grp-card:not(.open):active{transform:scale(.96);transition:transform .1s}
+.grp-card:not(.open) .grp-title{transition:color .18s;text-decoration:none}
+.grp-card:not(.open) .grp-title:hover{color:var(--accent);text-decoration:underline;text-decoration-color:var(--accent);text-underline-offset:2px}
 .grp-card:hover .fc-poster{transform:scale(1.08)}
 .grp-card.open{grid-column:1/-1;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:default}
 .grp-badge{background:rgba(229,9,20,.92);color:#fff;border-radius:5px;padding:3px 8px;font-size:10px;font-weight:800;letter-spacing:.5px;border:1px solid rgba(255,255,255,.18);line-height:1.4;white-space:nowrap}
