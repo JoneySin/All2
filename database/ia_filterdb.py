@@ -859,7 +859,8 @@ async def _backup_before_delete(doc):
     file_ref = doc.get("file_ref")
     if not file_ref:
         return
-    caption = f"🗑 <b>Deleted File Backup</b>\n\n📄 <code>{doc.get('file_name', 'Unknown')}</code>"
+    # सिर्फ़ असली कैप्शन (अगर था) वरना फाइल का नाम — कोई extra टेक्स्ट/इमोजी नहीं
+    caption = doc.get("caption") or doc.get("file_name") or ""
     for _attempt in range(2):  # 1 असली कोशिश + 1 FloodWait के बाद रिट्राई
         try:
             await temp.BOT.send_cached_media(chat_id=DELETE_CHANNEL, file_id=file_ref, caption=caption)
@@ -894,7 +895,7 @@ async def delete_files(query, collection_type="all"):
         for col in cols:
             # ✅ /delete (regex मैच वाला targeted delete) — DB से हटाने से पहले
             # हर matching फाइल का बैकअप DELETE_CHANNEL में भेजा जाता है
-            async for doc in col.find(flt, {"_id": 1, "file_name": 1, "file_ref": 1}):
+            async for doc in col.find(flt, {"_id": 1, "file_name": 1, "file_ref": 1, "caption": 1}):
                 await _backup_before_delete(doc)
             res = await col.delete_many(flt)
             deleted += res.deleted_count
@@ -912,7 +913,7 @@ async def delete_single_file(file_id, collection_type="primary"):
         col = COLLECTIONS.get(collection_type)
         if col is None:
             return False
-        doc = await col.find_one({"_id": file_id}, {"_id": 1, "file_name": 1, "file_ref": 1})
+        doc = await col.find_one({"_id": file_id}, {"_id": 1, "file_name": 1, "file_ref": 1, "caption": 1})
         if not doc:
             return False
         await _backup_before_delete(doc)
