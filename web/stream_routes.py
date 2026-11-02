@@ -1,4 +1,4 @@
-import math, os, secrets, mimetypes, logging
+import math, os, secrets, mimetypes, logging, gc, ctypes, asyncio
 from urllib.parse import quote
 from aiohttp import web
 from utils import temp
@@ -176,6 +176,36 @@ MAX_CONNS = max(1, int(os.environ.get("STREAM_MAX_CONNS", "15")))
 _ACTIVE_STREAMS = 0
 
 
+
+# ─────────────────────────────────────────────
+# 🧹 RAM TRIM — स्ट्रीम बंद होने के बाद freed memory को OS को लौटाओ
+# Python/glibc free की हुई मेमोरी अपने पास रोक लेता है, इसलिए Koyeb का Memory ग्राफ
+# वीडियो बंद होने पर भी ऊँचा दिखता है। सब स्ट्रीम खत्म होने के कुछ सेकंड बाद gc +
+# malloc_trim चलाते हैं (सिर्फ़ Linux/glibc पर; वरना चुपचाप skip)।
+# ─────────────────────────────────────────────
+_trim_task = None
+
+def _trim_now():
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+async def _trim_later(delay=8):
+    try:
+        await asyncio.sleep(delay)
+        if _ACTIVE_STREAMS == 0:
+            _trim_now()
+    except asyncio.CancelledError:
+        pass
+
+def _schedule_trim():
+    global _trim_task
+    if _trim_task and not _trim_task.done():
+        _trim_task.cancel()
+    _trim_task = asyncio.ensure_future(_trim_later())
+
 @routes.get("/download/{message_id}")
 async def download_handler(request):
     try:
@@ -282,4 +312,6 @@ async def media_download(request, message_id: int):
                 await agen.aclose()      # pending prefetch tasks cancel
             except Exception:
                 pass
+        if _ACTIVE_STREAMS == 0:
+            _schedule_trim()
     return resp
