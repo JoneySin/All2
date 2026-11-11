@@ -91,8 +91,6 @@ CARD_CSS = """
 .group-id-chip.pending{background:#302a35;color:#ddd0e8;border-color:#897797}
 .episode-chip{background:#25104c;color:#e0c7ff;border:1px solid #a977ed;border-radius:6px;padding:3px 7px;font-size:10px;font-weight:800;line-height:1.4}
 .grp-badge{background:rgba(229,9,20,.92);color:#fff;border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;letter-spacing:.4px;border:1px solid rgba(255,255,255,.18);line-height:1.4;white-space:nowrap}
-.grp-kind{background:#082f49;color:#bce7ff;border:1px solid #168ccc;border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;letter-spacing:.4px;line-height:1.4}
-.grp-kind.series{background:#34165b;color:#e9d5ff;border-color:#ad7be5}
 .grp-bottom{position:absolute;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;gap:5px;padding:28px 8px 8px;background:linear-gradient(transparent,rgba(0,0,0,.88));z-index:3}
 .grp-chip{background:#082f49;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:5px;font-size:10px;font-weight:800;padding:2px 8px;line-height:1.5;text-shadow:none}
 .grp-chip i{font-style:normal;color:#e0f2fe;opacity:1;margin-left:2px}
@@ -380,7 +378,6 @@ function groupHtml(g){
     var pill='<span class="source-pill '+sc+'" title="'+esc(srcs.join(' + ').toUpperCase())+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>';
     var dur=!series&&g.duration?'<span class="dur-chip">'+esc(g.duration)+'</span>':'';
     var idChip=groupIdChip(g.num||g.gid,true);
-    var kind='<span class="grp-kind'+(series?' series':'')+'">'+(series?'SERIES':'QUALITY')+'</span>';
     var badge='<span class="grp-badge">'+(series?(g.episode_count==null?g.count:g.episode_count):g.count)+(series?' EPISODES':' QUALITY')+'</span>';
     var adm='';
     if(isAdminView){
@@ -392,13 +389,13 @@ function groupHtml(g){
     if(pMode!=='none'){
         poster='<div class="poster-box">'+
             (g.tg_thumb?'<img src="'+g.tg_thumb+'" class="fc-poster" onload="this.classList.add(\\'loaded\\')" onerror="this.style.display=\\'none\\'" loading="lazy" decoding="async">':'')+
-            '<div class="poster-top">'+idChip+kind+badge+dur+pill+'</div>'+
+            '<div class="poster-top">'+idChip+badge+dur+pill+'</div>'+
             '<div class="grp-bottom">'+chips+'</div>'+
             '<button type="button" class="group-poster-trigger" aria-label="'+(isAdminView?'Show group editing options':'Open group')+'" aria-expanded="'+(!isAdminView&&open?'true':'false')+'" onclick="grpPoster(this,event)"></button>'+
             (isAdminView?'<div class="poster-admin">'+adm+'</div>':'')+
         '</div>';
     }
-    var textInfo='<div class="grp-textinfo">'+idChip+kind+badge+dur+chips+pill+'</div>'+
+    var textInfo='<div class="grp-textinfo">'+idChip+badge+dur+chips+pill+'</div>'+
         ((isAdminView&&pMode==='none')?'<div class="grp-textadmin">'+adm+'</div>':'');
     var inner='';
     g.variants.forEach(function(v){inner+=cardHtml(v,true);});
@@ -406,7 +403,7 @@ function groupHtml(g){
         '<div class="grp-master">'+poster+
             '<div class="grp-body"><button type="button" class="grp-title grp-title-button" aria-expanded="'+(open?'true':'false')+'" aria-controls="gv-'+esc(g.key)+'" onclick="event.stopPropagation();toggleGroup(this.closest(\\'.grp-card\\'))">'+g.title+'</button>'+textInfo+'</div>'+
         '</div>'+
-        '<div class="grp-openhead" role="button" tabindex="0" aria-label="Collapse group" onclick="toggleGroup(this.parentNode)" onkeydown="if(event.target===this &amp;&amp; (event.key===\\'Enter\\' || event.key===\\' \\')){event.preventDefault();toggleGroup(this.parentNode)}">'+idChip+kind+badge+dur+'<div class="grp-title">'+g.title+'</div>'+(isAdminView?'<span class="grp-oadmin">'+adm+'</span>':'')+'<span class="grp-arrow">&#9662;</span></div>'+
+        '<div class="grp-openhead" role="button" tabindex="0" aria-label="Collapse group" onclick="toggleGroup(this.parentNode)" onkeydown="if(event.target===this &amp;&amp; (event.key===\\'Enter\\' || event.key===\\' \\')){event.preventDefault();toggleGroup(this.parentNode)}">'+idChip+badge+dur+'<div class="grp-title">'+g.title+'</div>'+(isAdminView?'<span class="grp-oadmin">'+adm+'</span>':'')+'<span class="grp-arrow">&#9662;</span></div>'+
         '<div class="grp-variants" id="gv-'+esc(g.key)+'">'+inner+'</div>'+
     '</div>';
 }

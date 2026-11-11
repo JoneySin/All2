@@ -43,6 +43,11 @@ const assert = require('node:assert/strict');
  assert.equal(await series.locator('.grp-master .poster-top .dur-chip').count(),0);
  assert.equal(await quality.locator('.grp-master .poster-top .grp-badge').textContent(),'3 QUALITY');
  assert.equal(await series.locator('.grp-master .poster-top .grp-badge').textContent(),'2 EPISODES');
+ assert.equal(await page.locator('.grp-card .grp-kind').count(),0);
+ assert.deepEqual(await quality.locator('.grp-master .poster-top > span').allTextContents(),
+                  ['GROUP #11', '3 QUALITY', '0:03', 'MIXED']);
+ assert.deepEqual(await series.locator('.grp-master .poster-top > span').allTextContents(),
+                  ['GROUP #12', '2 EPISODES', 'MIXED']);
  assert.ok((await quality.locator('.grp-master .poster-top .group-id-chip').textContent()).includes('#11'));
  const groupPoster=quality.locator('.group-poster-trigger');await groupPoster.focus();await page.keyboard.press('Enter');
  assert.equal(await groupPoster.getAttribute('aria-expanded'),'true');
