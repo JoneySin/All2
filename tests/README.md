@@ -28,7 +28,9 @@ python -m venv .venv
 
 The browser test exercises group-card keyboard/name opening, duration and ID chips,
 both file/group moves and the group editor: exact ID lookup, preview confirmation,
-stale requests, changed targets, empty-page navigation and a 320px layout.
+stale requests, changed targets, empty-page navigation and a 320px layout. It
+also checks that dashboard and actor file actions remain accessible below the
+thumbnail in both poster and text modes, without a three-dot thumbnail button.
 It uses a **test-only, always-admin, in-memory** server; never deploy that server.
 Install Node.js and Playwright separately, for example:
 

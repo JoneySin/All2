@@ -110,7 +110,7 @@ CARD_CSS = """
 .grp-card.open .grp-master{display:none}
 .grp-textadmin{display:none;gap:5px;padding-top:8px}
 .grp-card.grp-active .grp-textadmin{display:flex}
-.grp-card.grp-active .grp-master .poster-admin{opacity:1;transform:translateY(0);pointer-events:all}
+.grp-card.grp-active .grp-master .poster-admin{opacity:1;visibility:visible;transform:translateY(0);pointer-events:all}
 .grp-title{cursor:pointer}
 .grp-openhead .grp-oadmin{display:flex;gap:5px}
 .grp-openhead .grp-oadmin button{flex:none;padding:6px 10px}
@@ -308,7 +308,7 @@ function cardHtml(f,nested){
             var idChip = groupIdChip(f.group_num||f.gid);
             var epLabel = f.group_type==='series' ? (f.episode_label||(f.episode_position?'File '+f.episode_position:'')) : '';
             var epChip = epLabel ? '<span class="episode-chip">'+esc(epLabel)+'</span>' : '';
-            var menuBtn=isAdminView?'<button type="button" class="file-menu" aria-label="File actions" aria-expanded="false" onclick="toggleAdminBtns(this.closest(\\'.file-card\\'),event)">&#8942;</button>':'';
+            var menuBtn=isAdminView?'<button type="button" class="file-actions-toggle" aria-label="File actions" aria-expanded="false" onclick="toggleAdminBtns(this.closest(\\'.file-card\\'),event)">Actions</button>':'';
 
             var posterHtml='';
             if(pMode!=='none'){
@@ -317,7 +317,7 @@ function cardHtml(f,nested){
                     '<div class="poster-top">'+
                         idChip+epChip+'<span class="size-chip">'+f.size+'</span>'+
                         durChip+resChip+
-                        '<span class="source-pill '+sc+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+menuBtn+
+                        '<span class="source-pill '+sc+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+
                     '</div>'+
                     adminBtns+
                 '</div>';
@@ -328,7 +328,7 @@ function cardHtml(f,nested){
                 textInfo='<div class="fc-text-info">'+
                     idChip+epChip+'<span class="tc-size">'+f.size+'</span>'+
                     durText+resText+
-                    '<span class="source-pill '+sc+'" style="margin-left:auto"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+menuBtn+
+                    '<span class="source-pill '+sc+'" style="margin-left:auto"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+
                 '</div>';
                 if(isAdminView){
                     textInfo+='<div class="text-admin-row">'+
@@ -343,7 +343,7 @@ function cardHtml(f,nested){
                 posterHtml+
                 textInfo+
                 '<div class="fc-body">'+
-                    '<div class="fc-name" id="name-title-'+f.file_id+'">'+esc(f.name)+'</div>'+
+                    '<div class="fc-name" id="name-title-'+f.file_id+'">'+esc(f.name)+'</div>'+menuBtn+
                 '</div>'+
             '</div>';
 }
@@ -416,7 +416,7 @@ function grpPoster(el,e){
     e.stopPropagation();
     var was=card.classList.contains('grp-active');
     document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');});
-    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');});
+    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-actions-toggle');if(b)b.setAttribute('aria-expanded','false');});
     if(!was)card.classList.add('grp-active');
 }
 document.addEventListener('click',function(){

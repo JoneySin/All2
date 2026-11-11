@@ -18,6 +18,7 @@ from mongomock_motor import AsyncMongoMockClient
 from database import ia_filterdb as db
 from web import search_api as api
 from web.dashboard_routes import DASHBOARD_BODY
+from web.actor_routes import ACTOR_MEDIA_SCRIPT
 from web.web_assets import build_page
 
 mongo = AsyncMongoMockClient()
@@ -101,6 +102,18 @@ async def dashboard(_req):
     return build_page("Mock Dashboard", DASHBOARD_BODY, "", "dash", "admin")
 
 
+async def actor_cards(_req):
+    # Exercise the actual shared actor-card renderer without a Telegram account.
+    body = ACTOR_MEDIA_SCRIPT + '''<div id="fixture-actor" class="res-grid"></div>
+    <script>
+    var testActorFile={file_id:'actor-file',name:'Actor file',size:'1 MB',raw_collection:'primary',tg_thumb:'/api/thumb'};
+    function showActorCard(mode,admin){var grid=document.getElementById('fixture-actor');grid.className='res-grid mode-'+mode;
+        grid.innerHTML=renderActorMediaCard(testActorFile,mode,admin);staggerCards(grid);}
+    showActorCard('tg',true);
+    </script>'''
+    return build_page("Mock Actor Cards", body, "", "actors", "admin")
+
+
 async def thumb(_req):
     # Valid 1x1 GIF; avoid Telegram and external image requests.
     return web.Response(body=bytes.fromhex("47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b"),
@@ -109,6 +122,7 @@ async def thumb(_req):
 
 app = web.Application()
 app.router.add_get("/dashboard", dashboard)
+app.router.add_get("/fixture/actor-cards", actor_cards)
 app.router.add_post("/fixture/seed_auto", seed_automatic_examples)
 app.router.add_get("/api/thumb", thumb)
 app.add_routes(api.search_routes)

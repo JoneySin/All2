@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
  async function update(body){const r=await page.request.post(base+'/api/group/update',{data:body});assert.equal(r.status(),200,await r.text());}
  async function openFile(fid,mode='tg'){
    let f=page.locator('.file-card[data-fid="'+fid+'"]').first();await f.waitFor();
-   if(!await f.evaluate(e=>e.classList.contains('admin-active')))await f.locator('.file-menu').click();
+   if(!await f.evaluate(e=>e.classList.contains('admin-active')))await f.locator('.file-actions-toggle').click();
    let b=f.locator(mode==='tg'?'.poster-admin button':'.text-admin-row button').filter({hasText:'Merge'});await b.click();
    await page.locator('#mergeModal').waitFor();return b;
  }
@@ -26,6 +26,14 @@ const assert = require('node:assert/strict');
  const series=page.locator('.grp-card').filter({hasText:'The Long Way Home'}).first();
  assert.equal(await page.locator('.grp-action').count(),0);
  assert.equal(await page.locator('.file-card .type-chip, .file-card .tc-type').count(),0);
+ assert.equal(await page.locator('.file-card .poster-box .file-actions-toggle, .file-card .poster-box .file-menu').count(),0);
+ const fileAction=page.locator('.file-card[data-fid="f1"] .file-actions-toggle');
+ await fileAction.focus();await page.keyboard.press('Enter');
+ assert.equal(await fileAction.getAttribute('aria-expanded'),'true');
+ assert.equal(await page.locator('.file-card[data-fid="f1"] .poster-admin').isVisible(),true);
+ assert.equal(await page.locator('#inlinePlayer').isHidden(),true);
+ await page.keyboard.press('Enter');assert.equal(await fileAction.getAttribute('aria-expanded'),'false');
+ assert.equal(await page.locator('.file-card[data-fid="f1"] .poster-admin').isVisible(),false);
  assert.equal(await quality.locator('.grp-master .poster-top .dur-chip').textContent(),'0:03');
  assert.equal(await series.locator('.grp-master .poster-top .dur-chip').count(),0);
  assert.equal(await quality.locator('.grp-master .poster-top .grp-badge').textContent(),'3 QUALITY');
@@ -38,6 +46,12 @@ const assert = require('node:assert/strict');
  await page.keyboard.press('Enter');assert.equal(await quality.evaluate(e=>e.classList.contains('open')),false);
  assert.equal(await quality.locator('.grp-title-button').evaluate(e=>document.activeElement===e),true);
  await series.locator('.grp-title-button').click();assert.equal(await series.locator('.grp-variants .file-card').count(),2);
+ const nested=series.locator('.grp-variants .file-card').first();
+ assert.equal(await nested.locator('.poster-box .file-actions-toggle').count(),0);
+ await nested.locator('.file-actions-toggle').click();
+ assert.equal(await nested.locator('.poster-admin').isVisible(),true);
+ assert.equal(await nested.locator('.file-actions-toggle').getAttribute('aria-expanded'),'true');
+ assert.equal(await series.evaluate(e=>e.classList.contains('open')),true);
  await series.locator('.grp-openhead').click();
  await page.evaluate(()=>localStorage.setItem('ff_dashboard_mode','none'));await page.reload();
  await page.locator('.grp-card').first().waitFor();
@@ -217,5 +231,25 @@ const assert = require('node:assert/strict');
  await page.evaluate(async()=>await doSearch(curOff,true,true));
  assert.equal(await page.locator('#pgInfo').textContent(),'Page 1');assert.equal(offsets[offsets.length-1],'0');
  console.log('Pagination: empty-page Previous and fresh stored-cursor reset OK');
+
+ // Actor cards use the same control below the thumbnail. Verify both modes,
+ // keyboard access, edit, playback and absence of admin controls for users.
+ await page.goto(base+'/fixture/actor-cards');
+ for(const mode of ['tg','none']){
+   await page.evaluate(mode=>showActorCard(mode,true),mode);
+   const card=page.locator('#fixture-actor .file-card');
+   const toggle=card.locator('.file-actions-toggle');await toggle.waitFor();
+   assert.equal(await card.locator('.poster-box .file-actions-toggle, .file-menu').count(),0);
+   await toggle.focus();await page.keyboard.press('Enter');
+   assert.equal(await toggle.getAttribute('aria-expanded'),'true');
+   let edit=card.locator(mode==='tg'?'.poster-admin .btn-edit':'.text-admin-row .btn-edit');
+   await edit.click();assert.equal(await page.locator('#emName').inputValue(),'Actor file');
+   await page.evaluate(()=>closeCombinedModal());
+   await page.evaluate(()=>{window.__actorPlayed=0;window.openInlinePlayer=()=>window.__actorPlayed++;});
+   await card.locator('.fc-name').click();assert.equal(await page.evaluate(()=>window.__actorPlayed),1);
+   await page.evaluate(mode=>showActorCard(mode,false),mode);
+   assert.equal(await page.locator('#fixture-actor .file-actions-toggle').count(),0);
+ }
+ console.log('Actor cards: no dots on thumbnail; actions and playback work in both modes');
  console.log('Page errors:',JSON.stringify(errors));assert.deepEqual(errors,[]);await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});

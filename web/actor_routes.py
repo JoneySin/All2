@@ -24,12 +24,12 @@ function renderActorMediaCard(f,mode,isAdmin){
     var id=f.group_num||f.gid,idChip=id?'<span class="actor-group-id">GROUP #'+actorEsc(id)+'</span>':'';
     var duration=f.duration?'<span class="'+(mode==='none'?'tc-dur':'dur-chip')+'">'+actorEsc(f.duration)+'</span>':'';
     var res=f.res?'<span class="'+(mode==='none'?'tc-res':'res-chip')+'">'+actorEsc(f.res)+'</span>':'';
-    var menu=isAdmin?'<button type="button" class="file-menu" aria-label="File actions" aria-expanded="false" onclick="toggleAdminBtns(this.closest(\'.file-card\'),event)">&#8942;</button>':'';
+    var menu=isAdmin?'<button type="button" class="file-actions-toggle" aria-label="File actions" aria-expanded="false" onclick="toggleAdminBtns(this.closest(\'.file-card\'),event)">Actions</button>':'';
     var actions=isAdmin?'<button class="btn-edit" onclick="event.stopPropagation();actorEditFile(this.closest(\'.file-card\'))">&#9999; Edit</button><button class="btn-del" onclick="event.stopPropagation();actorDeleteFile(this.closest(\'.file-card\'))">&#128465; Delete</button>':'';
-    var badges=idChip+'<span class="'+(mode==='none'?'tc-size':'size-chip')+'">'+actorEsc(f.size||'')+'</span>'+duration+res+source+menu;
+    var badges=idChip+'<span class="'+(mode==='none'?'tc-size':'size-chip')+'">'+actorEsc(f.size||'')+'</span>'+duration+res+source;
     var visual=mode==='none'?'<div class="fc-text-info">'+badges+'</div>'+(isAdmin?'<div class="text-admin-row">'+actions+'</div>':''):
         '<div class="poster-box" id="poster-box-'+fid+'"><img src="'+actorEsc(f.tg_thumb||'')+'" id="img-poster-'+fid+'" class="fc-poster" onload="this.classList.add(\'loaded\')" onerror="handleThumbError(this.closest(\'.file-card\').dataset.fid)" loading="lazy"><div class="poster-top">'+badges+'</div>'+(isAdmin?'<div class="poster-admin">'+actions+'</div>':'')+'</div>';
-    return '<div class="file-card card-enter" data-fid="'+fid+'" role="button" tabindex="0" aria-label="Play '+name+'" onclick="actorPlayFile(this)" onkeydown="if(event.target===this &amp;&amp; (event.key===\'Enter\' || event.key===\' \')){event.preventDefault();actorPlayFile(this)}">'+visual+'<div class="fc-body"><div class="fc-name" id="name-title-'+fid+'">'+name+'</div></div></div>';
+    return '<div class="file-card card-enter" data-fid="'+fid+'" role="button" tabindex="0" aria-label="Play '+name+'" onclick="actorPlayFile(this)" onkeydown="if(event.target===this &amp;&amp; (event.key===\'Enter\' || event.key===\' \')){event.preventDefault();actorPlayFile(this)}">'+visual+'<div class="fc-body"><div class="fc-name" id="name-title-'+fid+'">'+name+'</div>'+menu+'</div></div>';
 }
 </script><style>.actor-group-id{display:inline-flex;background:#39230b;color:#ffd58a;border:1px solid #d99b3b;border-radius:6px;padding:3px 7px;font-size:10px;font-weight:800;white-space:nowrap}.poster-top{flex-wrap:wrap;align-content:flex-start}</style>'''
 
