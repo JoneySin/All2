@@ -331,6 +331,188 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.groups.find_one({"_id": "7"}))["members"], ["a"])
         self.assertEqual((await self.cols["primary"].find_one({"_id": "a"}))["group_id"], "7")
 
+    async def test_group_preview_is_exact_admin_only_and_uses_live_details(self):
+        members = [f"f{i}" for i in range(1, 8)]
+        for i, fid in enumerate(members, 1):
+            await self.insert_files(doc(fid, f"Current Episode {i}.mp4", "cloud" if i == 3 else "primary"))
+        await self.groups.insert_one({
+            "_id": "17", "num": 17, "name": "Series <Example>", "group_type": "series",
+            "members": members, "files": [{"id": fid, "name": "Old name"} for fid in members],
+            "episode_order": ["f3", "f1"], "episode_labels": [{"id": "f3", "label": "Pilot"}],
+            "thumb_url": "TG_ID:private-telegram-id", "thumb_revision": "revision-17",
+        })
+        response = await self.client.get("/api/group/preview", params={"id": "#17"})
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        data = await response.json()
+        group = data["group"]
+        self.assertEqual((group["id"], group["name"], group["group_type"], group["count"]),
+                         ("17", "Series <Example>", "series", 7))
+        self.assertEqual(len(group["members"]), 5)
+        self.assertEqual(group["more"], 2)
+        self.assertEqual(group["members"][0], {"name": "Current Episode 3.mp4", "label": "Pilot",
+                                                 "source": "cloud", "available": True})
+        self.assertEqual(group["cover"], "/api/group/thumb?gid=17&v=revision-17")
+        self.assertEqual(group["cover_label"], "Group cover")
+        self.assertRegex(group["signature"], r"^[0-9a-f]{64}$")
+        self.assertNotIn("private-telegram-id", str(data))
+        response = await self.client.get("/api/group/preview", params={"id": "# 17 "})
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["group"]["id"], "17")
+        for invalid in ("", "17x", "-17", "##17", "1" * 65):
+            response = await self.client.get("/api/group/preview", params={"id": invalid})
+            self.assertEqual(response.status, 400, invalid)
+        for missing in ("1", "0017", "999"):
+            response = await self.client.get("/api/group/preview", params={"id": missing})
+            self.assertEqual(response.status, 404, missing)
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+        api.get_user_role.return_value = ("user", 9)
+        response = await self.client.get("/api/group/preview", params={"id": "17"})
+        self.assertEqual(response.status, 403)
+
+    async def test_group_preview_legacy_and_missing_member_are_honest(self):
+        await self.insert_files(doc("a", "Film 720p.mkv", thumb_url="TG_ID:cover", thumb_revision="r1"))
+        await self.groups.insert_one({"_id": "7", "name": "Legacy", "members": ["a", "missing"],
+                                      "files": [{"id": "missing", "name": "Stale filename"}]})
+        response = await self.client.get("/api/group/preview", params={"id": "7"})
+        self.assertEqual(response.status, 200)
+        group = (await response.json())["group"]
+        self.assertEqual(group["group_type"], "quality")
+        self.assertEqual(group["members"][0]["label"], "720p")
+        self.assertEqual(group["members"][1]["name"], "File unavailable")
+        self.assertFalse(group["members"][1]["available"])
+        self.assertEqual(group["cover"], "/api/thumb?file_id=a&col=primary&v=r1")
+        self.assertEqual(group["cover_label"], "Sample file")
+        await self.groups.update_one({"_id": "7"}, {"$set": {"thumb_fid": "a", "thumb_col": "primary", "thumb_revision": "group-r"}})
+        response = await self.client.get("/api/group/preview", params={"id": "7"})
+        group = (await response.json())["group"]
+        self.assertEqual(group["cover"], "/api/thumb?file_id=a&col=primary&v=group-r")
+        self.assertEqual(group["cover_label"], "Group cover")
+
+    async def test_group_preview_fails_closed_when_database_is_unavailable(self):
+        with patch.object(api.groups, "find_one", AsyncMock(side_effect=RuntimeError("private database error"))):
+            response = await self.client.get("/api/group/preview", params={"id": "7"})
+        self.assertEqual(response.status, 503)
+        data = await response.json()
+        self.assertNotIn("private database error", str(data))
+
+    async def test_group_preview_does_not_hide_collection_read_failures(self):
+        await self.groups.insert_one({"_id": "7", "name": "Example", "members": ["x"]})
+        with patch.object(self.cols["primary"], "find", side_effect=RuntimeError("collection offline")):
+            response = await self.client.get("/api/group/preview", params={"id": "7"})
+        self.assertEqual(response.status, 503)
+        self.assertNotIn("collection offline", str(await response.json()))
+
+    async def test_group_list_prioritizes_the_exact_number(self):
+        await self.groups.insert_one({"_id": "17", "name": "The exact group", "members": ["a"], "updated_at": 0})
+        await self.groups.insert_many([
+            {"_id": str(i), "name": f"Name 17 match {i}", "members": ["b"], "updated_at": i}
+            for i in range(100, 130)
+        ])
+        response = await self.client.get("/api/group/list", params={"q": "#17"})
+        data = await response.json()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(data["groups"]), 25)
+        self.assertEqual(data["groups"][0]["id"], "17")
+        self.assertEqual(sum(g["id"] == "17" for g in data["groups"]), 1)
+
+    async def test_stale_preview_rejects_file_and_group_moves_before_writing(self):
+        await self.insert_files(doc("a", "Target 720p.mkv", group_id="10"),
+                                doc("b", "Source 720p.mkv", group_id="11"))
+        await self.groups.insert_many([
+            {"_id": "10", "num": 10, "name": "Target", "members": ["a"], "files": [{"id": "a", "name": "Target 720p.mkv"}]},
+            {"_id": "11", "num": 11, "name": "Source", "members": ["b"], "files": [{"id": "b", "name": "Source 720p.mkv"}]},
+        ])
+        response = await self.client.get("/api/group/preview", params={"id": "10"})
+        signature = (await response.json())["group"]["signature"]
+        await self.groups.update_one({"_id": "10"}, {"$set": {"name": "Renamed target", "group_type": "series"}})
+        for path, body in [
+            ("/api/group/save", {"group_id": "10", "items": [{"id": "b"}], "expected_target": signature}),
+            ("/api/group/merge", {"source": "11", "target": "10", "expected_target": signature}),
+        ]:
+            status, result = await self.post(path, body)
+            self.assertEqual(status, 409, result)
+            self.assertEqual(result["code"], "target_changed")
+            self.assertEqual((await self.groups.find_one({"_id": "10"}))["members"], ["a"])
+            self.assertEqual((await self.groups.find_one({"_id": "11"}))["members"], ["b"])
+            self.assertEqual((await self.cols["primary"].find_one({"_id": "b"}))["group_id"], "11")
+        status, _ = await self.post("/api/group/save", {"group_id": "10", "items": [{"id": "b"}],
+                                                        "expected_target": "not a signature"})
+        self.assertEqual(status, 400)
+        response = await self.client.get("/api/group/preview", params={"id": "10"})
+        signature = (await response.json())["group"]["signature"]
+        await self.groups.update_one({"_id": "10"}, {"$set": {"files.0.name": "Renamed member.mp4"}})
+        status, result = await self.post("/api/group/merge", {"source": "11", "target": "10", "expected_target": signature})
+        self.assertEqual((status, result.get("code")), (409, "target_changed"))
+        response = await self.client.get("/api/group/preview", params={"id": "10"})
+        signature = (await response.json())["group"]["signature"]
+        status, result = await self.post("/api/group/merge", {"source": "11", "target": "10", "expected_target": signature})
+        self.assertEqual(status, 200, result)
+        self.assertIsNone(await self.groups.find_one({"_id": "11"}))
+        self.assertEqual((await self.groups.find_one({"_id": "10"}))["members"], ["a", "b"])
+        self.assertEqual((await self.cols["primary"].find_one({"_id": "b"}))["group_id"], "10")
+
+    async def test_reviewed_move_compare_and_sets_target_at_write_time(self):
+        await self.insert_files(doc("a", "Target.mp4", group_id="10"), doc("b", "Source.mp4", group_id="11"))
+        await self.groups.insert_many([
+            {"_id": "10", "name": "Target", "members": ["a"], "files": [{"id": "a", "name": "Target.mp4"}]},
+            {"_id": "11", "name": "Source", "members": ["b"], "files": [{"id": "b", "name": "Source.mp4"}]},
+        ])
+        response = await self.client.get("/api/group/preview", params={"id": "10"})
+        signature = (await response.json())["group"]["signature"]
+        entered, release = asyncio.Event(), asyncio.Event()
+        real_lookup = api.get_files_by_ids
+
+        async def paused_lookup(ids):
+            entered.set()
+            await release.wait()
+            return await real_lookup(ids)
+
+        # Simulate a separate worker modifying the destination after its first
+        # validation but before this worker writes to it.
+        with patch.object(api, "get_files_by_ids", paused_lookup):
+            task = asyncio.create_task(self.post("/api/group/save", {"group_id": "10", "items": [{"id": "b"}],
+                                                                     "expected_target": signature}))
+            await asyncio.wait_for(entered.wait(), 2)
+            try:
+                await self.groups.update_one({"_id": "10"}, {"$set": {"name": "Changed between read and write"}})
+            finally:
+                release.set()
+            status, result = await asyncio.wait_for(task, 2)
+        self.assertEqual((status, result.get("code")), (409, "target_changed"))
+        self.assertEqual((await self.groups.find_one({"_id": "10"}))["members"], ["a"])
+        self.assertEqual((await self.groups.find_one({"_id": "11"}))["members"], ["b"])
+        self.assertEqual((await self.cols["primary"].find_one({"_id": "b"}))["group_id"], "11")
+
+        response = await self.client.get("/api/group/preview", params={"id": "10"})
+        signature = (await response.json())["group"]["signature"]
+        real_update = self.groups.update_one
+
+        async def raced_update(flt, update, **kwargs):
+            await real_update({"_id": "10"}, {"$set": {"group_type": "series"}})
+            return await real_update(flt, update, **kwargs)
+
+        with patch.object(api.groups, "update_one", raced_update):
+            status, result = await self.post("/api/group/merge", {"source": "11", "target": "10", "expected_target": signature})
+        self.assertEqual((status, result.get("code")), (409, "target_changed"))
+        self.assertEqual((await self.groups.find_one({"_id": "10"}))["members"], ["a"])
+        self.assertEqual((await self.groups.find_one({"_id": "11"}))["members"], ["b"])
+
+    async def test_reviewed_file_move_and_deleted_target(self):
+        await self.insert_files(doc("a", "Target.mp4", group_id="10"), doc("b", "Source.mp4"))
+        await self.groups.insert_one({"_id": "10", "num": 10, "name": "Target", "members": ["a"], "files": []})
+        response = await self.client.get("/api/group/preview", params={"id": "10"})
+        signature = (await response.json())["group"]["signature"]
+        status, result = await self.post("/api/group/save", {"group_id": "10", "items": [{"id": "b"}],
+                                                             "expected_target": signature})
+        self.assertEqual(status, 200, result)
+        self.assertEqual((await self.cols["primary"].find_one({"_id": "b"}))["group_id"], "10")
+        await self.groups.delete_one({"_id": "10"})
+        status, _ = await self.post("/api/group/save", {"group_id": "10", "items": [{"id": "b"}],
+                                                        "expected_target": signature})
+        self.assertEqual(status, 404)
+        self.assertEqual((await self.cols["primary"].find_one({"_id": "b"}))["group_id"], "10")
+
     async def test_merge_keeps_target_type_and_series_metadata(self):
         await self.insert_files(doc("a", "Show 1.mkv", group_id="10"), doc("b", "Show 2.mkv", group_id="10"),
                                 doc("c", "Show 3.mkv", "cloud", group_id="11"))

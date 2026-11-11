@@ -20,6 +20,7 @@ CARD_CSS = """
   .search-row1{flex:1;max-width:650px;margin-bottom:0}
   .search-row2{margin-bottom:0;justify-content:flex-start;flex-shrink:0}
 }
+@media(max-width:767px){.search-row2 .cdd-wrap{flex:1 1 0}.search-row2 .cdd-btn{width:100%}}
 
 .search-wrap{flex:1;min-width:0;display:flex;align-items:center;background:var(--bg3);border:1.5px solid var(--border);border-radius:12px;padding:0 6px 0 18px;gap:8px;overflow:hidden;min-height:38px;transition:border-color .18s}
 .search-wrap:focus-within{border-color:var(--border)}
@@ -132,6 +133,7 @@ CARD_CSS = """
 .sel-bar button.alt,.gm-btn.alt{background:var(--bg4)}
 .sel-fab{position:fixed;right:16px;bottom:18px;z-index:140;background:var(--accent);color:#fff;border:none;border-radius:999px;padding:11px 16px;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(229,9,20,.45)}
 .gm-card{max-width:620px!important;padding:24px!important}
+.gm-saving .gm-card{pointer-events:none}
 .gm-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .gm-eyebrow{font-size:10px;font-weight:800;letter-spacing:1.2px;color:#f9a66d;text-transform:uppercase;margin-bottom:5px}
 .gm-title{font-size:20px;font-weight:800;color:var(--text)}
@@ -169,10 +171,33 @@ CARD_CSS = """
 .gm-row{display:flex;gap:8px;margin-top:18px}
 .gm-row .gm-btn{flex:1;padding:12px}
 #gmGroupList{max-height:180px;overflow-y:auto}
-.gm-pick{padding:9px 10px;border:1px solid var(--border);border-radius:8px;margin-top:6px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;display:flex;justify-content:space-between;gap:10px}
-.gm-pick span:last-child{color:var(--muted);font-size:10px;white-space:nowrap}
+.gm-pick{width:100%;text-align:left;background:var(--bg3);padding:9px 10px;border:1px solid var(--border);border-radius:8px;margin-top:6px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;display:flex;justify-content:space-between;gap:10px}
+.gm-pick span:first-child{min-width:0;overflow-wrap:anywhere}.gm-pick span:last-child{color:var(--muted);font-size:10px;white-space:nowrap}
 .gm-pick.on{border-color:#22c55e;color:#22c55e}
-@media(max-width:480px){.gm-card{padding:18px!important}.gm-type-option{padding:10px}.grp-openhead .grp-oadmin{width:100%;flex-wrap:wrap}.gm-row{flex-wrap:wrap}.gm-row .gm-btn{min-width:100px}}
+.gm-btn:disabled{opacity:.45;cursor:not-allowed}
+/* A reviewed destination is required before files or groups are moved. */
+.merge-card{max-width:560px!important;padding:24px!important}
+.merge-source,.merge-warning{border:1px solid var(--border);border-radius:10px;background:var(--bg3);padding:11px 12px;margin-top:14px;color:var(--text);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.merge-source small,.target-overline{display:block;color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;margin-bottom:4px}
+.merge-warning{color:#f7c77d;background:rgba(217,155,59,.09);border-color:rgba(217,155,59,.3)}
+.merge-id-row{display:flex;gap:8px}.merge-id-row .gm-input{min-width:0;flex:1}.merge-id-row button{flex-shrink:0;padding:0 15px}
+.merge-status{min-height:18px;margin-top:8px;font-size:12px;line-height:1.45;color:var(--muted)}
+.merge-status.error,.target-error{color:#fda4af}
+.target-preview{border:1px solid rgba(34,197,94,.45);border-radius:11px;background:var(--bg3);padding:12px;margin-top:10px;color:var(--text)}
+.target-head{display:flex;align-items:flex-start;gap:12px;min-width:0}.target-image-wrap{flex:0 0 96px;min-width:0;text-align:center}
+.target-image{position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:16/9;border-radius:8px;overflow:hidden;background:var(--bg4);color:var(--muted);font-size:22px}
+.target-image img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.target-image-wrap small{display:block;color:var(--muted);font-size:10px;margin-top:4px}
+.target-meta{min-width:0;flex:1}.target-name{font-size:15px;font-weight:800;line-height:1.35;overflow-wrap:anywhere}.target-badges{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.target-badge{border-radius:6px;background:var(--bg4);color:var(--text);padding:4px 7px;font-size:10px;font-weight:800;overflow-wrap:anywhere}.target-badge.id{background:#39230b;color:#ffd58a}.target-badge.kind{background:#103b55;color:#c2eaff}
+.target-list-label{font-size:10px;font-weight:800;color:var(--muted);letter-spacing:.5px;margin:12px 0 5px;text-transform:uppercase}
+.target-members{margin:0;padding:0;list-style:none}.target-members li{padding:6px 0;border-top:1px solid var(--border);font-size:11px;line-height:1.4;overflow-wrap:anywhere}
+.target-members small{display:block;color:var(--muted);font-size:10px}.target-more{color:var(--muted);font-size:11px;margin-top:6px}
+.target-confirm{display:flex;align-items:flex-start;gap:9px;color:var(--text);font-size:12px;font-weight:700;line-height:1.45;margin-top:12px;cursor:pointer}
+.target-confirm input{width:18px;height:18px;flex:none;accent-color:#22c55e;margin:0}
+.target-confirm[hidden],#mergePreview[hidden]{display:none!important}
+.merge-row{display:flex;gap:8px;margin-top:16px}.merge-row .gm-btn{flex:1;padding:12px}
+#gmPickNote .target-preview{margin-top:8px}#gmPickStatus:empty{display:none}
+@media(max-width:480px){.gm-card,.merge-card{padding:18px!important}.gm-type-option{padding:10px}.grp-openhead .grp-oadmin{width:100%;flex-wrap:wrap}.gm-row{flex-wrap:wrap}.gm-row .gm-btn{min-width:100px}.target-image-wrap{flex-basis:76px}}
 </style>
 """
 
@@ -411,8 +436,39 @@ function toggleGroup(el){
 async function grpPost(url,body){
     var r=await fetch(url,{method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'application/json'}});
     var d={};try{d=await r.json();}catch(e){}
-    if(!r.ok||d.error){throw new Error(d.error||('HTTP '+r.status));}
+    if(!r.ok||d.error){var err=new Error(d.error||('HTTP '+r.status));err.status=r.status;err.code=d.code||'';throw err;}
     return d;
+}
+async function fetchGroupPreview(id,signal){
+    var r=await fetch('/api/group/preview?id='+encodeURIComponent(id),{cache:'no-store',signal:signal});
+    var d={};try{d=await r.json();}catch(e){}
+    if(!r.ok||d.error){var err=new Error(d.error||('HTTP '+r.status));err.status=r.status;throw err;}
+    var g=d.group;
+    if(!g||String(g.id)!==id||!(/^[0-9a-f]{64}$/).test(g.signature||''))throw new Error('Could not verify this group. Please try again.');
+    return g;
+}
+function targetPreviewHtml(g){
+    var url=String(g.cover||''),safe=url.indexOf('/api/thumb?')===0||url.indexOf('/api/group/thumb?')===0;
+    var image=safe?'<img src="'+esc(url)+'" alt="" onerror="this.hidden=true">':'';
+    var kind=g.group_type==='series'?'Series / episodes':'Quality versions';
+    var h='<div class="target-preview"><div class="target-head"><div class="target-image-wrap">'+
+        '<div class="target-image"><span aria-hidden="true">&#127916;</span>'+image+'</div><small>'+esc(safe?(g.cover_label||'Preview'):'No image')+'</small></div>'+
+        '<div class="target-meta"><span class="target-overline">Destination group</span><div class="target-name">'+esc(g.name||'Untitled group')+'</div>'+
+        '<div class="target-badges"><span class="target-badge id">GROUP #'+esc(g.id)+'</span><span class="target-badge kind">'+esc(kind)+'</span>'+
+        '<span class="target-badge">'+esc(g.count)+' files</span></div></div></div>';
+    var members=Array.isArray(g.members)?g.members:[];
+    h+='<div class="target-list-label">Files in this group'+(g.more?' (sample)':'')+'</div>';
+    if(!members.length)h+='<div class="target-more">No saved files.</div>';
+    else{
+        h+='<ul class="target-members">';
+        members.forEach(function(f){
+            var meta=[f.label,f.source].filter(Boolean).join(' · ');
+            h+='<li>'+esc(f.name||'File unavailable')+(meta?'<small>'+esc(meta)+'</small>':'')+'</li>';
+        });
+        h+='</ul>';
+        if(g.more)h+='<div class="target-more">+'+esc(g.more)+' more files</div>';
+    }
+    return h+'</div>';
 }
 function selCount(){return Object.keys(SEL).length;}
 function ensureAdminMenu(){
@@ -498,37 +554,120 @@ function editGroup(key){
     openGroupModal({mode:g.manual?'edit':'create',gid:g.gid,num:g.num,name:unesc(g.title),
         members:g.variants.slice(),groupType:g.group_type||'quality',thumbFid:g.thumb_fid||'',custom:!!g.custom_thumb});
 }
-function askGroupNum(){
-    var v=prompt('Kis Group number me merge karna hai? (jaise 17)');
-    if(v===null)return null;
-    v=String(v).replace('#','').trim();
-    if(!/^[0-9]+$/.test(v)){showToast('Sahi group number likhiye','error');return null;}
-    return v;
+var MERGE=null,mergeTimer=null,mergeSeq=0,mergeAbort=null;
+function closeMergeModal(force){
+    if(MERGE&&MERGE.saving&&!force){showToast('Please wait for the move to finish.');return;}
+    clearTimeout(mergeTimer);++mergeSeq;if(mergeAbort){mergeAbort.abort();mergeAbort=null;}
+    var previous=MERGE&&MERGE.returnFocus;MERGE=null;
+    var modal=document.getElementById('mergeModal');if(modal)modal.remove();
+    if(previous&&previous.isConnected)previous.focus();
 }
-async function mergeGroup(key){
+function mergeModalKey(e){
+    if(e.key==='Escape'){e.preventDefault();closeMergeModal();return;}
+    if(e.key!=='Tab')return;
+    var modal=document.getElementById('mergeModal');if(!modal)return;
+    var controls=Array.from(modal.querySelectorAll('button:not([disabled]),input:not([disabled])')).filter(function(el){return el.getClientRects().length;});
+    if(!controls.length)return;
+    var first=controls[0],last=controls[controls.length-1];
+    if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+    else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+}
+function openMergeModal(source){
+    if(MERGE&&MERGE.saving)return;
+    if(MERGE)closeMergeModal(true);
+    MERGE={source:source,target:null,saving:false,returnFocus:document.activeElement};
+    var isGroup=source.kind==='group';
+    var sourceLabel=isGroup?'GROUP TO MOVE':'FILE TO MOVE';
+    var sourceMeta=isGroup?((source.gid?'Group #'+source.gid+' · ':'')+source.items.length+' files'):
+        (source.gid?'Currently in group #'+source.gid:'Not in a saved group');
+    var warning=isGroup?(source.manual?'All files will move and the original group will be removed. The destination group keeps its ID and type.':
+        'All listed files will join the destination group, which keeps its ID and type.'):
+        'The file will move from any previous group to the destination group.';
+    var h='<div class="edit-modal open" id="mergeModal" role="dialog" aria-modal="true" aria-labelledby="mergeTitle" onclick="if(event.target===this)closeMergeModal()" onkeydown="mergeModalKey(event)">'+
+        '<div class="em-card merge-card"><div class="gm-heading"><div><div class="gm-eyebrow">Move to a group</div><div class="gm-title" id="mergeTitle">Review before merging</div>'+
+        '<div class="gm-sub">Enter a group ID and check its details before continuing.</div></div><button type="button" class="gm-close" id="mergeClose" aria-label="Close" onclick="closeMergeModal()">&times;</button></div>'+
+        '<div class="merge-source"><small>'+sourceLabel+'</small><strong>'+esc(source.name||'Untitled')+'</strong><div>'+esc(sourceMeta)+'</div></div>'+
+        '<div class="merge-warning">'+esc(warning)+'</div><label class="gm-label" for="mergeId" style="display:block">DESTINATION GROUP ID</label>'+
+        '<div class="merge-id-row"><input class="gm-input" id="mergeId" type="text" inputmode="numeric" maxlength="65" autocomplete="off" placeholder="e.g. 17" oninput="mergeLookup(false)" onkeydown="mergeInputKey(event)">'+
+        '<button type="button" id="mergeCheck" class="gm-btn alt" onclick="mergeLookup(true)">Check</button></div>'+
+        '<div class="merge-status" id="mergeStatus" role="status" aria-live="polite">Enter the number shown on the destination group.</div><div id="mergePreview" role="region" aria-label="Destination group details" aria-live="polite" hidden></div>'+
+        '<label id="mergeConfirmWrap" class="target-confirm" hidden><input type="checkbox" id="mergeConfirm" onchange="mergeConfirmChanged()">'+
+        '<span>I checked the destination group and want to move here.</span></label>'+
+        '<div class="merge-row"><button type="button" class="gm-btn alt" id="mergeCancel" onclick="closeMergeModal()">Cancel</button>'+
+        '<button type="button" class="gm-btn" id="mergeSubmit" onclick="submitMerge()" disabled>Confirm &amp; move</button></div></div></div>';
+    document.body.insertAdjacentHTML('beforeend',h);
+    document.getElementById('mergeId').focus();
+}
+function mergeGroup(key){
     var g=GROUP_DATA[key];if(!g)return;
-    var id=askGroupNum();if(!id)return;
-    if(!confirm('Merge karne par target group ka type aur ID rakha jayega. Continue?'))return;
-    try{
-        var d;
-        if(g.manual){
-            if(String(g.gid)===id){showToast('Same group me merge nahi ho sakta','error');return;}
-            d=await grpPost('/api/group/merge',{source:g.gid,target:id});
-        }else{
-            d=await grpPost('/api/group/save',{group_id:id,items:g.variants.map(function(f){return {id:f.file_id,name:f.name};})});
-        }
-        showToast('Group #'+d.num+' me merge ho gaya');
-        refreshGridAfterEdit();
-    }catch(e){showToast(e.message,'error');}
+    openMergeModal({kind:'group',name:unesc(g.title),gid:g.manual?String(g.gid||''):'',manual:!!g.manual,
+        items:g.variants.map(function(f){return {id:f.file_id,name:f.name};})});
 }
-async function mergeFile(fid){
+function mergeFile(fid){
     var f=FILE_DATA[fid];if(!f)return;
-    var id=askGroupNum();if(!id)return;
+    openMergeModal({kind:'file',name:f.name||'Unknown file',gid:String(f.gid||''),manual:false,
+        items:[{id:f.file_id,name:f.name}]});
+}
+function mergeTargetId(){return String(document.getElementById('mergeId').value||'').trim().replace(/^#/,'').trim();}
+function mergeInputKey(e){if(e.key==='Enter'){e.preventDefault();mergeLookup(true);}}
+function mergeStatus(text,error){
+    var el=document.getElementById('mergeStatus');if(el){el.textContent=text;el.classList.toggle('error',!!error);}
+}
+function mergeConfirmChanged(){
+    var btn=document.getElementById('mergeSubmit'),check=document.getElementById('mergeConfirm');
+    if(btn)btn.disabled=!(MERGE&&!MERGE.saving&&MERGE.target&&MERGE.target.id===mergeTargetId()&&check&&check.checked);
+}
+function mergeLookup(immediate,notice){
+    var state=MERGE;if(!state||state.saving)return;
+    clearTimeout(mergeTimer);if(mergeAbort){mergeAbort.abort();mergeAbort=null;}
+    var seq=++mergeSeq,id=mergeTargetId(),raw=document.getElementById('mergeId').value.trim();
+    state.target=null;document.getElementById('mergeConfirm').checked=false;
+    document.getElementById('mergeConfirmWrap').hidden=true;
+    var preview=document.getElementById('mergePreview');preview.hidden=true;preview.innerHTML='';mergeConfirmChanged();
+    if(!raw||raw==='#'){mergeStatus('Enter the number shown on the destination group.');return;}
+    if(!/^[0-9]{1,64}$/.test(id)){mergeStatus('Enter a valid numeric group ID.',true);return;}
+    if(state.source.gid&&state.source.gid===id){
+        mergeStatus(state.source.kind==='file'?'This file is already in group #'+id+'.':'Choose a different group; this is the source group.',true);return;
+    }
+    mergeStatus('Looking up group #'+id+'...');
+    mergeTimer=setTimeout(async function(){
+        var controller=new AbortController();mergeAbort=controller;
+        try{
+            var group=await fetchGroupPreview(id,controller.signal);
+            if(MERGE!==state||seq!==mergeSeq||mergeTargetId()!==id)return;
+            state.target=group;preview.innerHTML=targetPreviewHtml(group);preview.hidden=false;
+            document.getElementById('mergeConfirmWrap').hidden=false;
+            mergeStatus(notice||'Check the name, type and files below, then confirm.');mergeConfirmChanged();
+        }catch(e){
+            if(e.name==='AbortError'||MERGE!==state||seq!==mergeSeq)return;
+            mergeStatus(e.message||'Could not load the group. Try again.',true);
+        }finally{if(mergeAbort===controller)mergeAbort=null;}
+    },immediate?0:250);
+}
+function mergeSetBusy(busy){
+    ['mergeId','mergeCheck','mergeConfirm','mergeClose','mergeCancel'].forEach(function(id){var el=document.getElementById(id);if(el)el.disabled=busy;});
+    var btn=document.getElementById('mergeSubmit');if(btn){btn.textContent=busy?'Moving...':'Confirm & move';if(busy)btn.disabled=true;else mergeConfirmChanged();}
+}
+async function submitMerge(){
+    var state=MERGE,check=document.getElementById('mergeConfirm');
+    if(!state||state.saving||!state.target||!check||!check.checked||mergeTargetId()!==state.target.id)return;
+    var target=state.target,source=state.source;state.saving=true;mergeSetBusy(true);
     try{
-        var d=await grpPost('/api/group/save',{group_id:id,items:[{id:f.file_id,name:f.name}]});
-        showToast('File Group #'+d.num+' me merge ho gayi');
-        refreshGridAfterEdit();
-    }catch(e){showToast(e.message,'error');}
+        var d=source.kind==='group'&&source.manual?
+            await grpPost('/api/group/merge',{source:source.gid,target:target.id,expected_target:target.signature}):
+            await grpPost('/api/group/save',{group_id:target.id,items:source.items,expected_target:target.signature});
+        state.saving=false;closeMergeModal(true);
+        showToast('Moved to group #'+(d.num||target.id)+' · '+(d.group_name||target.name));refreshGridAfterEdit();
+    }catch(e){
+        if(MERGE!==state)return;
+        state.saving=false;mergeSetBusy(false);
+        var message=e.code==='target_changed'?'Destination changed. Please review the updated group again.':
+            ('Move failed: '+e.message+'. Check the latest group information before retrying.');
+        // A failed response can follow a partial write. Refresh the page data and
+        // require a fresh preview/confirmation instead of blindly retrying.
+        if(e.code!=='target_changed')refreshGridAfterEdit();
+        mergeLookup(true,message);
+    }
 }
 async function ungroup(gid){
     if(!confirm('Ungroup karne par files delete nahi hongi aur dobara automatically group nahi hongi. Baad me manually jod sakte hain. Continue?'))return false;
@@ -542,15 +681,24 @@ async function removeFromGroup(gid,fid){
     catch(e){showToast(e.message,'error');}
 }
 
-var GM={},gmCropper=null,gmSaveInProgress=false;
-function closeGroupModal(){if(gmSaveInProgress){showToast('Please wait for the save to finish.');return;}clearTimeout(gmSearchTimer);++gmSearchRequest;if(gmCropper){gmCropper.destroy();gmCropper=null;}var m=document.getElementById('grpModal');if(m)m.remove();}
+var GM={},gmCropper=null,gmSaveInProgress=false,gmPickRequest=0,gmPickAbort=null;
+function gmSetBusy(busy){
+    var modal=document.getElementById('grpModal');if(!modal)return;
+    modal.classList.toggle('gm-saving',busy);modal.setAttribute('aria-busy',busy?'true':'false');
+    modal.querySelectorAll('button,input,select,textarea').forEach(function(el){
+        if(busy){el.setAttribute('data-gm-was-disabled',el.disabled?'1':'0');el.disabled=true;}
+        else if(el.hasAttribute('data-gm-was-disabled')){el.disabled=el.getAttribute('data-gm-was-disabled')==='1';el.removeAttribute('data-gm-was-disabled');}
+    });
+}
+function gmCancelPickLookup(){++gmPickRequest;if(gmPickAbort){gmPickAbort.abort();gmPickAbort=null;}}
+function closeGroupModal(){if(gmSaveInProgress){showToast('Please wait for the save to finish.');return;}clearTimeout(gmSearchTimer);++gmSearchRequest;gmCancelPickLookup();if(gmCropper){gmCropper.destroy();gmCropper=null;}var m=document.getElementById('grpModal');if(m)m.remove();}
 function gmThumbUrl(f){return '/api/thumb?file_id='+encodeURIComponent(f.file_id)+'&col='+encodeURIComponent(f.raw_collection||'primary')+'&v='+encodeURIComponent(GM.ts);}
 function openGroupModal(o){
     if(gmSaveInProgress)return;
     var mode0=o.custom?'custom':(o.thumbFid?'member':'auto');
     GM={mode:o.mode,gid:o.gid||'',num:o.num||'',members:(o.members||[]).map(function(f){return Object.assign({},f);}),
         type:o.groupType==='series'?'series':'quality',seriesOrdered:o.groupType==='series',thumbFid:o.thumbFid||'',thumbMode:mode0,
-        hasCustom:!!o.custom,pick:null,savedGid:'',ts:Date.now()+'-'+Math.random().toString(36).slice(2)};
+        hasCustom:!!o.custom,pick:null,pickTarget:null,pickConfirmed:false,savedGid:'',ts:Date.now()+'-'+Math.random().toString(36).slice(2)};
     closeGroupModal();
     var edit=o.mode==='edit';
     var h='<div class="edit-modal open" id="grpModal" role="dialog" aria-modal="true" aria-label="Group editor" onclick="if(event.target===this)closeGroupModal()"><div class="em-card gm-card">'+
@@ -561,7 +709,8 @@ function openGroupModal(o){
     if(!edit){
         h+='<div class="gm-label">ADD TO AN EXISTING GROUP <span style="font-weight:500">(optional)</span></div>'+
            '<input class="gm-input" id="gmSearch" placeholder="Search by group name or number" oninput="gmSearchGroups(this.value)">'+
-           '<div id="gmGroupList"></div><div id="gmPickNote" class="gm-note gm-join-note" style="display:none"></div>';
+           '<div id="gmGroupList"></div><div id="gmPickStatus" class="gm-note" role="status" aria-live="polite"></div>'+
+           '<div id="gmPickNote" class="gm-note gm-join-note" role="region" aria-label="Destination group details" style="display:none"></div>';
     }
     h+='<div id="gmTypeSection"><div class="gm-label">GROUP TYPE</div><fieldset class="gm-type-grid" aria-label="Group type">'+
        '<label><input type="radio" name="gmType" value="quality"'+(GM.type==='quality'?' checked':'')+' onchange="gmChangeType(this.value)">'+
@@ -667,40 +816,82 @@ async function gmRemoveMember(i){
 }
 
 var gmSearchTimer,gmSearchRequest=0;
+function gmSyncSaveButton(){
+    var btn=document.getElementById('gmSave');if(!btn||gmSaveInProgress)return;
+    var search=document.getElementById('gmSearch'),searching=GM.mode==='create'&&search&&search.value.trim()&&!GM.pick;
+    btn.disabled=!!searching||!!(GM.pick&&(!GM.pickTarget||!GM.pickConfirmed));
+}
+function gmPickStatus(text,error){
+    var el=document.getElementById('gmPickStatus');if(el){el.textContent=text||'';el.classList.toggle('target-error',!!error);}
+}
 function gmSearchGroups(q){
-    clearTimeout(gmSearchTimer);
-    GM.pick=null;
-    var section=document.getElementById('gmTypeSection'),note=document.getElementById('gmPickNote');
-    if(section)section.style.display='';if(note)note.style.display='none';
-    gmRenderMembers();
+    clearTimeout(gmSearchTimer);gmCancelPickLookup();
+    GM.pick=null;GM.pickTarget=null;GM.pickConfirmed=false;
+    var section=document.getElementById('gmTypeSection'),note=document.getElementById('gmPickNote'),list=document.getElementById('gmGroupList');
+    if(section)section.style.display='';if(note){note.style.display='none';note.innerHTML='';}
+    if(list)list.innerHTML='<div class="gm-note">Searching groups...</div>';
+    gmPickStatus(q.trim()?'Select a destination below, or clear the search to create a new group.':'');
+    gmRenderMembers();gmSyncSaveButton();
     var request=++gmSearchRequest;
     gmSearchTimer=setTimeout(async function(){
         try{
-            var r=await fetch('/api/group/list?q='+encodeURIComponent(q||'')),d=await r.json(),h='';
+            var r=await fetch('/api/group/list?q='+encodeURIComponent(q||''),{cache:'no-store'}),d=await r.json(),h='';
             if(request!==gmSearchRequest||!document.getElementById('grpModal'))return;
+            if(!r.ok||d.error)throw new Error(d.error||'Could not search groups.');
             (d.groups||[]).forEach(function(g){
-                h+='<div class="gm-pick" onclick="gmPickGroup(\\''+g.id+'\\',\\''+g.group_type+'\\',this)"><span>#'+esc(g.num||g.id)+' '+esc(g.name)+'</span><span>'+esc(g.group_type==='series'?'SERIES':'QUALITY')+' · '+g.count+' files</span></div>';
+                h+='<button type="button" class="gm-pick" data-gid="'+esc(g.id)+'" aria-pressed="false" onclick="gmPickGroup(this)"><span>#'+esc(g.num||g.id)+' '+esc(g.name)+'</span><span>'+esc(g.group_type==='series'?'SERIES':'QUALITY')+' · '+esc(g.count)+' files</span></button>';
             });
             var el=document.getElementById('gmGroupList');if(el)el.innerHTML=h||'<div class="gm-note">No matching groups.</div>';
-        }catch(e){}
+        }catch(e){
+            if(request!==gmSearchRequest||!document.getElementById('grpModal'))return;
+            var el=document.getElementById('gmGroupList');if(el)el.innerHTML='';
+            gmPickStatus(e.message||'Could not search groups.',true);
+        }
     },q?250:0);
 }
-function gmPickGroup(id,type,el){
-    var same=(GM.pick===id);
-    GM.pick=same?null:id;
-    document.querySelectorAll('#gmGroupList .gm-pick').forEach(function(x){x.classList.remove('on');});
-    if(!same&&el)el.classList.add('on');
+function gmPickGroup(el){
+    var id=el.getAttribute('data-gid'),same=(GM.pick===id);
+    gmCancelPickLookup();GM.pick=same?null:id;GM.pickTarget=null;GM.pickConfirmed=false;
+    document.querySelectorAll('#gmGroupList .gm-pick').forEach(function(x){x.classList.remove('on');x.setAttribute('aria-pressed','false');});
+    if(!same){el.classList.add('on');el.setAttribute('aria-pressed','true');}
     var section=document.getElementById('gmTypeSection'),note=document.getElementById('gmPickNote');
     if(section)section.style.display=same?'':'none';
-    if(note){note.style.display=same?'none':'block';note.textContent='Files will join group #'+id+' as '+(type==='series'?'a series':'quality versions')+'. The existing type and episode order will be kept.';}
-    gmRenderMembers();
+    if(note){note.style.display='none';note.innerHTML='';}
+    gmRenderMembers();gmSyncSaveButton();
+    if(same){gmPickStatus((document.getElementById('gmSearch').value||'').trim()?'Select a destination, or clear the search to create a group.':'');}
+    else gmLoadPick(id);
 }
+async function gmLoadPick(id,notice){
+    gmCancelPickLookup();var request=gmPickRequest,state=GM,controller=new AbortController();gmPickAbort=controller;
+    state.pickTarget=null;state.pickConfirmed=false;gmSyncSaveButton();
+    var note=document.getElementById('gmPickNote');if(note){note.style.display='none';note.innerHTML='';}
+    gmPickStatus('Looking up group #'+id+'...');
+    try{
+        var group=await fetchGroupPreview(id,controller.signal);
+        if(GM!==state||request!==gmPickRequest||GM.pick!==id||!document.getElementById('grpModal'))return;
+        state.pickTarget=group;
+        note=document.getElementById('gmPickNote');
+        note.innerHTML='<strong>Check the destination before joining.</strong>'+targetPreviewHtml(group)+
+            '<label class="target-confirm"><input type="checkbox" id="gmConfirmTarget" onchange="gmConfirmPick(this.checked)">'+
+            '<span>I checked this destination group. Its existing type and episode order will be kept.</span></label>';
+        note.style.display='block';gmPickStatus(notice||'Confirm the selected group below.');gmSyncSaveButton();
+    }catch(e){
+        if(e.name==='AbortError'||GM!==state||request!==gmPickRequest||!document.getElementById('grpModal'))return;
+        gmPickStatus(e.message||'Could not load the group. Try again.',true);
+        note=document.getElementById('gmPickNote');if(note){note.style.display='block';note.innerHTML='<button type="button" class="gm-btn alt" onclick="gmRetryPick()">Retry group lookup</button>';}
+    }finally{if(gmPickAbort===controller)gmPickAbort=null;}
+}
+function gmRetryPick(){if(GM.pick)gmLoadPick(GM.pick);}
+function gmConfirmPick(checked){GM.pickConfirmed=!!checked;gmSyncSaveButton();}
 
 async function saveGroupModal(){
     if(gmSaveInProgress)return;
     var btn=document.getElementById('gmSave');
     var name=(document.getElementById('gmName').value||'').trim();
     var create=(GM.mode==='create'),joining=create&&!!GM.pick;
+    var search=document.getElementById('gmSearch');
+    if(create&&!joining&&search&&search.value.trim()){showToast('Select a destination or clear the group search.','error');return;}
+    if(joining&&(!GM.pickTarget||!GM.pickConfirmed||GM.pickTarget.id!==GM.pick)){showToast('Please review and confirm the destination group.','error');return;}
     if(!joining&&!name){showToast('Group ka naam likhiye','error');return;}
     if(create&&!joining&&GM.members.length<2){showToast('Kam se kam 2 files chunein','error');return;}
     if(!GM.members.length){showToast('Koi file select nahi hai','error');return;}
@@ -708,12 +899,13 @@ async function saveGroupModal(){
         episode_order:GM.members.map(function(f){return f.file_id;}),
         episode_labels:GM.members.filter(function(f){return (f.episode_custom_label||'').trim();}).map(function(f){return {id:f.file_id,label:f.episode_custom_label.trim()};})
     }:{};
-    gmSaveInProgress=true;btn.disabled=true;btn.textContent='Saving...';
+    gmSaveInProgress=true;gmSetBusy(true);btn.textContent='Saving...';
     var savedAny=false,gid=GM.gid,num=GM.num;
     try{
         if(create){
             var body={items:GM.members.map(function(f){return {id:f.file_id,name:f.name};}),group_id:GM.pick||'',name:name};
-            if(!joining)Object.assign(body,{group_type:GM.type},episodes);
+            if(joining)body.expected_target=GM.pickTarget.signature;
+            else Object.assign(body,{group_type:GM.type},episodes);
             var d=await grpPost('/api/group/save',body);
             gid=d.group_id;num=d.num;GM.savedGid=gid;savedAny=true;
         }
@@ -749,7 +941,14 @@ async function saveGroupModal(){
         toggleSelMode(false);
         refreshGridAfterEdit();
     }catch(e){
-        gmSaveInProgress=false;
+        gmSaveInProgress=false;gmSetBusy(false);
+        if(joining&&!savedAny&&!GM.savedGid){
+            if(e.code!=='target_changed')refreshGridAfterEdit();
+            btn.textContent='Save group';
+            gmLoadPick(GM.pick,e.code==='target_changed'?'Destination changed. Please review it again.':
+                'The move did not finish: '+e.message+'. Check the latest destination before retrying.');
+            return;
+        }
         if(savedAny||GM.savedGid){
             showToast('Group #'+(num||gid)+' saved, but '+e.message+'. Please retry the remaining changes.','error');
         }else{showToast(e.message,'error');}
@@ -757,7 +956,7 @@ async function saveGroupModal(){
         // saved changes immediately, but keep an existing editor open for retry.
         refreshGridAfterEdit();
         if(GM.savedGid){closeGroupModal();toggleSelMode(false);}
-        else{btn.disabled=false;btn.textContent='Save group';}
+        else{btn.disabled=false;btn.textContent='Save group';gmSyncSaveButton();}
     }
 }
 

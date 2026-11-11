@@ -1730,18 +1730,148 @@ async def api_group_list(req):
     role, _ = await get_user_role(req)
     if role != "admin":
         return web.json_response({"error": "Core Admin Authorization Required!"}, status=403, dumps=fast_json)
-    q = req.query.get("q", "").strip().lstrip("#")
+    q = req.query.get("q", "").strip().lstrip("#").strip()
+    exact = await groups.find_one({"_id": q}) if q.isdigit() else None
     if not q:
         flt = {}
     elif q.isdigit():
-        flt = {"$or": [{"_id": q}, {"name": {"$regex": re.escape(q), "$options": "i"}}]}
+        # An exact number must never be hidden by 25 newer name matches.
+        flt = {"_id": {"$ne": q}, "name": {"$regex": re.escape(q), "$options": "i"}}
     else:
         flt = {"name": {"$regex": re.escape(q), "$options": "i"}}
-    out = []
-    async for g in groups.find(flt).sort("updated_at", -1).limit(25):
-        out.append({"id": str(g["_id"]), "num": g.get("num", ""), "name": g.get("name", ""),
-                    "group_type": group_type(g), "count": len(g.get("members", []))})
+
+    def summary(g):
+        return {"id": str(g["_id"]), "num": g.get("num", ""), "name": g.get("name", ""),
+                "group_type": group_type(g), "count": len(g.get("members", []))}
+
+    out = [summary(exact)] if exact else []
+    async for g in groups.find(flt).sort("updated_at", -1).limit(25 - len(out)):
+        out.append(summary(g))
     return web.json_response({"groups": out}, dumps=fast_json)
+
+
+def _group_preview_signature(group):
+    """Fingerprint the target details an admin is asked to review before moving files."""
+    def pairs(key, value_key):
+        return [[str(item.get("id") or ""), str(item.get(value_key) or "")]
+                for item in (group.get(key) or []) if isinstance(item, dict)]
+
+    visible = {
+        "id": str(group["_id"]), "num": str(group.get("num") or group["_id"]),
+        "name": str(group.get("name") or ""), "type": group_type(group),
+        "members": [str(fid) for fid in (group.get("members") or [])],
+        "files": pairs("files", "name"),
+        "episode_order": [str(fid) for fid in (group.get("episode_order") or [])],
+        "episode_labels": pairs("episode_labels", "label"),
+        "thumb_url": str(group.get("thumb_url") or ""),
+        "thumb_fid": str(group.get("thumb_fid") or ""),
+        "thumb_col": str(group.get("thumb_col") or ""),
+        "thumb_revision": str(group.get("thumb_revision") or ""),
+        "created_at": str(group.get("created_at") or ""),
+    }
+    return hashlib.sha256(fast_json(visible).encode("utf-8")).hexdigest()
+
+
+def _target_changed_response():
+    return web.json_response({"error": "Target group changed. Please review it again.", "code": "target_changed"},
+                             status=409, dumps=fast_json)
+
+
+def _check_group_preview(data, group):
+    """Reject a stale reviewed target; older API clients may omit the fingerprint."""
+    if "expected_target" not in data:
+        return None
+    expected = data["expected_target"]
+    if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+        return web.json_response({"error": "Invalid target preview. Please look up the group again."},
+                                 status=400, dumps=fast_json)
+    if not hmac.compare_digest(expected, _group_preview_signature(group)):
+        return _target_changed_response()
+    return None
+
+
+def _preview_write_filter(group, require_preview):
+    """Atomically reject target changes between validation and the membership write."""
+    flt = {"_id": group["_id"]}
+    if require_preview:
+        for key in ("num", "name", "group_type", "members", "files", "episode_order", "episode_labels",
+                    "thumb_url", "thumb_fid", "thumb_col", "thumb_revision", "created_at"):
+            flt[key] = {"$eq": group[key]} if key in group else {"$exists": False}
+    return flt
+
+
+@search_routes.get("/api/group/preview")
+async def api_group_preview(req):
+    """Look up exactly one group for an admin, without using the search caches."""
+    def respond(data, status=200):
+        return web.json_response(data, status=status, dumps=fast_json, headers={"Cache-Control": "no-store"})
+
+    role, _ = await get_user_role(req)
+    if role != "admin":
+        return respond({"error": "Core Admin Authorization Required!"}, status=403)
+    gid = req.query.get("id", "").strip()
+    if gid.startswith("#"):
+        gid = gid[1:].strip()
+    if not re.fullmatch(r"[0-9]{1,64}", gid):
+        return respond({"error": "Enter a valid group number."}, status=400)
+    try:
+        g = await groups.find_one({"_id": gid})
+        if not g:
+            return respond({"error": f"Group #{gid} was not found."}, status=404)
+
+        members = list(g.get("members") or [])
+        member_set = set(members)
+        # A small sample keeps lookups bounded even for a very large series.
+        ordered = ([fid for fid in (g.get("episode_order") or []) if fid in member_set]
+                   if group_type(g) == "series" else [])
+        ordered = list(dict.fromkeys(ordered + members))
+        sample = ordered[:5]
+        remaining = set(sample)
+        docs = {}
+        for source, col in FILE_COLLECTIONS.items():
+            if not remaining:
+                break
+            found = await col.find({"_id": {"$in": list(remaining)}},
+                                   {"file_name": 1, "meta": 1, "thumb_url": 1, "thumb_revision": 1}).to_list(length=len(remaining))
+            for doc in found:
+                docs[doc["_id"]] = (doc, source)
+                remaining.discard(doc["_id"])
+
+        labels = {item.get("id"): str(item.get("label") or "") for item in (g.get("episode_labels") or [])
+                  if isinstance(item, dict) and item.get("id")}
+        preview_members = []
+        for fid in sample:
+            doc, source = docs.get(fid, ({}, ""))
+            name = str(doc.get("file_name") or "")
+            label = labels.get(fid, "") if group_type(g) == "series" else _quality_label(doc_resolution_text(doc), name)[0]
+            preview_members.append({"name": name or "File unavailable", "label": label,
+                                    "source": source, "available": bool(doc)})
+
+        revision = urllib.parse.quote(str(g.get("thumb_revision") or g.get("updated_at") or 0), safe="")
+        cover, cover_label = "", ""
+        if str(g.get("thumb_url") or "").startswith("TG_ID:"):
+            cover = f"/api/group/thumb?gid={urllib.parse.quote(gid, safe='')}&v={revision}"
+            cover_label = "Group cover"
+        elif g.get("thumb_fid") in member_set and g.get("thumb_col") in FILE_COLLECTIONS:
+            cover = (f"/api/thumb?file_id={urllib.parse.quote(str(g['thumb_fid']), safe='')}"
+                     f"&col={urllib.parse.quote(str(g['thumb_col']), safe='')}&v={revision}")
+            cover_label = "Group cover"
+        else:
+            for fid in sample:
+                if fid in docs:
+                    doc, source = docs[fid]
+                    cover = (f"/api/thumb?file_id={urllib.parse.quote(str(fid), safe='')}"
+                             f"&col={urllib.parse.quote(source, safe='')}&v={urllib.parse.quote(_thumb_version(doc), safe='')}")
+                    cover_label = "Sample file"
+                    break
+        result = {"id": gid, "num": g.get("num") or gid, "name": str(g.get("name") or ""),
+                  "group_type": group_type(g), "count": len(members), "members": preview_members,
+                  "more": max(0, len(members) - len(sample)), "cover": cover, "cover_label": cover_label,
+                  "signature": _group_preview_signature(g)}
+        return respond({"group": result})
+    except Exception as exc:
+        logger.warning(f"group preview failed: {exc}")
+        return respond({"error": "Could not load group information. Please try again."}, status=503)
 
 
 @search_routes.post("/api/group/save")
@@ -1769,6 +1899,10 @@ async def api_group_save(req):
         target = await groups.find_one({"_id": gid}) if gid else None
         if gid and not target:
             return web.json_response({"error": "Group nahi mila!"}, status=404, dumps=fast_json)
+        if target:
+            preview_error = _check_group_preview(data, target)
+            if preview_error is not None:
+                return preview_error
         if not gid and not name:
             return web.json_response({"error": "Group ka naam likhiye!"}, status=400, dumps=fast_json)
         docs = await get_files_by_ids(file_ids)
@@ -1791,9 +1925,11 @@ async def api_group_save(req):
                 add["files"] = {"$each": [{"id": i, "name": n} for i, n in fresh]}
             if auto_keys:
                 add["auto_keys"] = {"$each": auto_keys}
-            await groups.update_one({"_id": gid}, {"$addToSet": add,
+            result = await groups.update_one(_preview_write_filter(target, "expected_target" in data), {"$addToSet": add,
                 "$set": {"updated_at": now, "scanned_at": 0},
                 "$pull": {"excluded": {"$in": file_ids}}})
+            if not result.matched_count:
+                return _target_changed_response()
             saved_type = group_type(target)
         else:
             num = await _next_group_num()
@@ -1949,6 +2085,9 @@ async def api_group_merge(req):
             return web.json_response({"error": "Source group nahi mila!"}, status=404, dumps=fast_json)
         if not tgt:
             return web.json_response({"error": f"Group #{tgt_id} nahi mila!"}, status=404, dumps=fast_json)
+        preview_error = _check_group_preview(data, tgt)
+        if preview_error is not None:
+            return preview_error
         add = {"members": {"$each": src.get("members", [])}}
         if src.get("files"):
             add["files"] = {"$each": src["files"]}
@@ -1970,7 +2109,10 @@ async def api_group_merge(req):
                     labels[item.get("id")] = item
             if labels:
                 updates["episode_labels"] = list(labels.values())
-        await groups.update_one({"_id": tgt_id}, {"$addToSet": add, "$set": updates})
+        result = await groups.update_one(_preview_write_filter(tgt, "expected_target" in data),
+                                         {"$addToSet": add, "$set": updates})
+        if not result.matched_count:
+            return _target_changed_response()
         await groups.update_one({"_id": tgt_id}, {"$pull": {"excluded": {"$in": src.get("members", [])}}})
         await groups.delete_one({"_id": src_id})
         await _mark_files(src.get("members", []), tgt_id)
