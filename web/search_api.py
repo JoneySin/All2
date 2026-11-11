@@ -597,7 +597,7 @@ async def _manual_map(items, joins=None, blocked=None, strict=False):
 
 
 def group_results(results, manual=None, blocked=None):
-    """Build cards without mutating inputs; saved groups keep even one member."""
+    """Build cards without mutating inputs; a group card needs two visible files."""
     manual = manual or {}
     blocked = set(blocked or ())
     rows, seen = [], set()
@@ -637,6 +637,11 @@ def group_results(results, manual=None, blocked=None):
             out.append(bucket)
             continue
         items = buckets[bucket]
+        # A legacy singleton, or a group with only one retrievable member, is a
+        # file card, not a group. Keep its stored metadata for possible repair.
+        if len(items) < 2:
+            out.extend(dict(item, gid="", group_num="", group_type="") for item in items)
+            continue
         mg = manual.get(_row_id(items[0])) if bucket[0] == "saved" else None
         plan = plans[bucket[1]] if not mg else None
         gid = str(mg["_id"]) if mg else ""
@@ -700,6 +705,11 @@ def group_results(results, manual=None, blocked=None):
             "key": key,
             "title": title,
             "count": len(vlist),
+            # Repeated quality copies of one explicitly marked episode count as
+            # one episode; files without a marker remain individually countable.
+            "episode_count": len({("episode", episode_identity(item.get("name")))
+                                  if episode_identity(item.get("name")) else ("file", item.get("file_id"))
+                                  for item in vlist}) if gtype == "series" else None,
             "type": rep.get("type", "VIDEO"),
             "tg_thumb": thumb,
             "thumb_fid": (mg.get("thumb_fid") or "") if mg else "",
@@ -1117,6 +1127,8 @@ async def _annotate_raw_groups(results_list):
         owners, wanted = {}, set(ids)
         async for g in groups.find({"members": {"$in": ids}},
                                    {"members": 1, "num": 1, "group_type": 1}):
+            if len(set(g.get("members") or [])) < 2:
+                continue
             for fid in g.get("members") or []:
                 if fid in wanted:
                     owners[fid] = g
@@ -1774,15 +1786,34 @@ async def _next_group_num():
     return int(d["n"])
 
 
-async def _group_cleanup(pull_ids=None, strict=False):
-    """Deleted files ko groups se hatao, khali groups mitao, caches saaf karo."""
+async def _group_cleanup(pull_ids=None, strict=False, dissolve_ids=()):
+    """Remove deleted members and dissolve affected groups with fewer than two files.
+
+    Untouched legacy singleton documents are retained for admin recovery; search
+    renders their surviving file without a group card. Compare the member list
+    at deletion so a concurrent addition cannot be discarded.
+    """
     try:
+        affected = set(dissolve_ids)
         if pull_ids:
+            async for group in groups.find({"members": {"$in": pull_ids}}, {"_id": 1}):
+                affected.add(str(group["_id"]))
             await groups.update_many({"members": {"$in": pull_ids}}, {"$pull": {
                 "members": {"$in": pull_ids}, "files": {"id": {"$in": pull_ids}},
                 "episode_order": {"$in": pull_ids}, "episode_labels": {"id": {"$in": pull_ids}}}})
             await groups.update_many({"thumb_fid": {"$in": pull_ids}},
                                      {"$set": {"thumb_fid": "", "thumb_col": ""}})
+        for gid in affected:
+            group = await groups.find_one({"_id": gid}, {"members": 1})
+            if not group:
+                continue
+            members = group.get("members") or []
+            if len(set(members)) >= 2:
+                continue
+            deleted = await groups.delete_one({"_id": gid, "members": members})
+            if deleted.deleted_count:
+                await _mark_files(members, "", expected_gid=gid, strict=True)
+                thumb_cache.pop(f"g:{gid}", None)
         await groups.delete_many({"members": {"$size": 0}})
     except Exception as e:
         logger.warning(f"group cleanup failed: {e}")
@@ -1865,8 +1896,8 @@ SCAN_STATE = {"running": False}
 async def _scan_all_groups():
     """Scan all collections using the same safe rules as search.
 
-    Existing groups are retained regardless of size. New automatic groups need
-    at least three distinct file IDs; joins are checked against live metadata.
+    New automatic groups need at least two distinct file IDs; joins are checked
+    against live metadata. Legacy singleton metadata remains available for repair.
     """
     st = SCAN_STATE
     st.update(running=True, phase="groups load ho rahe hain", scanned=0, total=0, created=0,
@@ -2264,6 +2295,8 @@ async def api_group_save(req):
                 return preview_error
         if not gid and not name:
             return web.json_response({"error": "Group ka naam likhiye!"}, status=400, dumps=fast_json)
+        if not gid and len(file_ids) < 2:
+            return web.json_response({"error": "A group needs at least 2 distinct files."}, status=400, dumps=fast_json)
         docs = await get_files_by_ids(file_ids)
         by_id = {d["_id"]: d for d in docs}
         if any(fid not in by_id for fid in file_ids):
@@ -2303,6 +2336,7 @@ async def api_group_save(req):
 
         # Move files out of other groups, but never pull/reorder the target's own members.
         other = {"_id": {"$ne": gid}, "members": {"$in": file_ids}}
+        affected = [str(group["_id"]) async for group in groups.find(other, {"_id": 1})]
         await groups.update_many(other, {
             "$pull": {"members": {"$in": file_ids}, "files": {"id": {"$in": file_ids}},
                       "episode_order": {"$in": file_ids}, "episode_labels": {"id": {"$in": file_ids}}},
@@ -2310,7 +2344,7 @@ async def api_group_save(req):
         await groups.update_many({"_id": {"$ne": gid}, "thumb_fid": {"$in": file_ids}},
                                  {"$set": {"thumb_fid": "", "thumb_col": ""}})
         await _mark_files(file_ids, gid)
-        await _group_cleanup()
+        await _group_cleanup(dissolve_ids=affected, strict=True)
         return web.json_response({"success": True, "group_id": gid, "num": num,
                                   "group_name": name, "group_type": saved_type}, dumps=fast_json)
     except Exception as e:
@@ -2397,8 +2431,8 @@ async def api_group_remove_file(req):
         # membership so a retry can finish without silently losing the decision.
         await _mark_files([fid], "", expected_gid=gid, suppress_auto=True, strict=True)
         await groups.update_one({"_id": gid, "members": fid}, upd)
-        await _group_cleanup()
-        return web.json_response({"success": True}, dumps=fast_json)
+        await _group_cleanup(dissolve_ids=[gid], strict=True)
+        return web.json_response({"success": True, "group_deleted": not bool(await groups.find_one({"_id": gid}, {"_id": 1}))}, dumps=fast_json)
     except Exception as e:
         logger.error(f"group remove error: {e}")
         return web.json_response({"error": str(e)}, status=500, dumps=fast_json)

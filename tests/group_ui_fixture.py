@@ -83,7 +83,7 @@ async def seed_automatic_examples(_req):
         ("aq1", "Auto Movie 720p.mkv", 65), ("aq2", "Auto Movie 1080p.mkv", 65),
         ("aq3", "Auto Movie 480p.mkv", 65),
         ("as1", "Auto Mystery S01E01.mkv", 1200), ("as2", "Auto Mystery S01E02.mkv", 1800),
-        ("as3", "Auto Mystery S01E03.mkv", 0),
+        ("as3", "Auto Mystery S01E03.mkv", 0), ("as4", "Auto Mystery S01E01 1080p.mkv", 1200),
         ("two1", "Duo Film 720p.mkv", 65), ("two2", "Duo Film 1080p.mkv", 65),
         ("no1", "Unknown Runtime 720p.mkv", 0), ("no2", "Unknown Runtime 1080p.mkv", 0),
         ("no3", "Unknown Runtime 480p.mkv", 0),

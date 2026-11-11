@@ -381,7 +381,7 @@ function groupHtml(g){
     var dur=!series&&g.duration?'<span class="dur-chip">'+esc(g.duration)+'</span>':'';
     var idChip=groupIdChip(g.num||g.gid,true);
     var kind='<span class="grp-kind'+(series?' series':'')+'">'+(series?'SERIES':'QUALITY')+'</span>';
-    var badge='<span class="grp-badge">'+g.count+(series?' FILES':' VERSIONS')+'</span>';
+    var badge='<span class="grp-badge">'+(series?(g.episode_count==null?g.count:g.episode_count):g.count)+(series?' EPISODES':' QUALITY')+'</span>';
     var adm='';
     if(isAdminView){
         adm='<button class="btn-edit" onclick="event.stopPropagation();editGroup(\\''+g.key+'\\')">&#9999; '+(g.manual?'Edit Group':'Save / Edit')+'</button>'+
@@ -799,17 +799,18 @@ function gmMoveMember(i,direction){
 }
 async function gmRemoveMember(i){
     var f=GM.members[i];if(!f)return;
+    var dissolved=false;
     if(GM.mode==='edit'){
-        if(!confirm(GM.members.length===1?'This is the last file. Removing it deletes the group, not the file. Continue?':'Remove this file from the group?'))return;
-        try{await grpPost('/api/group/remove_file',{group_id:GM.gid,file_id:f.file_id});}
+        if(!confirm(GM.members.length<=2?'A group needs at least 2 files. Removing this file will dissolve the group, not delete its files. Continue?':'Remove this file from the group?'))return;
+        try{var result=await grpPost('/api/group/remove_file',{group_id:GM.gid,file_id:f.file_id});dissolved=!!result.group_deleted;}
         catch(e){showToast(e.message,'error');return;}
     }
     GM.members.splice(i,1);
     if(GM.thumbFid===f.file_id){GM.thumbFid='';GM.thumbMode='auto';}
     gmRenderThumbs();gmRenderMembers();
     if(GM.mode==='edit'){
-        showToast('File removed from group');
-        if(!GM.members.length)closeGroupModal();
+        showToast(dissolved?'Group dissolved; files were kept':'File removed from group');
+        if(dissolved||!GM.members.length)closeGroupModal();
         refreshGridAfterEdit();
     }
 }

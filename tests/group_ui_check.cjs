@@ -28,6 +28,8 @@ const assert = require('node:assert/strict');
  assert.equal(await page.locator('.file-card .type-chip, .file-card .tc-type').count(),0);
  assert.equal(await quality.locator('.grp-master .poster-top .dur-chip').textContent(),'0:03');
  assert.equal(await series.locator('.grp-master .poster-top .dur-chip').count(),0);
+ assert.equal(await quality.locator('.grp-master .poster-top .grp-badge').textContent(),'3 QUALITY');
+ assert.equal(await series.locator('.grp-master .poster-top .grp-badge').textContent(),'2 EPISODES');
  assert.ok((await quality.locator('.grp-master .poster-top .group-id-chip').textContent()).includes('#11'));
  await quality.locator('.grp-title-button').focus();await page.keyboard.press('Enter');
  assert.equal(await quality.evaluate(e=>e.classList.contains('open')),true);
@@ -164,26 +166,37 @@ const assert = require('node:assert/strict');
  assert.equal(created.members[0].label,'First episode');
  console.log('Group editor: new series creation and episode labels remain functional');
 
- // Newly discovered automatic groups need three distinct files; runtimes are
- // required for quality but may differ or be missing for marked episodes.
+ // Automatic groups need at least two distinct files; runtimes are required
+ // for quality but may differ or be missing for marked episodes.
  assert.equal((await page.request.post(base+'/fixture/seed_auto')).status(),200);
  await page.reload();
  const autoMovie=page.locator('.grp-card').filter({hasText:'Auto Movie'}).first();await autoMovie.waitFor();
  const autoSeries=page.locator('.grp-card').filter({hasText:'Auto Mystery'}).first();await autoSeries.waitFor();
- assert.ok((await autoMovie.locator('.grp-textinfo').textContent()).includes('3 VERSIONS'));
+ assert.ok((await autoMovie.locator('.grp-textinfo').textContent()).includes('3 QUALITY'));
  assert.equal(await autoMovie.locator('.grp-textinfo .dur-chip').textContent(),'1:05');
- assert.ok((await autoSeries.locator('.grp-textinfo').textContent()).includes('3 FILES'));
+ assert.ok((await autoSeries.locator('.grp-textinfo').textContent()).includes('3 EPISODES'));
  assert.equal(await autoSeries.locator('.grp-textinfo .dur-chip').count(),0);
- assert.equal(await page.locator('.grp-card').filter({hasText:'Duo Film'}).count(),0);
- assert.equal(await page.locator('.file-card[data-fid^="two"]').count(),2);
+ const duo=page.locator('.grp-card').filter({hasText:'Duo Film'}).first();await duo.waitFor();
+ assert.equal(await duo.locator('.grp-textinfo .grp-badge').textContent(),'2 QUALITY');
  assert.equal(await page.locator('.grp-card').filter({hasText:'Unknown Runtime'}).count(),0);
  assert.equal(await page.locator('.file-card[data-fid^="no"]').count(),3);
  await page.locator('#cddGfBtn').click();await page.locator('#cddGfMenu [data-val=quality]').click();
  await autoSeries.waitFor({state:'detached'});await autoMovie.waitFor();
- assert.equal(await page.locator('.file-card[data-fid^="two"]').count(),0);
+ await duo.waitFor();
  await page.locator('#cddGfBtn').click();await page.locator('#cddGfMenu [data-val=series]').click();
- await autoMovie.waitFor({state:'detached'});await autoSeries.waitFor();
- console.log('Automatic cards: three-file threshold, runtimes, episode series and filters OK');
+ await autoMovie.waitFor({state:'detached'});await duo.waitFor({state:'detached'});await autoSeries.waitFor();
+ console.log('Automatic cards: two-file threshold, runtimes, episode series and filters OK');
+
+ // Removing a member from a two-file group warns and closes its now-deleted
+ // editor, while leaving both files intact.
+ await page.locator('#cddGfBtn').click();await page.locator('#cddGfMenu [data-val=quality]').click();await duo.waitFor();
+ const duoGid=(await duo.locator('.grp-textinfo .group-id-chip').textContent()).match(/\d+/)[0];
+ await page.evaluate(k=>editGroup(k),await duo.getAttribute('data-gk'));
+ await page.locator('#grpModal').waitFor();
+ page.once('dialog',dialog=>{assert.ok(dialog.message().includes('dissolve'));dialog.accept();});
+ await page.evaluate(()=>gmRemoveMember(0));await page.locator('#grpModal').waitFor({state:'detached'});
+ assert.equal((await json('/api/group/preview?id='+duoGid)).status,404);
+ console.log('Removing from a two-file group dissolves it without deleting files OK');
 
  // A selective filter can produce an empty continuation page. Even its final
  // page must retain Previous, and an edit must restart a stored cursor snapshot.

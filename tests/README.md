@@ -4,10 +4,13 @@ The grouping, editor, cache-invalidation and streaming tests use an in-memory
 MongoDB mock and test-only configuration. They check signed inline/range headers,
 thumbnail revisions, partial failures, and preservation of post/profile data;
 they do not connect to Telegram or require a running MongoDB server. Grouping
-checks cover the three-distinct-file automatic threshold, runtime/episode matching,
+checks cover the two-distinct-file group threshold, runtime/episode matching,
 legacy/manual groups, exclusions, live joins, full scans and pagination across
-collections. Actual media playback still depends on Telegram access and browser-
-supported codecs. MongoDB text-index behavior still requires a real-service test.
+collections. Removing, moving or deleting a member can dissolve its affected group
+if fewer than two files remain; the surviving files are not deleted. Untouched
+legacy singleton records are preserved for repair but displayed as individual
+files, not groups. Actual media playback still depends on Telegram access and
+browser-supported codecs. MongoDB text-index behavior still requires a real-service test.
 
 For grouped `/api/search` requests, treat `next_offset` as an opaque continuation
 value and send it back unchanged, including when a selective filter returns an

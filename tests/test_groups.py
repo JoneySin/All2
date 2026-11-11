@@ -76,12 +76,12 @@ class GroupingUnitTests(unittest.TestCase):
         self.assertEqual(len(cards), 1)
         self.assertFalse(cards[0].get("group"))
 
-    def test_saved_one_member_group_is_still_editable(self):
-        item = api._build_results_list([doc("a", "Episode 1")], "none")
+    def test_saved_one_member_group_is_shown_as_a_file(self):
+        item = api._build_results_list([doc("a", "Episode 1", group_id="4")], "none")
         group = {"_id": "4", "num": 4, "name": "Series", "members": ["a"], "group_type": "series"}
         card = api.group_results(item, {"a": group})[0]
-        self.assertTrue(card["group"])
-        self.assertEqual((card["num"], card["group_type"], card["count"]), (4, "series", 1))
+        self.assertFalse(card.get("group"))
+        self.assertEqual((card["file_id"], card["gid"]), ("a", ""))
 
     def test_normalization_and_explicit_episode_formats(self):
         self.assertEqual(quality_title_key("A New Film 2024 Hindi WEB-DL 720p.mkv"),
@@ -112,8 +112,12 @@ class GroupingUnitTests(unittest.TestCase):
         def cards(*docs):
             return api.group_results(api._build_results_list(list(docs), "none"))
 
-        # Two matching variants never form a new automatic group.
-        self.assertEqual(len(cards(doc("a", "Film 720p"), doc("b", "Film 1080p"))), 2)
+        # Two distinct files are enough; a single file never makes a group.
+        self.assertFalse(cards(doc("a", "Film 720p"))[0].get("group"))
+        pair = cards(doc("a", "Film 720p"), doc("b", "Film 1080p"))
+        self.assertEqual((len(pair), pair[0]["group_type"], pair[0]["count"]), (1, "quality", 2))
+        series_pair = cards(doc("a", "Show S01E01", duration=100), doc("b", "Show S01E02", duration=0))
+        self.assertEqual((series_pair[0]["group_type"], series_pair[0]["count"]), ("series", 2))
         quality = cards(doc("a", "Film Hindi 720p", duration=5400),
                         doc("b", "Film English 1080p", duration=5400),
                         doc("c", "Film WEB-DL 480p", duration=5400))[0]
@@ -122,18 +126,20 @@ class GroupingUnitTests(unittest.TestCase):
             doc("a", "Film 720p", duration=5400), doc("b", "Film 1080p", duration=5401),
             doc("c", "Film 480p", duration=0))))
 
-        # Three files need at least two episode identities to become a series.
+        # A series needs at least two distinct episode identities.
         same_ep = cards(doc("a", "Show S01E01 720p"), doc("b", "Show S01E01 1080p"),
                         doc("c", "Show 1x01 480p"))[0]
         self.assertEqual(same_ep["group_type"], "quality")
         series = cards(doc("a", "Show S01E01 720p", duration=1200),
                        doc("b", "Show S01E01 1080p", duration=1200),
                        doc("c", "Show S01E02 480p", duration=2400))[0]
-        self.assertEqual((series["group_type"], series["count"], series["duration"]), ("series", 3, ""))
-        self.assertEqual(len(cards(doc("x", "Show S01E01"), doc("y", "Show S01E02"))), 2)
-        self.assertTrue(all(not c.get("group") for c in cards(
-            doc("a", "Show S01E01", duration=100), doc("b", "Show S01E02", duration=100),
-            doc("c", "Other Show S01E03", duration=100))))
+        self.assertEqual((series["group_type"], series["count"], series["episode_count"], series["duration"]),
+                         ("series", 3, 2, ""))
+        self.assertEqual(cards(doc("x", "Show S01E01"), doc("y", "Show S01E02"))[0]["count"], 2)
+        mixed = cards(doc("a", "Show S01E01", duration=100), doc("b", "Show S01E02", duration=100),
+                      doc("c", "Other Show S01E03", duration=100))
+        self.assertEqual({v["file_id"] for card in mixed if card.get("group") for v in card["variants"]}, {"a", "b"})
+        self.assertTrue(any(card.get("file_id") == "c" for card in mixed))
 
     def test_large_automatic_buckets_are_not_misidentified(self):
         quality = [doc(str(i), "Popular Film 720p", duration=60) for i in range(31)]
@@ -253,11 +259,13 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         # The page may contain the other, stale copy without its exclusion flag.
         cards = await api._finalize(api._build_results_list([
             doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv"), doc("c", "Film 480p.mkv")], "none"), True, siblings=False)
-        self.assertTrue(all(not c.get("group") for c in cards))
-        self.assertEqual(await self.groups.count_documents({}), 0)
+        group = next(c for c in cards if c.get("group"))
+        self.assertEqual({v["file_id"] for v in group["variants"]}, {"b", "c"})
+        self.assertTrue(any(c.get("file_id") == "a" for c in cards))
+        self.assertEqual(await self.groups.count_documents({}), 1)
         await api._scan_all_groups()
         self.assertEqual(api.SCAN_STATE.get("error"), "")
-        self.assertEqual(await self.groups.count_documents({}), 0)
+        self.assertEqual(set((await self.groups.find_one({}))["members"]), {"b", "c"})
 
     async def test_failed_live_recheck_never_invents_a_group_number(self):
         rows = api._build_results_list([doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv"),
@@ -333,6 +341,53 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 400)
         self.assertNotIn("group_type", await self.groups.find_one({"_id": "7"}))
 
+    async def test_single_file_creation_is_rejected_even_with_duplicate_ids(self):
+        await self.insert_files(doc("a", "Film 720p"))
+        for items in ([{"id": "a"}], [{"id": "a"}, {"id": "a"}]):
+            status, result = await self.post("/api/group/save", {"name": "Film", "items": items})
+            self.assertEqual(status, 400, result)
+            self.assertIn("2 distinct", result["error"])
+        self.assertEqual(await self.groups.count_documents({}), 0)
+
+    async def test_legacy_singleton_is_a_file_until_another_file_joins(self):
+        await self.insert_files(doc("a", "Legacy 720p", group_id="7"), doc("b", "Other title"))
+        await self.groups.insert_one({"_id": "7", "num": 7, "name": "Legacy", "members": ["a"],
+                                      "files": [{"id": "a", "name": "Legacy 720p"}], "auto_keys": []})
+        for grouped in ("0", "1"):
+            response = await self.client.get("/api/search", params={"group": grouped, "mode": "none"})
+            cards = (await response.json())["results"]
+            card = next(row for row in cards if row.get("file_id") == "a")
+            self.assertFalse(card.get("group"))
+            self.assertEqual(card["gid"], "")
+        self.assertIsNotNone(await self.groups.find_one({"_id": "7"}))
+        status, result = await self.post("/api/group/save", {"group_id": "7", "items": [{"id": "b"}]})
+        self.assertEqual(status, 200, result)
+        cards = await api._group_cards([await self.groups.find_one({"_id": "7"})], "none")
+        self.assertEqual((cards[0]["gid"], cards[0]["count"]), ("7", 2))
+
+    async def test_dissolve_does_not_delete_a_concurrently_expanded_group(self):
+        await self.insert_files(doc("a", "Film A", group_id="7"), doc("b", "Film B", group_id="7"))
+        await self.groups.insert_one({"_id": "7", "members": ["a"]})
+        original = self.groups.delete_one
+        async def concurrent_delete(query):
+            await self.groups.update_one({"_id": "7"}, {"$addToSet": {"members": "b"}})
+            return await original(query)
+        with patch.object(self.groups, "delete_one", side_effect=concurrent_delete):
+            await api._group_cleanup(dissolve_ids=["7"], strict=True)
+        self.assertEqual((await self.groups.find_one({"_id": "7"}))["members"], ["a", "b"])
+        self.assertEqual((await self.cols["primary"].find_one({"_id": "a"}))["group_id"], "7")
+
+    async def test_move_dissolves_source_left_with_one_file(self):
+        await self.insert_files(doc("a", "Film A", group_id="7"), doc("b", "Film B", "cloud", group_id="7"),
+                                doc("c", "Film C", group_id="8"), doc("d", "Film D", group_id="8"))
+        for gid, members in (("7", ["a", "b"]), ("8", ["c", "d"])):
+            await self.groups.insert_one({"_id": gid, "num": int(gid), "name": "Film", "members": members})
+        status, result = await self.post("/api/group/save", {"group_id": "8", "items": [{"id": "a"}]})
+        self.assertEqual(status, 200, result)
+        self.assertIsNone(await self.groups.find_one({"_id": "7"}))
+        self.assertNotIn("group_id", await self.cols["cloud"].find_one({"_id": "b"}))
+        self.assertEqual(set((await self.groups.find_one({"_id": "8"}))["members"]), {"a", "c", "d"})
+
     async def test_ungroup_and_remove_stay_excluded_but_manual_regroup_works(self):
         docs = [doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv")]
         await self.insert_files(*docs)
@@ -352,11 +407,14 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         status, regrouped = await self.post("/api/group/save", {"name": "Film again", "items": [{"id": "a"}, {"id": "b"}]})
         self.assertEqual(status, 200, regrouped)
         self.assertNotIn("group_auto_excluded", await self.cols["primary"].find_one({"_id": "a"}))
-        status, _ = await self.post("/api/group/remove_file", {"group_id": regrouped["group_id"], "file_id": "a"})
+        status, result = await self.post("/api/group/remove_file", {"group_id": regrouped["group_id"], "file_id": "a"})
         self.assertEqual(status, 200)
+        self.assertTrue(result["group_deleted"])
+        self.assertIsNone(await self.groups.find_one({"_id": regrouped["group_id"]}))
         removed = await self.cols["primary"].find_one({"_id": "a"})
         self.assertTrue(removed["group_auto_excluded"])
         self.assertNotIn("group_id", removed)
+        self.assertNotIn("group_id", await self.cols["primary"].find_one({"_id": "b"}))
 
     async def test_deleting_one_copy_keeps_the_group_and_remaining_cover(self):
         await self.insert_files(doc("a", "Film 720p.mkv", group_id="7"),
@@ -381,11 +439,10 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(group["files"][0]["name"], "Film alternate.mkv")
             status, result = await self.post("/api/delete", {"file_id": "a", "collection": "cloud"})
             self.assertEqual(status, 200, result)
-        group = await self.groups.find_one({"_id": "7"})
-        self.assertEqual(group["members"], ["b"])
-        self.assertEqual(group["episode_order"], ["b"])
-        self.assertEqual(group["episode_labels"], [])
-        self.assertEqual(group["thumb_fid"], "")
+        self.assertIsNone(await self.groups.find_one({"_id": "7"}))
+        survivor = await self.cols["primary"].find_one({"_id": "b"})
+        self.assertIsNotNone(survivor)
+        self.assertNotIn("group_id", survivor)
 
     async def test_delete_reports_when_post_delete_cleanup_fails(self):
         await self.insert_files(doc("a", "Film 720p.mkv", group_id="7"))
@@ -633,7 +690,8 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.groups.count_documents({}), 0)
         await self.insert_files(doc("other", "Film 1080p.mkv", "archive"))
         await api._scan_all_groups()
-        self.assertEqual(await self.groups.count_documents({}), 0)
+        self.assertEqual(await self.groups.count_documents({}), 1)
+        self.assertEqual(set((await self.groups.find_one({}))["members"]), {"same", "other"})
         await self.insert_files(doc("third", "Film 480p.mkv", "cloud"))
         await api._scan_all_groups()
         self.assertEqual(api.SCAN_STATE.get("error"), "")
@@ -759,22 +817,22 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         rows = api._build_results_list(docs, "none")
         cards = await api._finalize(rows, True, siblings=False)
         groups = [card for card in cards if card.get("group")]
-        self.assertEqual(len(groups), 3)
+        self.assertEqual(len(groups), 4)
         self.assertEqual({frozenset(v["file_id"] for v in card["variants"]) for card in groups},
                          {frozenset({"q1", "q2", "q3"}), frozenset({"d1", "d2", "d3"}),
-                          frozenset({"s1", "s2", "s3"})})
+                          frozenset({"s1", "s2", "s3"}), frozenset({"t1", "t2"})})
         series = next(card for card in groups if card["group_type"] == "series")
         self.assertEqual(series["duration"], "")
         self.assertEqual({card["duration"] for card in groups if card["group_type"] == "quality"},
-                         {"1:30:00", "1:30:01"})
+                         {"1:30:00", "1:30:01", "1:00:00"})
         self.assertEqual({card["file_id"] for card in cards if not card.get("group")},
-                         {"u1", "u2", "u3", "t1", "t2"})
+                         {"u1", "u2", "u3"})
         await api._finalize(rows, True, siblings=False)
         await api._scan_all_groups()
         self.assertEqual(api.SCAN_STATE["error"], "")
-        self.assertEqual(await self.groups.count_documents({}), 3)
+        self.assertEqual(await self.groups.count_documents({}), 4)
 
-    async def test_full_scan_creates_only_three_file_compatible_groups(self):
+    async def test_full_scan_creates_only_two_or_more_compatible_groups(self):
         docs = [doc("q1", "A Film 720p", duration=100), doc("q2", "A Film 1080p", "cloud", duration=100),
                 doc("q3", "A Film 480p", "archive", duration=100), doc("qd", "A Film 4K", duration=101),
                 doc("u1", "Unknown 720p", duration=0), doc("u2", "Unknown 1080p", duration=0),
@@ -786,15 +844,17 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await api._scan_all_groups()
         self.assertEqual(api.SCAN_STATE["error"], "")
         groups = [group async for group in self.groups.find({})]
-        self.assertEqual(len(groups), 2)
-        by_type = {group["group_type"]: set(group["members"]) for group in groups}
-        self.assertEqual(by_type, {"quality": {"q1", "q2", "q3"}, "series": {"e1", "e2", "e3"}})
+        self.assertEqual(len(groups), 3)
+        self.assertEqual({(group["group_type"], frozenset(group["members"])) for group in groups},
+                         {("quality", frozenset({"q1", "q2", "q3"})),
+                          ("quality", frozenset({"t1", "t2"})),
+                          ("series", frozenset({"e1", "e2", "e3"}))})
         self.assertTrue(all(group.get("scan_created") for group in groups))
-        for fid in ("qd", "u1", "u2", "u3", "t1", "t2"):
+        for fid in ("qd", "u1", "u2", "u3"):
             self.assertNotIn("group_id", await self.cols["primary"].find_one({"_id": fid}))
         await api._scan_all_groups()
         self.assertEqual(api.SCAN_STATE["error"], "")
-        self.assertEqual(await self.groups.count_documents({}), 2)
+        self.assertEqual(await self.groups.count_documents({}), 3)
 
     async def test_existing_groups_accept_only_fully_compatible_live_members(self):
         docs = [doc("q1", "Film 720p", group_id="7", duration=100),
@@ -850,16 +910,19 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
                  doc("c", "Film 480p", "archive", duration=100)]
         await self.insert_files(stale[0], stale[1], doc("c", "Film 480p", "archive", duration=101))
         cards = await api._finalize(api._build_results_list(stale, "none"), True, siblings=False)
-        self.assertTrue(all(not card.get("group") for card in cards))
-        self.assertEqual(next(card for card in cards if card["file_id"] == "c")["duration"], "1:41")
-        self.assertEqual(await self.groups.count_documents({}), 0)
+        self.assertEqual({v["file_id"] for card in cards if card.get("group") for v in card["variants"]}, {"a", "b"})
+        self.assertEqual(next(card for card in cards if card.get("file_id") == "c")["duration"], "1:41")
+        await self.groups.delete_many({})
+        for col in self.cols.values():
+            await col.update_many({}, {"$unset": {"group_id": ""}})
         await self.cols["archive"].update_one({"_id": "c"}, {"$set": {"duration": 100}})
         await self.insert_files(doc("a", "Film 720p", "archive", duration=102))
         cards = await api._finalize(api._build_results_list(stale, "none"), True, siblings=False)
-        self.assertTrue(all(not card.get("group") for card in cards))
+        self.assertEqual({v["file_id"] for card in cards if card.get("group") for v in card["variants"]}, {"b", "c"})
+        self.assertTrue(any(card.get("file_id") == "a" for card in cards))
         await api._scan_all_groups()
         self.assertEqual(api.SCAN_STATE["error"], "")
-        self.assertEqual(await self.groups.count_documents({}), 0)
+        self.assertEqual(set((await self.groups.find_one({}))["members"]), {"b", "c"})
 
     async def test_known_runtime_on_another_copy_can_complete_a_quality_group(self):
         rows = [doc("a", "Shared Film 720p", duration=0),

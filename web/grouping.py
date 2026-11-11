@@ -10,7 +10,7 @@ import unicodedata
 from collections import defaultdict
 
 GROUP_TYPES = frozenset(("quality", "series"))
-AUTO_GROUP_MIN = 3
+AUTO_GROUP_MIN = 2
 AUTO_QUALITY_MAX = 30
 AUTO_SERIES_MAX = 500
 
