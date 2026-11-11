@@ -216,6 +216,9 @@ class EditorPlayerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(profile.status, 200)
         self.assertIn('Edit profile', body)
         self.assertIn('name="name" value="A &quot;Name&quot;"', body)
+        self.assertNotIn('Change Avatar', body)
+        self.assertNotIn('avatarUpdateInput', body)
+        self.assertIn('onchange="updateActorAvatar(', body)
         revisions = []
         for _ in range(2):
             fd = FormData()
@@ -226,6 +229,120 @@ class EditorPlayerTests(unittest.IsolatedAsyncioTestCase):
             revisions.append((await r.json())['photo_revision'])
         self.assertNotEqual(*revisions)
         self.assertEqual((await self.actors.find_one({'_id': aid}))['photo_revision'], revisions[-1])
+
+    async def test_profile_links_create_edit_legacy_and_clear(self):
+        aid = ObjectId()
+        await self.actors.insert_one({'_id': aid, 'name': 'Original', 'bio': 'Biography', 'category': 'actor',
+                                      'social_links': {'instagram': 'instagram.com/old', 'youtube': 'https://youtube.com/old',
+                                                       'twitter': '', 'website': 'https://example.org/path'},
+                                      'photo_url': 'TG_ID:old', 'gallery': []})
+        profile = await self.client.get(f'/actor/{aid}')
+        body = await profile.text()
+        self.assertIn('value="https://instagram.com/old"', body)
+        self.assertIn('value="https://example.org/path"', body)
+        self.assertIn('>Instagram</a>', body)
+        self.assertIn('>website</a>', body)
+
+        # Legacy clients that do not submit link fields must not clear them.
+        response = await self.client.post('/api/actor/update_profile', data={
+            'actor_id': str(aid), 'name': 'Still here', 'bio': 'Biography'}, headers={'Accept': 'application/json'})
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await self.actors.find_one({'_id': aid}))['social_links']['website'], 'https://example.org/path')
+
+        rows = [('Instagram', 'instagram.com/old'), ('Shop <official>', 'https://shop.example/a?x=1&y=2'),
+                ('', 'news.example:8443/path'), ('Long', 'https://example.com/' + 'x' * 500)]
+        rows += [(f'Extra {i}', f'https://example.net/{i}') for i in range(12)]
+        form = FormData()
+        for key, value in [('actor_id', str(aid)), ('name', 'Updated'), ('bio', 'Biography'), ('links_present', '1')]:
+            form.add_field(key, value)
+        for label, url in rows:
+            form.add_field('link_label', label)
+            form.add_field('link_url', url)
+        response = await self.client.post('/api/actor/update_profile', data=form, headers={'Accept': 'application/json'})
+        self.assertEqual(response.status, 200, await response.text())
+        saved = await self.actors.find_one({'_id': aid})
+        self.assertEqual(len(saved['profile_links']), len(rows))
+        self.assertEqual(saved['profile_links'][0]['url'], 'https://instagram.com/old')
+        self.assertEqual(saved['profile_links'][2], {'label': 'news.example', 'url': 'https://news.example:8443/path'})
+        self.assertEqual(saved['profile_links'][3]['url'], rows[3][1])
+        profile = await self.client.get(f'/actor/{aid}')
+        body = await profile.text()
+        self.assertIn('>Shop &lt;official&gt;</a>', body)
+        self.assertIn('href="https://shop.example/a?x=1&amp;y=2"', body)
+        self.assertIn('rel="noopener noreferrer"', body)
+        self.assertNotIn('>website</a>', body)  # Removed in the editor.
+        actor.get_auth.return_value = ('user', 9)
+        public_body = await (await self.client.get(f'/actor/{aid}')).text()
+        self.assertIn('>Shop &lt;official&gt;</a>', public_body)
+        self.assertNotIn('id="actorEditModal"', public_body)
+        actor.get_auth.return_value = ('admin', 1)
+        # An old client updating Instagram must not discard custom links.
+        response = await self.client.post('/api/actor/update_profile', data={
+            'actor_id': str(aid), 'name': 'Updated', 'bio': 'Biography', 'insta': 'https://instagram.com/new'},
+            headers={'Accept': 'application/json'})
+        self.assertEqual(response.status, 200)
+        updated = (await self.actors.find_one({'_id': aid}))['profile_links']
+        self.assertEqual(len(updated), len(rows))
+        self.assertIn({'label': 'Instagram', 'url': 'https://instagram.com/new'}, updated)
+        self.assertIn({'label': 'Shop <official>', 'url': 'https://shop.example/a?x=1&y=2'}, updated)
+
+        # Empty link list really clears legacy links rather than restoring them.
+        response = await self.client.post('/api/actor/update_profile', data={
+            'actor_id': str(aid), 'name': 'Updated', 'bio': 'Biography', 'links_present': '1'},
+            headers={'Accept': 'application/json'})
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await self.actors.find_one({'_id': aid}))['profile_links'], [])
+        body = await (await self.client.get(f'/actor/{aid}')).text()
+        self.assertNotIn('>Instagram</a>', body)
+
+    async def test_profile_links_validate_without_partial_writes_and_authorize(self):
+        aid = ObjectId()
+        old = [{'label': 'Safe', 'url': 'https://example.com/'}]
+        await self.actors.insert_one({'_id': aid, 'name': 'Old', 'bio': 'Biography', 'profile_links': old})
+        for bad in ('javascript:alert(1)', 'data:text/html,evil', 'https://', 'https://example.com/\\nevil', 'https://user@example.com'):
+            form = FormData()
+            for key, value in [('actor_id', str(aid)), ('name', 'Changed'), ('bio', 'Biography'),
+                               ('links_present', '1'), ('link_label', 'Unsafe'), ('link_url', bad)]:
+                form.add_field(key, value)
+            response = await self.client.post('/api/actor/update_profile', data=form, headers={'Accept': 'application/json'})
+            self.assertEqual(response.status, 400, bad)
+            saved = await self.actors.find_one({'_id': aid})
+            self.assertEqual((saved['name'], saved['profile_links']), ('Old', old))
+        malformed = FormData()
+        for key, value in [('actor_id', str(aid)), ('name', 'Changed'), ('bio', 'Biography'),
+                           ('links_present', '1'), ('link_label', 'Missing URL')]:
+            malformed.add_field(key, value)
+        response = await self.client.post('/api/actor/update_profile', data=malformed, headers={'Accept': 'application/json'})
+        self.assertEqual(response.status, 400)
+        actor.get_auth.return_value = ('user', 9)
+        response = await self.client.post('/api/actor/update_profile', data={'actor_id': str(aid)})
+        self.assertEqual(response.status, 403)
+
+    async def test_profile_create_rejects_invalid_links_before_photo_upload(self):
+        form = FormData()
+        for key, value in [('name', 'Profile'), ('bio', 'Biography'), ('links_present', '1'),
+                           ('link_label', 'Bad'), ('link_url', 'javascript:alert(1)')]:
+            form.add_field(key, value)
+        form.add_field('photo', b'jpeg', filename='portrait.jpg', content_type='image/jpeg')
+        response = await self.client.post('/api/create_actor', data=form, headers={'Accept': 'application/json'})
+        self.assertEqual(response.status, 400)
+        self.assertEqual(self.bot.send_photo.await_count, 0)
+        self.assertEqual(await self.actors.count_documents({}), 0)
+
+    async def test_profile_create_with_multiple_universal_links(self):
+        form = FormData()
+        for key, value in [('name', 'Profile'), ('bio', 'Biography'), ('category', 'website'), ('links_present', '1')]:
+            form.add_field(key, value)
+        for label, url in [('Shop', 'shop.example'), ('Blog', 'https://blog.example'), ('Social', 'https://x.com/user')]:
+            form.add_field('link_label', label)
+            form.add_field('link_url', url)
+        form.add_field('photo', b'jpeg', filename='portrait.jpg', content_type='image/jpeg')
+        response = await self.client.post('/api/create_actor', data=form, headers={'Accept': 'application/json'})
+        self.assertEqual(response.status, 200, await response.text())
+        saved = await self.actors.find_one({'name': 'Profile'})
+        self.assertEqual(saved['profile_links'], [{'label': 'Shop', 'url': 'https://shop.example'},
+                                                  {'label': 'Blog', 'url': 'https://blog.example'},
+                                                  {'label': 'Social', 'url': 'https://x.com/user'}])
 
     async def test_profile_json_edit_and_upload_failure_are_reported(self):
         aid = ObjectId()

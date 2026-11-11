@@ -50,3 +50,20 @@ The fixture uses port 8765 by default. Set `ALL2_UI_PORT` on the fixture and
 `ALL2_UI_URL` on the browser test to use a different port. `CHROMIUM_PATH` can
 point to a compatible Chromium executable instead of Playwright's installed one.
 The fixture and browser test do not use real Telegram or MongoDB services.
+
+## Optional profile links browser test
+
+With the same Playwright setup, run the separate test-only fixture and test:
+
+```sh
+# Terminal 1 (uses port 8765 by default):
+.venv/bin/python tests/profile_ui_fixture.py
+
+# Terminal 2:
+NODE_PATH=/tmp/all2-playwright/node_modules node tests/profile_ui_check.cjs
+```
+
+It checks legacy and custom links, adding and removing rows, validation,
+preserving links across saves, avatar upload inside the editor, profile creation
+and the 320px layout. Both fixtures use mocked MongoDB and Telegram; stop one
+before starting the other or set a different `ALL2_UI_PORT` and `ALL2_UI_URL`.
