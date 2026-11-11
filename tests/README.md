@@ -65,7 +65,8 @@ With the same Playwright setup, run the separate test-only fixture and test:
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/profile_ui_check.cjs
 ```
 
-It checks legacy and custom links, adding and removing rows, validation,
-preserving links across saves, avatar upload inside the editor, profile creation
-and the 320px layout. Both fixtures use mocked MongoDB and Telegram; stop one
+It checks profile navigation and light/dark layouts, the mobile file editor's
+thumbnail upload and metadata save, legacy and custom links, adding and removing
+rows, validation, preserving links across saves, avatar upload inside the editor,
+profile creation and the 320px layout. Both fixtures use mocked MongoDB and Telegram; stop one
 before starting the other or set a different `ALL2_UI_PORT` and `ALL2_UI_URL`.

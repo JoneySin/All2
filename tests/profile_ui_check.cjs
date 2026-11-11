@@ -12,6 +12,45 @@ const assert = require('node:assert/strict');
   await page.goto(base+'/actor/65ab12345678901234567890');
   assert.equal(await page.getByText('Change Avatar').count(),0);
   assert.equal(await page.locator('#avatarUpdateInput').count(),0);
+  assert.equal(await page.locator('.actor-bio-copy').textContent(),'Biography');
+  await page.getByRole('button',{name:'Gallery',exact:false}).click();
+  assert.equal(await page.locator('.actor-gallery-empty').isVisible(),true);
+  assert.equal(await page.locator('.actor-gallery-choose input').getAttribute('multiple'),'');
+  await page.getByRole('button',{name:'Linked Media',exact:false}).click();
+  assert.equal(await page.locator('#tab-video').isVisible(),true);
+  await page.getByRole('button',{name:'Info',exact:false}).click();
+  for(const width of [320,1100]){
+    await page.setViewportSize({width,height:720});
+    for(const theme of ['dark','light']){
+      await page.evaluate(theme=>document.body.classList.toggle('light',theme==='light'),theme);
+      const dims=await page.evaluate(()=>({view:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}));
+      assert.ok(dims.scroll<=dims.view+1,JSON.stringify({width,theme,...dims}));
+      assert.equal(await page.locator('.actor-identity h1').isVisible(),true);
+    }
+  }
+  await page.setViewportSize({width:320,height:720});
+  await page.evaluate(()=>document.body.classList.remove('light'));
+  // File editor remains usable at mobile widths, including image selection and saving.
+  let savedFile=null,uploadCount=0;
+  await page.route('**/api/upload_thumb',route=>{uploadCount++;return route.fulfill({json:{success:true}})});
+  await page.route('**/api/edit_name',route=>{savedFile=route.request().postDataJSON();return route.fulfill({json:{success:true}})});
+  await page.evaluate(()=>editFile('fixture-file','primary',encodeURIComponent('Original name'),encodeURIComponent('Original tags')));
+  const fileEditor=page.locator('#editCombinedModal');
+  assert.equal(await fileEditor.getByRole('heading',{name:'Edit file'}).isVisible(),true);
+  await fileEditor.getByLabel('File name').fill('Updated name');
+  await fileEditor.getByLabel('Search tags (optional)').fill('fresh tags');
+  await fileEditor.getByLabel('Collection').selectOption('cloud');
+  await fileEditor.locator('#emFile').setInputFiles({name:'cover.gif',mimeType:'image/gif',buffer:Buffer.from('47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b','hex')});
+  assert.equal(await fileEditor.locator('#emImageHelp').textContent(),'Selected: cover.gif');
+  const modalDims=await fileEditor.locator('.file-editor').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));
+  assert.ok(modalDims.scroll<=modalDims.width+1,JSON.stringify(modalDims));
+  await fileEditor.getByRole('button',{name:'Save Changes'}).click();
+  await page.waitForFunction(()=>!document.querySelector('#editCombinedModal').classList.contains('open'));
+  assert.equal(uploadCount,1);
+  assert.deepEqual(savedFile,{file_id:'fixture-file',collection:'primary',new_name:'Updated name',add_caption:'fresh tags',target_collection:'cloud'});
+  await page.evaluate(()=>editFile('fixture-file','primary',encodeURIComponent('Original name'),''));
+  assert.ok((await fileEditor.locator('#emImageHelp').textContent()).includes('Optional'));
+  await fileEditor.getByRole('button',{name:'Cancel'}).click();
   await page.getByRole('button',{name:'Edit Profile',exact:false}).click();
   const modal=page.locator('#actorEditModal');await modal.waitFor({state:'visible'});
   assert.equal(await modal.locator('.profile-file').count(),1);
