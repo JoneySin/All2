@@ -81,7 +81,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt);min-
 .pb{background:linear-gradient(90deg,var(--bg3) 0,#2a2a38 50%,var(--bg3) 100%);background-size:200% 100%;animation:shimmer 1.5s infinite linear}
 .fp{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}
 .fp.on{opacity:1}
-.pt{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:5px;padding:7px 8px}
+.pt{position:absolute;top:0;left:0;right:0;z-index:2;display:flex;align-items:center;align-content:flex-start;flex-wrap:wrap;gap:5px;padding:7px 8px}
+.gid-chip{display:inline-flex;align-items:center;background:#39230b;color:#ffd58a;border:1px solid #d99b3b;border-radius:5px;padding:2px 7px;font-size:10px;font-weight:800;letter-spacing:.3px;white-space:nowrap}
 .tc{background:rgba(0,0,0,.75);backdrop-filter:blur(8px);color:#fff;border-radius:5px;padding:2px 7px;font-size:10px;font-weight:800;letter-spacing:.8px;border:1px solid rgba(255,255,255,.14)}
 .sc{background:rgba(0,0,0,.6);backdrop-filter:blur(8px);color:#e0e0e0;border-radius:5px;padding:2px 7px;font-size:10px;font-weight:600;border:1px solid rgba(255,255,255,.08)}
 /* ⏱️ video duration chips */
@@ -240,7 +241,7 @@ const H={'X-Telegram-Init-Data':ID};
 let curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
 let searchReqId=0;
 let pMode=localStorage.getItem('ff_mode')||'__DEFAULT_MEDIA_MODE__'; /* 🎛️ default injected from web_assets.DEFAULT_MEDIA_MODE */
-let plyr=null,streamUrl='';
+let plyr=null,streamUrl='',playerReq=0,playerAbort=null;
 
 
 // init mode
@@ -332,12 +333,16 @@ function showErr(type,extra=''){
 }
 
 function thumbErr(id){
-  let b=Q1('#pb-'+id);if(!b)return;
-  b.innerHTML=`<div class="te"><span>Thumbnail load nahi hua</span><button class="rb" onclick="retryThumb('${id}')">🔄 Retry</button></div>`;
+  let b=Q1('#pb-'+id);if(!b||b.querySelector('.te'))return;
+  let overlay=document.createElement('div');overlay.className='te';
+  overlay.innerHTML=`<span>Thumbnail load nahi hua</span><button class="rb" onclick="event.stopPropagation();retryThumb('${id}')">🔄 Retry</button>`;
+  b.appendChild(overlay);
 }
 function retryThumb(id){
-  let b=Q1('#pb-'+id);if(!b)return;
-  b.innerHTML=`<img src="/api/thumb?file_id=${id}&t=${Date.now()}" class="fp" onload="this.classList.add('on')" onerror="thumbErr('${id}')">`;
+  let b=Q1('#pb-'+id),img=b&&b.querySelector('.fp');if(!img)return;
+  let overlay=b.querySelector('.te');if(overlay)overlay.remove();
+  img.classList.remove('on');
+  img.src='/api/thumb?file_id='+encodeURIComponent(id)+'&col='+encodeURIComponent(img.dataset.col||'primary')+'&retry=true&t='+Date.now();
 }
 
 async function doSearch(off,allowEmpty){
@@ -379,10 +384,12 @@ async function doSearch(off,allowEmpty){
       /* 🖼️ resolution chip — 1280×720 → "720p", 1920×1080 → "1080p"; khali to nahi banta */
       let rc=f.res?`<span class="rc">${esc(f.res)}</span>`:'';
       let tr=f.res?`<span class="tr">${esc(f.res)}</span>`:'';
+      let gid=(f.group_num||f.gid)?`<span class="gid-chip">GROUP #${esc(f.group_num||f.gid)}</span>`:'';
       let ph=pMode!=='none'
-        ?`<div class="pb" id="pb-${f.file_id}"><img src="${f.tg_thumb}" class="fp" loading="lazy" onload="this.classList.add('on')" onerror="thumbErr('${f.file_id}')"><div class="pt"><span class="tc">${esc(f.type||'VIDEO')}</span><span class="sc">${esc(f.size||'')}</span>${dc}${rc}<span class="sp ${sc}"><span class="sd"></span>${sc.toUpperCase()}</span></div></div>`
-        :`<div class="ti"><span class="tt">${esc(f.type||'VIDEO')}</span><span class="ts">${esc(f.size||'')}</span>${td}${tr}<span class="tp ${sc}"><span class="sd"></span>${sc.toUpperCase()}</span></div>`;
-      h+=`<div class="fc ce" onclick="openStream('${f.file_id}','${f.name.replace(/'/g,"\\'").replace(/`/g,'\\`')}')">${ph}<div class="fb"><div class="fn">${esc(f.name)}</div></div></div>`;
+        ?`<div class="pb" id="pb-${f.file_id}"><img src="${f.tg_thumb}" data-col="${sc}" class="fp" loading="lazy" onload="this.classList.add('on')" onerror="thumbErr('${f.file_id}')"><div class="pt">${gid}<span class="tc">${esc(f.type||'VIDEO')}</span><span class="sc">${esc(f.size||'')}</span>${dc}${rc}<span class="sp ${sc}"><span class="sd"></span>${sc.toUpperCase()}</span></div></div>`
+        :`<div class="ti">${gid}<span class="tt">${esc(f.type||'VIDEO')}</span><span class="ts">${esc(f.size||'')}</span>${td}${tr}<span class="tp ${sc}"><span class="sd"></span>${sc.toUpperCase()}</span></div>`;
+      let nameArg=encodeURIComponent(f.name||'').replace(/'/g,'%27');
+      h+=`<div class="fc ce" onclick="openStream('${f.file_id}',decodeURIComponent('${nameArg}'))">${ph}<div class="fb"><div class="fn">${esc(f.name)}</div></div></div>`;
     });
     let res=Q1('#results');res.innerHTML=h;stagger(res);
     nextOff=d.next_offset;
@@ -395,35 +402,40 @@ async function doSearch(off,allowEmpty){
 
 // player
 async function openStream(id,name){
+  let request=++playerReq;if(playerAbort)playerAbort.abort();playerAbort=new AbortController();
   toast('⏳ Loading...');
   try{
-    let r=await fetch('/setup_stream',{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({file_id:id,mode:'watch'})});
+    let r=await fetch('/setup_stream',{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({file_id:id,mode:'inline'}),signal:playerAbort.signal});
+    let d=await r.json().catch(()=>({}));if(request!==playerReq)return;
     if(r.status===403)return toast('🔒 Access denied');
-    if(!r.ok)return toast('❌ Server error');
-    let d=await r.json().catch(()=>({}));
-    if(d.error)return toast('❌ '+d.error);
-    let url=(d.url||'').replace('/watch/','/download/');
-    if(!url)return toast('❌ Stream URL missing');
-    openSheet(location.origin+url,name||id);
-  }catch{toast('❌ Connection fail');}
+    if(!r.ok||d.error)return toast('❌ '+(d.error||'Server error'));
+    let url=new URL(d.url,location.origin);
+    if(url.origin!==location.origin||!/^\/download\/\d+$/.test(url.pathname))return toast('❌ Invalid stream URL');
+    let dl=new URL(url);dl.searchParams.delete('inline');
+    openSheet(url.href,name||id,dl.href);
+  }catch(e){if(e.name!=='AbortError'&&request===playerReq)toast('❌ Connection fail');}
 }
-function openSheet(url,title){
+function openSheet(url,title,downloadUrl){
   streamUrl=url;
   Q1('#ptl').textContent=title;
-  Q1('#dlBtn').href=url;
+  Q1('#dlBtn').href=downloadUrl;
   if(plyr){try{plyr.destroy();}catch{}plyr=null;}
   let c=Q1('#ppl');c.innerHTML='<video id="pv2" playsinline controls></video>';
-  Q1('#pv2').src=url;
-  plyr=new Plyr('#pv2',{controls:['play-large','play','progress','current-time','mute','settings','fullscreen'],settings:['speed'],autoplay:true});
-  plyr.on('enterfullscreen',()=>screen.orientation?.lock?.('landscape').catch(()=>{}));
-  plyr.on('exitfullscreen',()=>screen.orientation?.unlock?.());
+  let video=Q1('#pv2');video.src=url;
   Q1('#playerSheet').classList.add('open');
   document.body.style.overflow='hidden';
+  if(typeof Plyr==='function'){
+    plyr=new Plyr('#pv2',{controls:['play-large','play','progress','current-time','mute','settings','fullscreen'],settings:['speed'],autoplay:true});
+    plyr.on('enterfullscreen',()=>screen.orientation?.lock?.('landscape').catch(()=>{}));
+    plyr.on('exitfullscreen',()=>screen.orientation?.unlock?.());
+  }else{let play=video.play();if(play&&play.catch)play.catch(()=>{});}
 }
 function closePlayer(){
+  ++playerReq;if(playerAbort){playerAbort.abort();playerAbort=null;}
   Q1('#playerSheet').classList.remove('open');
   document.body.style.overflow='';
   if(plyr){try{plyr.pause();plyr.destroy();}catch{}plyr=null;}
+  let video=Q1('#pv2');if(video){video.pause();video.removeAttribute('src');video.load();}
   Q1('#ppl').innerHTML='<video id="pv2" playsinline controls></video>';
 }
 Q1('#pbd').addEventListener('click',function(e){if(e.target===this)closePlayer();});

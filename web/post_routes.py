@@ -1,4 +1,5 @@
 import io, time, html, re
+from urllib.parse import urlencode
 import asyncio
 import aiohttp
 from aiohttp import web
@@ -12,6 +13,7 @@ from info import THUMBNAIL_STORAGE_CHANNEL
 from database.ia_filterdb import posts as posts_col
 # ✅ DRY: fast_json + DIRECTORY_CSS अब web_assets से आते हैं (पहले दोनों यहाँ copy थे)
 from web.web_assets import build_page, get_auth, require_active_plan, fast_json, DIRECTORY_CSS, DEFAULT_CATALOG_MODE
+from web.post_editor import build_post_editor, post_image_src
 
 post_routes = web.RouteTableDef()
 
@@ -38,290 +40,32 @@ async def convert_all_ibb_links(urls):
         return [r for r in results if r]
 
 # ─────────────────────────────────────────────────────────
-# 🎨 SHARED WIZARD CSS + JS (DRY: Create aur Edit page दोनों इसे reuse करते हैं)
-# Module-load पर एक बार बनता है, हर request पर सिर्फ़ string-embed होता है (Koyeb-friendly)
-# ─────────────────────────────────────────────────────────
-POST_WIZARD_CSS = '''
-    <style>
-        .page-header { display:flex; align-items:center; gap:15px; margin-bottom:25px; }
-        .back-btn { background:var(--bg3); color:var(--text); text-decoration:none; padding:8px 16px; border-radius:6px; font-weight:700; font-size:13px; border:1px solid var(--border); transition:0.2s; display:inline-flex; align-items:center; }
-        .back-btn:hover { background:var(--bg4); }
-        .page-title { font-size:22px; font-weight:800; color:var(--text); margin:0; }
-        
-        .step-card { background:var(--bg2); border:1px solid var(--border); border-radius:12px; margin-bottom:20px; overflow:hidden; box-shadow:0 4px 15px rgba(0,0,0,0.1); }
-        .step-header { padding:15px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; }
-        .step-num { background:var(--bg4); color:var(--text); width:28px; height:28px; display:flex; align-items:center; justify-content:center; border-radius:50%; font-weight:800; font-size:13px; }
-        .step-title { font-weight:800; font-size:13px; letter-spacing:1px; color:var(--text); text-transform:uppercase; }
-        .step-body { padding:20px; }
-        
-        .s-label { display:block; font-size:11px; font-weight:800; color:var(--muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:1px; }
-        .s-input { width:100%; background:var(--bg); border:1px solid transparent; padding:14px; color:var(--text); border-radius:8px; margin-bottom:18px; outline:none; transition:0.2s; font-size:14px; font-weight:500; font-family:inherit; }
-        .s-input:focus { border-color:var(--accent); }
-        .s-input::placeholder { color:var(--muted); opacity:0.6; }
-        
-        .submit-btn { width:100%; background:var(--accent); color:#fff; border:none; padding:16px; border-radius:8px; font-weight:800; font-size:15px; cursor:pointer; transition:0.2s; letter-spacing:0.5px; margin-bottom:30px; }
-        .submit-btn:hover { background:var(--accent-hover); transform:translateY(-2px); }
-    </style>
-'''
-
-# 🔧 JS में {{f.file_id}} jaise placeholders हैं — इन्हें f-string मानने से बचाने के लिए
-# यह constant सीधा JS string है (कोई .format()/f-string नहीं), इसलिए ${...} literal ही रहता है।
-POST_WIZARD_JS = '''
-    <script>
-    var videoSearchReqId = 0;
-    var videoSearchOffset = '';
-    var videoSearchLastQ = '';
-    async function searchVideosForPost(loadMore) {
-        const q = document.getElementById('videoSearchInput').value.trim();
-        if(!q) { videoSearchReqId++; document.getElementById('videoSearchResults').style.display = 'none'; return; }
-        if(!loadMore) { videoSearchOffset = ''; videoSearchLastQ = q; }
-        const myReq = ++videoSearchReqId;
-        const resDiv = document.getElementById('videoSearchResults');
-        const spinTimer = setTimeout(() => {
-            if (myReq !== videoSearchReqId) return;
-            if(!loadMore) { resDiv.style.display = 'block'; resDiv.innerHTML = '<div style="padding:15px; color:var(--muted); text-align:center; font-size:12px;">🔍 Searching...</div>'; }
-        }, 200);
-        try {
-            const offParam = loadMore ? videoSearchOffset : 0;
-            const response = await fetch('/api/search?q=' + encodeURIComponent(q) + '&mode=none&offset=' + offParam);
-            if (myReq !== videoSearchReqId) { clearTimeout(spinTimer); return; }
-            clearTimeout(spinTimer);
-            const data = await response.json();
-            if (myReq !== videoSearchReqId) return;
-            resDiv.style.display = 'block';
-            const moreBtn = document.getElementById('videoSearchMoreBtn');
-            if(moreBtn) moreBtn.remove();
-            if(!loadMore && (!data.results || data.results.length === 0)) { resDiv.innerHTML = '<div style="padding:15px; color:var(--muted); text-align:center; font-size:12px;">❌ No files found.</div>'; return; }
-            let html = '';
-            (data.results || []).forEach(f => {
-                const safeName = f.name.replace(/'/g, "\\\\'").replace(/"/g, "&quot;");
-                html += `<div style="padding:12px 15px; border-bottom:1px solid var(--border); cursor:pointer;" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background='transparent'" onclick="addVideoToPost('${f.file_id}', '${safeName}')"><div style="font-weight:700; font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${f.name}</div><div style="font-size:11px; color:var(--muted); margin-top:4px;">${f.size}</div></div>`;
-            });
-            if(loadMore) { resDiv.insertAdjacentHTML('beforeend', html); } else { resDiv.innerHTML = html; }
-            videoSearchOffset = data.next_offset || '';
-            if(videoSearchOffset) {
-                resDiv.insertAdjacentHTML('beforeend', '<div id="videoSearchMoreBtn" style="padding:12px 15px; text-align:center; cursor:pointer; color:var(--accent); font-weight:700; font-size:12px;" onclick="searchVideosForPost(true)">⬇️ Show More</div>');
-            }
-        } catch(e) { resDiv.innerHTML = '<div style="padding:15px; color:var(--accent); text-align:center;">⚠️ Error!</div>'; }
-    }
-    function addVideoToPost(fileId, fileName) {
-        document.getElementById('videoSearchResults').style.display = 'none';
-        const container = document.getElementById('selectedVideosContainer');
-        if(container.innerHTML.includes('No files selected yet.')) container.innerHTML = '';
-        const div = document.createElement('div');
-        div.style.cssText = "background:var(--bg); border:1px solid var(--border); padding:15px; border-radius:8px; display:flex; flex-wrap:wrap; gap:10px; align-items:center;";
-        div.innerHTML = `
-            <div style="width:100%; font-size:12px; font-weight:700; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:5px;">📁 ${fileName}</div>
-            <input type="hidden" name="video_id" value="${fileId}">
-            <input type="text" name="video_heading" placeholder="Group Name (e.g. Ep 1)" class="s-input" style="margin-bottom:0; flex:1; min-width:120px; padding:10px;" required>
-            <input type="text" name="video_name" placeholder="Quality (e.g. 1080p)" class="s-input" style="margin-bottom:0; flex:1; min-width:100px; padding:10px; color:var(--accent);" required>
-            <button type="button" onclick="this.parentElement.remove()" style="background:var(--bg3); color:var(--muted); border:1px solid var(--border); padding:10px 15px; border-radius:6px; cursor:pointer; font-weight:bold;">✖</button>`;
-        container.appendChild(div);
-    }
-    </script>
-'''
-
-# ─────────────────────────────────────────────────────────
-# 📝 1. ADMIN ROUTE: CREATE POST WIZARD (UI)
+# 📝 ADMIN: shared create/edit studio
 # ─────────────────────────────────────────────────────────
 @post_routes.get('/admin/create_post')
 async def create_post_page(req):
     role, _ = await get_auth(req)
-    if role != 'admin': return web.HTTPFound('/dashboard')
-    
-    err = req.query.get('err','')
-    msg = req.query.get('msg','')
-    err_html = f'<div class="err-box" style="margin-bottom:20px;">{err}</div>' if err else ""
-    msg_html = f'<div class="success-box" style="margin-bottom:20px;">{msg}</div>' if msg else ""
-    
-    html_content = POST_WIZARD_CSS + f'''
-    <div class="main" style="max-width:700px; margin:0 auto; padding:30px 20px;">
-        <div class="page-header">
-            <a href="/posts" class="back-btn">← Cancel</a>
-            <h2 class="page-title">New Post</h2>
-        </div>
-        
-        {err_html}
-        {msg_html}
-        
-        <form action="/api/post/publish" method="post" enctype="multipart/form-data">
-            
-            <div class="step-card">
-                <div class="step-header"><span class="step-num">1</span><span class="step-title">Basic Information</span></div>
-                <div class="step-body">
-                    <label class="s-label">Post Title</label>
-                    <input type="text" name="title" placeholder="e.g. Panchayat S03" class="s-input" required>
-                    
-                    <label class="s-label">Category</label>
-                    <select name="category" class="s-input" style="cursor:pointer;" required>
-                        <option value="Movies">🎬 Movies</option>
-                        <option value="Web Series">📺 Web Series</option>
-                        <option value="App Video">📱 App Video</option>
-                        <option value="Porn">🔞 Porn</option>
-                    </select>
+    if role != 'admin':
+        return web.HTTPFound('/dashboard')
+    body = build_post_editor(err=req.query.get('err', ''), msg=req.query.get('msg', ''))
+    return build_page("Create Post", body, "", "posts", role)
 
-                    <label class="s-label">Short Description</label>
-                    <textarea name="description" placeholder="Write something about this post..." class="s-input" style="min-height:100px; resize:vertical;" required></textarea>
-                    
-                    <label class="s-label">Search Tags (Comma Separated)</label>
-                    <input type="text" name="tags" placeholder="e.g. Action, Thriller" class="s-input" style="margin-bottom:0;">
-                </div>
-            </div>
 
-            <div class="step-card">
-                <div class="step-header"><span class="step-num">2</span><span class="step-title">Cover Image</span></div>
-                <div class="step-body">
-                    <label class="s-label">Image URL</label>
-                    <input type="text" name="cover_url" placeholder="Paste link (viewer or direct)..." class="s-input">
-                    <label class="s-label">Or Upload File</label>
-                    <input type="file" name="cover_file" accept="image/*" class="s-input" style="padding:10px; margin-bottom:0; cursor:pointer;">
-                </div>
-            </div>
-
-            <div class="step-card">
-                <div class="step-header"><span class="step-num">3</span><span class="step-title">Screenshots</span></div>
-                <div class="step-body">
-                    <label class="s-label">Screenshot URLs</label>
-                    <textarea name="screenshot_urls" placeholder="Paste viewer or direct links line by line..." class="s-input" style="min-height:80px;"></textarea>
-                    <label class="s-label">And / Or Upload Files</label>
-                    <input type="file" name="screenshot_files" accept="image/*" multiple class="s-input" style="padding:10px; margin-bottom:0; cursor:pointer;">
-                </div>
-            </div>
-
-            <div class="step-card" style="border-color:var(--accent);">
-                <div class="step-header" style="border-bottom-color:var(--accent);"><span class="step-num" style="background:var(--accent);">4</span><span class="step-title">Videos / Episodes</span></div>
-                <div class="step-body">
-                    <div style="display:flex; gap:10px; margin-bottom:15px;">
-                        <input type="text" id="videoSearchInput" placeholder="Search files in database..." class="s-input" style="margin-bottom:0;" onkeydown="if(event.key==='Enter'){{ event.preventDefault(); clearTimeout(window.__vsTimer); searchVideosForPost(); }}" oninput="clearTimeout(window.__vsTimer); if(this.value.trim().length<2){{ window.videoSearchReqId = (window.videoSearchReqId||0)+1; var rd=document.getElementById('videoSearchResults'); if(rd) rd.style.display='none'; }} else {{ window.__vsTimer=setTimeout(searchVideosForPost,350); }}">
-                        
-                    </div>
-                    <div id="videoSearchResults" style="background:var(--bg); border-radius:8px; max-height:200px; overflow-y:auto; display:none; margin-bottom:20px; border:1px solid var(--border);"></div>
-                    
-                    <label class="s-label">Selected Media</label>
-                    <div id="selectedVideosContainer" style="display:flex; flex-direction:column; gap:10px; min-height:50px;">
-                        <div style="color:var(--muted); font-size:12px; text-align:center; padding:15px; border:1px dashed var(--border); border-radius:8px;">No files selected yet.</div>
-                    </div>
-                </div>
-            </div>
-
-            <button type="submit" class="submit-btn">Publish Post</button>
-        </form>
-    </div>
-    ''' + POST_WIZARD_JS
-    return build_page("Create Post", html_content, "", "posts", role)
-
-# ─────────────────────────────────────────────────────────
-# ✏️ 2. ADMIN ROUTE: EDIT POST WIZARD (UI)
-# ─────────────────────────────────────────────────────────
 @post_routes.get('/admin/edit_post/{id}')
 async def edit_post_page(req):
     role, _ = await get_auth(req)
-    if role != 'admin': return web.HTTPFound('/dashboard')
-    
+    if role != 'admin':
+        return web.HTTPFound('/dashboard')
     post_id = req.match_info['id']
-    post = await posts_col.find_one({"_id": ObjectId(post_id)})
-    if not post: return web.HTTPFound('/posts?err=Post not found')
+    try:
+        post = await posts_col.find_one({"_id": ObjectId(post_id)})
+    except Exception:
+        return web.HTTPFound('/posts?err=Invalid+post+ID')
+    if not post:
+        return web.HTTPFound('/posts?err=Post+not+found')
+    body = build_post_editor(post, post_id, req.query.get('err', ''), req.query.get('msg', ''))
+    return build_page("Edit Post", body, "", "posts", role)
 
-    title = html.escape(post.get('title', ''))
-    desc = html.escape(post.get('description', ''))
-    tags = html.escape(", ".join(post.get('tags', [])))
-    cover_url = post.get('cover_image', '')
-    ss_urls = "\n".join(post.get('screenshots', []))
-    
-    # 📌 Fetch saved category and build dropdown
-    saved_cat = post.get('category', 'Movies')
-    cat_opts = ""
-    for cat in ['Movies', 'Web Series', 'App Video', 'Porn']:
-        sel = 'selected' if cat == saved_cat else ''
-        cat_opts += f'<option value="{cat}" {sel}>{"🎬" if cat=="Movies" else "📺" if cat=="Web Series" else "📱" if cat=="App Video" else "🔞"} {cat}</option>'
-
-    video_html = ""
-    for v in post.get('videos', []):
-        vid = v.get('file_id')
-        vheading = html.escape(v.get('heading', 'Download Links'))
-        vname = html.escape(v.get('custom_name', '1080p'))
-        video_html += f'''
-        <div style="background:var(--bg); border:1px solid var(--border); padding:15px; border-radius:8px; display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
-            <div style="width:100%; font-size:12px; font-weight:700; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:5px;">📁 Pre-selected Media</div>
-            <input type="hidden" name="video_id" value="{vid}">
-            <input type="text" name="video_heading" value="{vheading}" placeholder="Group Name" class="s-input" style="margin-bottom:0; flex:1; min-width:120px; padding:10px;" required>
-            <input type="text" name="video_name" value="{vname}" placeholder="Quality" class="s-input" style="margin-bottom:0; flex:1; min-width:100px; padding:10px; color:var(--accent);" required>
-            <button type="button" onclick="this.parentElement.remove()" style="background:var(--bg3); color:var(--muted); border:1px solid var(--border); padding:10px 15px; border-radius:6px; cursor:pointer; font-weight:bold;">✖</button>
-        </div>'''
-        
-    if not video_html:
-        video_html = '<div style="color:var(--muted); font-size:12px; text-align:center; padding:15px; border:1px dashed var(--border); border-radius:8px;">No files selected yet.</div>'
-
-    html_content = POST_WIZARD_CSS + f'''
-    <div class="main" style="max-width:700px; margin:0 auto; padding:30px 20px;">
-        <div class="page-header">
-            <a href="/post/{post_id}" class="back-btn">← Cancel</a>
-            <h2 class="page-title">Edit Post</h2>
-        </div>
-        
-        <form action="/api/post/update" method="post" enctype="multipart/form-data">
-            <input type="hidden" name="post_id" value="{post_id}">
-            
-            <div class="step-card">
-                <div class="step-header"><span class="step-num">1</span><span class="step-title">Basic Information</span></div>
-                <div class="step-body">
-                    <label class="s-label">Post Title</label>
-                    <input type="text" name="title" value="{title}" class="s-input" required>
-                    
-                    <label class="s-label">Category</label>
-                    <select name="category" class="s-input" style="cursor:pointer;" required>
-                        {cat_opts}
-                    </select>
-
-                    <label class="s-label">Short Description</label>
-                    <textarea name="description" class="s-input" style="min-height:100px; resize:vertical;" required>{desc}</textarea>
-                    
-                    <label class="s-label">Search Tags</label>
-                    <input type="text" name="tags" value="{tags}" class="s-input" style="margin-bottom:0;">
-                </div>
-            </div>
-
-            <div class="step-card">
-                <div class="step-header"><span class="step-num">2</span><span class="step-title">Cover Image</span></div>
-                <div class="step-body">
-                    <label class="s-label">Image URL</label>
-                    <input type="text" name="cover_url" value="{cover_url}" class="s-input">
-                    <label class="s-label">Or Upload New File</label>
-                    <input type="file" name="cover_file" accept="image/*" class="s-input" style="padding:10px; margin-bottom:0; cursor:pointer;">
-                </div>
-            </div>
-
-            <div class="step-card">
-                <div class="step-header"><span class="step-num">3</span><span class="step-title">Screenshots</span></div>
-                <div class="step-body">
-                    <label class="s-label">Screenshot URLs</label>
-                    <textarea name="screenshot_urls" class="s-input" style="min-height:80px;">{ss_urls}</textarea>
-                    <label class="s-label">And / Or Upload Files</label>
-                    <input type="file" name="screenshot_files" accept="image/*" multiple class="s-input" style="padding:10px; margin-bottom:0; cursor:pointer;">
-                </div>
-            </div>
-
-            <div class="step-card" style="border-color:var(--accent);">
-                <div class="step-header" style="border-bottom-color:var(--accent);"><span class="step-num" style="background:var(--accent);">4</span><span class="step-title">Videos / Episodes</span></div>
-                <div class="step-body">
-                    <div style="display:flex; gap:10px; margin-bottom:15px;">
-                        <input type="text" id="videoSearchInput" placeholder="Search files in database..." class="s-input" style="margin-bottom:0;" onkeydown="if(event.key==='Enter'){{ event.preventDefault(); clearTimeout(window.__vsTimer); searchVideosForPost(); }}" oninput="clearTimeout(window.__vsTimer); if(this.value.trim().length<2){{ window.videoSearchReqId = (window.videoSearchReqId||0)+1; var rd=document.getElementById('videoSearchResults'); if(rd) rd.style.display='none'; }} else {{ window.__vsTimer=setTimeout(searchVideosForPost,350); }}">
-                        
-                    </div>
-                    <div id="videoSearchResults" style="background:var(--bg); border-radius:8px; max-height:200px; overflow-y:auto; display:none; margin-bottom:20px; border:1px solid var(--border);"></div>
-                    
-                    <label class="s-label">Selected Media</label>
-                    <div id="selectedVideosContainer" style="display:flex; flex-direction:column; gap:10px; min-height:50px;">
-                        {video_html}
-                    </div>
-                </div>
-            </div>
-
-            <button type="submit" class="submit-btn">💾 Save Changes</button>
-        </form>
-    </div>
-    ''' + POST_WIZARD_JS
-    return build_page("Edit Post", html_content, "", "posts", role)
 
 # ─────────────────────────────────────────────────────────
 # ⚙️ 3. API: PUBLISH & UPDATE POSTS
@@ -332,6 +76,7 @@ async def process_multipart_post(req, action="publish"):
     if action == "publish": post_data["created_at"] = int(time.time())
     
     screenshot_urls_raw = ""
+    uploaded_screenshots = []
     temp_v_ids, temp_v_headings, temp_v_names = [], [], []
     post_id = None
     
@@ -355,21 +100,27 @@ async def process_multipart_post(req, action="publish"):
             if url: post_data["cover_image"] = url
         elif p_name == 'cover_file' and part.filename:
             img_bytes = await part.read()
+            if not img_bytes:
+                raise ValueError('The selected cover image is empty.')
             with io.BytesIO(img_bytes) as img_buf:
                 img_buf.name = "cover.jpg"
                 msg = await temp.BOT.send_photo(chat_id=THUMBNAIL_STORAGE_CHANNEL, photo=img_buf)
-                if msg and msg.photo:
-                    tg_id = msg.photo.sizes[-1].file_id if hasattr(msg.photo, "sizes") and msg.photo.sizes else msg.photo.file_id
-                    post_data["cover_image"] = f"TG_ID:{tg_id}"
+            if not msg or not msg.photo:
+                raise RuntimeError('Cover image upload failed. Please retry.')
+            tg_id = msg.photo.sizes[-1].file_id if hasattr(msg.photo, "sizes") and msg.photo.sizes else msg.photo.file_id
+            post_data["cover_image"] = f"TG_ID:{tg_id}"
         elif p_name == 'screenshot_urls': screenshot_urls_raw = (await part.read()).decode().strip()
         elif p_name == 'screenshot_files' and part.filename:
             img_bytes = await part.read()
+            if not img_bytes:
+                raise ValueError('A selected screenshot is empty.')
             with io.BytesIO(img_bytes) as img_buf:
                 img_buf.name = f"ss_{int(time.time())}.jpg"
                 msg = await temp.BOT.send_photo(chat_id=THUMBNAIL_STORAGE_CHANNEL, photo=img_buf)
-                if msg and msg.photo:
-                    tg_id = msg.photo.sizes[-1].file_id if hasattr(msg.photo, "sizes") and msg.photo.sizes else msg.photo.file_id
-                    post_data["screenshots"].append(f"TG_ID:{tg_id}")
+            if not msg or not msg.photo:
+                raise RuntimeError('Screenshot upload failed. Please retry.')
+            tg_id = msg.photo.sizes[-1].file_id if hasattr(msg.photo, "sizes") and msg.photo.sizes else msg.photo.file_id
+            uploaded_screenshots.append(f"TG_ID:{tg_id}")
 
     tasks = []
     if post_data["cover_image"] and "ibb.co" in post_data["cover_image"]:
@@ -390,11 +141,27 @@ async def process_multipart_post(req, action="publish"):
         elif len(tasks) == 1 and not screenshot_urls_raw:
              if all_results[0]: post_data["cover_image"] = all_results[0][0]
 
+    post_data["screenshots"].extend(uploaded_screenshots)
+    if not post_data["title"] or not post_data["description"]:
+        raise ValueError('Title and description are required.')
+    if not (len(temp_v_ids) == len(temp_v_headings) == len(temp_v_names)):
+        raise ValueError('A selected video is incomplete. Check its episode and label.')
     for vid, vheading, vname in zip(temp_v_ids, temp_v_headings, temp_v_names):
-        if vid and vname: 
-            post_data["videos"].append({"file_id": vid, "heading": vheading or "Download Links", "custom_name": vname})
-        
+        if not vid or not vname:
+            raise ValueError('Each selected video needs a file and button label.')
+        post_data["videos"].append({"file_id": vid, "heading": vheading or "Download Links", "custom_name": vname})
+
     return post_data, post_id
+
+def _post_result(req, destination, error=None, status=400):
+    """Keep regular form redirects, while the editor can display errors in place."""
+    if 'application/json' in req.headers.get('Accept', ''):
+        return web.json_response({'error': error} if error else {'success': True, 'redirect': destination},
+                                 status=status if error else 200, dumps=fast_json)
+    if error:
+        return web.HTTPFound(destination + '?' + urlencode({'err': error}))
+    return web.HTTPFound(destination)
+
 
 @post_routes.post('/api/post/publish')
 async def api_publish_post(req):
@@ -403,24 +170,32 @@ async def api_publish_post(req):
     try:
         post_data, _ = await process_multipart_post(req, "publish")
         await posts_col.insert_one(post_data)
-        return web.HTTPFound('/posts?msg=Post published successfully!')
-    except Exception as e: return web.HTTPFound(f'/admin/create_post?err=Server Error: {str(e)}')
+        return _post_result(req, '/posts?msg=Post+published+successfully!')
+    except Exception as e:
+        return _post_result(req, '/admin/create_post', str(e) or 'Could not publish the post.', 500)
+
 
 @post_routes.post('/api/post/update')
 async def api_update_post(req):
     role, _ = await get_auth(req)
-    if role != 'admin': return web.HTTPFound('/dashboard')
+    if role != 'admin':
+        if 'application/json' in req.headers.get('Accept', ''):
+            return _post_result(req, '/dashboard', 'Unauthorized', 403)
+        return web.HTTPFound('/dashboard')
     try:
         post_data, post_id = await process_multipart_post(req, "update")
-        if not post_id: return web.HTTPFound('/posts?err=Missing Post ID')
-        
-        if not post_data.get("cover_image"):
-            old_post = await posts_col.find_one({"_id": ObjectId(post_id)})
-            if old_post and old_post.get("cover_image"): post_data["cover_image"] = old_post["cover_image"]
-
-        await posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": post_data})
-        return web.HTTPFound(f'/post/{post_id}?msg=Post updated successfully!')
-    except Exception as e: return web.HTTPFound(f'/posts?err=Server Error: {str(e)}')
+        if not post_id: return _post_result(req, '/posts', 'Missing post ID.')
+        oid = ObjectId(post_id)
+        old_post = await posts_col.find_one({"_id": oid})
+        if not old_post: return _post_result(req, '/posts', 'Post not found.', 404)
+        if not post_data.get("cover_image") and old_post.get("cover_image"):
+            post_data["cover_image"] = old_post["cover_image"]
+        result = await posts_col.update_one({"_id": oid}, {"$set": post_data})
+        if not result.matched_count:
+            return _post_result(req, '/posts', 'Post not found.', 404)
+        return _post_result(req, f'/post/{post_id}?msg=Post+updated+successfully!')
+    except Exception as e:
+        return _post_result(req, '/posts', str(e) or 'Could not update the post.', 500)
 
 @post_routes.post('/api/post/delete')
 async def api_delete_post(req):
@@ -496,7 +271,7 @@ async def posts_directory_page(req):
     post_items = ""
     for p in all_posts:
         cover = p.get("cover_image", "")
-        img_src = f"/api/post/photo?id={cover.replace('TG_ID:', '')}" if cover.startswith("TG_ID:") else cover
+        img_src = html.escape(post_image_src(cover), quote=True)
         cat_name = html.escape(p.get("category", "Uncategorized"))
         title_text = html.escape(p.get("title", "Untitled"))
         
@@ -515,7 +290,8 @@ async def posts_directory_page(req):
         </div>'''
     
     grid_mode_cls = ' grid-text-mode' if DEFAULT_CATALOG_MODE == 'text' else ''
-    initial_grid = f'<div id="post_grid_container" class="dir-grid{grid_mode_cls}">{post_items}</div>' if all_posts else '<div style="text-align:center; padding:60px 20px; color:var(--muted);">No posts found.</div>'
+    empty_grid = '<div style="grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--muted);">No posts found.</div>'
+    initial_grid = f'<div id="post_grid_container" class="dir-grid{grid_mode_cls}">{post_items or empty_grid}</div>'
 
     has_nxt_str = "true" if has_next_init else "false"
 
@@ -652,7 +428,7 @@ async def api_posts_search(req):
     html_out = ""
     for p in docs:
         cover = p.get("cover_image", "")
-        img_src = f"/api/post/photo?id={cover.replace('TG_ID:', '')}" if cover.startswith("TG_ID:") else cover
+        img_src = html.escape(post_image_src(cover), quote=True)
         cat_name = html.escape(p.get("category", "Uncategorized"))
         title_text = html.escape(p.get("title", "Untitled"))
         
@@ -687,7 +463,7 @@ async def single_post_display(req):
     except: return web.Response(text="Invalid ID", status=400)
     
     cover = post.get("cover_image", "")
-    img_src = f"/api/post/photo?id={cover.replace('TG_ID:', '')}" if cover.startswith("TG_ID:") else cover
+    img_src = html.escape(post_image_src(cover), quote=True)
     
     # 📌 Show Category along with tags
     cat = post.get("category", "")
@@ -718,15 +494,16 @@ async def single_post_display(req):
                 <div style="display:flex; flex-wrap:wrap; gap:10px; padding-left:15px;">'''
             
             for v in v_list:
-                vid_id = v.get('file_id')
+                vid_id = html.escape(str(v.get('file_id') or ''), quote=True)
                 v_name = html.escape(v.get('custom_name', 'Play'))
-                video_buttons += f'<a href="/setup_stream?file_id={vid_id}&mode=watch" target="_blank" class="ep-btn">🎬 {v_name}</a>'
+                player_title = html.escape(f"{heading} · {v.get('custom_name', 'Play')}", quote=True)
+                video_buttons += f'<button type="button" class="ep-btn" data-fid="{vid_id}" data-title="{player_title}" onclick="openInlinePlayer(this.dataset.fid,this.dataset.title)">▶ {v_name}</button>'
             
             video_buttons += '</div></div>'
     
     ss_html = ""
     for ss in post.get("screenshots", []):
-        s_src = f"/api/post/photo?id={ss.replace('TG_ID:', '')}" if ss.startswith("TG_ID:") else ss
+        s_src = html.escape(post_image_src(ss), quote=True)
         ss_html += f'<div style="border:1px solid var(--border); border-radius:8px; overflow:hidden; aspect-ratio:16/9; background:var(--bg3); box-shadow:0 4px 15px rgba(0,0,0,0.2);"><img src="{s_src}" style="width:100%; height:100%; object-fit:cover; cursor:pointer; transition:0.3s;" onmouseover="this.style.transform=\'scale(1.03)\'" onmouseout="this.style.transform=\'scale(1)\'" onclick="window.open(this.src, \'_blank\')"></div>'
     
     # 📸 Screenshots Grid (No Box)
@@ -744,7 +521,7 @@ async def single_post_display(req):
 
     page_body = f'''
     <style>
-        .ep-btn {{ background:var(--bg); border:1px solid var(--accent); color:var(--accent); font-weight:800; font-size:13px; text-decoration:none; padding:10px 20px; border-radius:6px; transition:0.2s; box-shadow:0 4px 10px rgba(0,0,0,0.2); display:inline-block; }}
+        .ep-btn {{ background:var(--bg); border:1px solid var(--accent); color:var(--accent); font-family:inherit; font-weight:800; font-size:13px; text-decoration:none; padding:10px 20px; border-radius:6px; transition:0.2s; box-shadow:0 4px 10px rgba(0,0,0,0.2); display:inline-block; cursor:pointer; }}
         .ep-btn:hover {{ background:var(--accent); color:#fff; transform:translateY(-2px); }}
         .ep-btn:active {{ background:#fff !important; color:var(--accent) !important; border-color:#fff !important; transform:scale(0.92); transition:0s; }}
         

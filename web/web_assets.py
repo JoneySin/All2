@@ -1,9 +1,11 @@
 import time
+import html
 import orjson
 from aiohttp import web
 from info import ADMINS, MAX_WEB_RESULTS
 from utils import temp
 from database.users_chats_db import db as user_db, web_db
+from web.player_assets import PLAYER_UI
 
 # ─────────────────────────────────────────────
 # ⚡ SHARED JSON DUMPER
@@ -76,6 +78,9 @@ CSS = """
 .file-card.admin-active .poster-admin{opacity:1;transform:translateY(0);pointer-events:all}
 .text-admin-row{display:none;gap:5px;padding:5px 11px 0}
 .file-card.admin-active .text-admin-row{display:flex}
+.file-menu{position:relative;z-index:5;display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:28px;padding:0 7px;border:1px solid rgba(255,255,255,.35);border-radius:7px;background:rgba(16,16,20,.86);color:#fff;font-size:18px;line-height:1;cursor:pointer}
+.file-menu:focus-visible,.file-menu:hover{outline:2px solid var(--accent);outline-offset:2px}
+.file-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .btn-edit,.btn-del{flex:1;padding:6px 0;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;transition:background .12s,transform .1s;border:none}
 .btn-edit{background:rgba(42,42,48,.90);backdrop-filter:blur(10px);color:#fff;border:1px solid rgba(255,255,255,.18)}
 .btn-edit:hover{background:rgba(80,80,88,.95)}
@@ -164,7 +169,7 @@ var curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
 var pMode=localStorage.getItem('posterMode')||'__DEFAULT_MEDIA_MODE__';
 var LIMIT_VAL = __LIMIT_PLACEHOLDER__;
 
-var activeFid = '', activeCol = '', cropperInstance = null;
+var activeFid = '', activeCol = '', cropperInstance = null, fileSaveInProgress = false;
 
 function handleThumbError(fileId) {
     var img = document.getElementById('img-poster-' + fileId);
@@ -182,17 +187,9 @@ function handleThumbError(fileId) {
     }
 }
 
-async function reloadThumb(fileId) {
-    var timestamp = new Date().getTime();
-    var img = document.getElementById('img-poster-' + fileId);
-    if (img) {
-        img.src = '/api/thumb?file_id=' + fileId + '&retry=true&t=' + timestamp;
-        img.classList.remove('loaded');
-    }
-    var errBox = document.getElementById('thumb-err-' + fileId);
-    if (errBox) { errBox.remove(); }
+function freshThumbUrl(fileId, col) {
+    return '/api/thumb?file_id='+encodeURIComponent(fileId)+'&col='+encodeURIComponent(col||'primary')+'&v='+Date.now()+'-'+Math.random().toString(36).slice(2);
 }
-
 var _tt;
 function showToast(m,t){
     t=t||'success';
@@ -204,14 +201,14 @@ function showToast(m,t){
 }
 
 function toggleAdminBtns(card,e){
-    e.stopPropagation();
+    if(e)e.stopPropagation();if(!card)return;
     var isActive=card.classList.contains('admin-active');
-    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');});
-    if(!isActive) card.classList.add('admin-active');
+    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-menu');if(b)b.setAttribute('aria-expanded','false');});
+    if(!isActive){card.classList.add('admin-active');var button=card.querySelector('.file-menu');if(button)button.setAttribute('aria-expanded','true');}
 }
 
 document.addEventListener('click',function(){
-    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');});
+    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-menu');if(b)b.setAttribute('aria-expanded','false');});
 });
 
 async function deleteFile(fid,col){
@@ -224,94 +221,101 @@ async function deleteFile(fid,col){
     }catch(e){showToast('Delete failed','error');}
 }
 
+function setFileEditPreview(fid,col){
+    var box=document.getElementById('emPreviewBox');box.style.display='flex';box.textContent='';
+    var img=document.createElement('img');img.className='t-prev-img';img.alt='Current thumbnail';
+    img.onerror=function(){box.textContent='No thumbnail available';};img.src=freshThumbUrl(fid,col);box.appendChild(img);
+}
 function editFile(fid, col, encName, encCaption){
-    var currentName = decodeURIComponent(encName);
-    var currentCaption = (encCaption && encCaption !== 'undefined') ? decodeURIComponent(encCaption) : '';
-    activeFid = fid; activeCol = col;
+    if(fileSaveInProgress)return;
+    var currentName=decodeURIComponent(encName);
+    var currentCaption=(encCaption&&encCaption!=='undefined')?decodeURIComponent(encCaption):'';
+    activeFid=fid;activeCol=col;
     if(cropperInstance){cropperInstance.destroy();cropperInstance=null;}
     document.getElementById('emName').value=currentName;
     document.getElementById('emFile').value='';
     document.getElementById('cropContainer').style.display='none';
-    if(document.getElementById('emMoveCol')) document.getElementById('emMoveCol').value = col;
-    if(document.getElementById('emAddCaption')) document.getElementById('emAddCaption').value = currentCaption;
-    
-    var prevBox=document.getElementById('emPreviewBox');
-    prevBox.style.display='flex';
-    prevBox.innerHTML='<img src="/api/thumb?file_id='+fid+'&col='+activeCol+'" class="t-prev-img" onerror="this.src=\\'https://placehold.co/600x338/181818/FFF?text=No+Thumbnail\\';">';
+    if(document.getElementById('emMoveCol'))document.getElementById('emMoveCol').value=col;
+    if(document.getElementById('emAddCaption'))document.getElementById('emAddCaption').value=currentCaption;
+    setFileEditPreview(fid,col);
     document.getElementById('editCombinedModal').classList.add('open');
 }
 
 function closeCombinedModal(){
+    if(fileSaveInProgress){showToast('Please wait for the save to finish.');return;}
     document.getElementById('editCombinedModal').classList.remove('open');
     if(cropperInstance){cropperInstance.destroy();cropperInstance=null;}
 }
 
 function handleLocalPreview(input){
-    if(input.files&&input.files[0]){
-        var reader=new FileReader();
-        reader.onload=function(e){
-            if(cropperInstance) cropperInstance.destroy();
+    if(!input.files||!input.files[0])return;
+    var selected=input.files[0],reader=new FileReader();
+    reader.onload=function(e){
+        if(!input.files||input.files[0]!==selected||!document.getElementById('editCombinedModal').classList.contains('open'))return;
+        if(cropperInstance){cropperInstance.destroy();cropperInstance=null;}
+        var img=document.createElement('img');img.id='cropImage';img.alt='Selected thumbnail';img.style.maxWidth='100%';img.src=e.target.result;
+        if(typeof Cropper==='function'){
             document.getElementById('emPreviewBox').style.display='none';
-            var cropWrap=document.getElementById('cropContainer');
-            cropWrap.style.display='block';
-            cropWrap.innerHTML='<img id="cropImage" src="'+e.target.result+'" style="max-width:100%;">';
-            var img=document.getElementById('cropImage');
+            var cropWrap=document.getElementById('cropContainer');cropWrap.style.display='block';cropWrap.replaceChildren(img);
             cropperInstance=new Cropper(img,{aspectRatio:16/9,viewMode:1,background:false,zoomable:true,movable:true});
-        };
-        reader.readAsDataURL(input.files[0]);
-    }
+        }else{
+            var box=document.getElementById('emPreviewBox');box.style.display='flex';box.replaceChildren(img);
+            showToast('Crop tool unavailable; the original image will be uploaded.');
+        }
+    };
+    reader.onerror=function(){showToast('Could not read the selected image.','error');};
+    reader.readAsDataURL(selected);
 }
 
 async function saveAllChanges(){
-    var newName=document.getElementById('emName').value.trim();
-    var addCaption=document.getElementById('emAddCaption') ? document.getElementById('emAddCaption').value.trim() : '';
-    var moveCol=document.getElementById('emMoveCol') ? document.getElementById('emMoveCol').value : activeCol;
+    if(fileSaveInProgress)return;
+    var fid=activeFid,col=activeCol,newName=document.getElementById('emName').value.trim();
+    var caption=document.getElementById('emAddCaption').value.trim(),moveCol=document.getElementById('emMoveCol').value;
     if(!newName){showToast('File name cannot be empty!','error');return;}
-    
-    var btn=document.getElementById('emSaveBtn');
-    btn.disabled=true; btn.innerText='Processing...';
+    var btn=document.getElementById('emSaveBtn'),fileInput=document.getElementById('emFile');
+    var thumbUpdated=false,writeAttempted=false,finished=false;
+    fileSaveInProgress=true;btn.disabled=true;btn.textContent='Saving…';
     try{
-        var thumbUpdated = false;
-        
-        if(cropperInstance){
-            showToast('✂️ Cropping & Uploading...');
-            var canvas=cropperInstance.getCroppedCanvas({width:1280,height:720,imageSmoothingEnabled:true,imageSmoothingQuality:'high'});
-            var blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.9));
-            if(blob){
-                var fd=new FormData(); fd.append('file_id',activeFid); fd.append('collection',activeCol); fd.append('image',blob,'cropped.jpg');
-                var upRes=await fetch('/api/upload_thumb',{method:'POST',body:fd});
-                var upData=await upRes.json();
-                if(!upData.success){showToast('Upload failed!','error'); btn.disabled=false; btn.innerText='Save Changes'; return;}
-                thumbUpdated = true;
+        if(fileInput.files&&fileInput.files[0]){
+            var blob=fileInput.files[0];
+            if(cropperInstance){
+                var canvas=cropperInstance.getCroppedCanvas({width:1280,height:720,imageSmoothingEnabled:true,imageSmoothingQuality:'high'});
+                if(!canvas)throw new Error('The image is not ready to crop. Please try again.');
+                blob=await new Promise(function(resolve){canvas.toBlob(resolve,'image/jpeg',0.9);});
+                if(!blob)throw new Error('Could not prepare the thumbnail.');
             }
+            var fd=new FormData();fd.append('file_id',fid);fd.append('collection',col);fd.append('image',blob,'poster.jpg');
+            writeAttempted=true;
+            var upRes=await fetch('/api/upload_thumb',{method:'POST',body:fd});
+            var upData=await upRes.json().catch(function(){return {};});
+            if(upData.success||upData.partial){
+                thumbUpdated=true;
+                if(cropperInstance){cropperInstance.destroy();cropperInstance=null;}
+                fileInput.value='';document.getElementById('cropContainer').style.display='none';setFileEditPreview(fid,col);
+            }
+            if(!upRes.ok||!upData.success)throw new Error(upData.error||'Thumbnail upload failed.');
         }
-        var payload = { file_id: activeFid, collection: activeCol, new_name: newName, add_caption: addCaption, target_collection: moveCol };
+        var payload={file_id:fid,collection:col,new_name:newName,add_caption:caption,target_collection:moveCol};
+        writeAttempted=true;
         var r=await fetch('/api/edit_name',{method:'POST',body:JSON.stringify(payload),headers:{'Content-Type':'application/json'}});
-        var res=await r.json();
-        
-        if(res.success||cropperInstance){
-            showToast('✨ File updated successfully!');
-            closeCombinedModal();
-            
-            if (activeCol !== moveCol) {
-                refreshGridAfterEdit();
-                return;
-            }
-            
-            var nameElement = document.getElementById('name-title-' + activeFid);
-            if (nameElement) nameElement.innerText = newName;
-            
-            if (thumbUpdated) reloadThumb(activeFid);
-            
-        } else showToast(res.error||'Update failed!','error');
-    }catch(e){showToast('Network Error','error');}
-    finally{btn.disabled=false; btn.innerText='Save Changes';}
+        var res=await r.json().catch(function(){return {};});
+        if(!r.ok||!res.success)throw new Error(res.error||'Metadata update failed.');
+        finished=true;fileSaveInProgress=false;closeCombinedModal();
+        showToast('✨ File updated successfully!');
+    }catch(e){
+        showToast((thumbUpdated?'Thumbnail saved, but other changes failed: ':'')+(e.message||'Network error. Please retry.'),'error');
+    }finally{
+        fileSaveInProgress=false;btn.disabled=false;btn.textContent='Save Changes';
+        // Re-fetch even on errors: a request may have saved before the response failed.
+        // This also refreshes group cards, names, captions, and collection moves together.
+        if(writeAttempted||finished)refreshGridAfterEdit();
+    }
 }
 
 function refreshGridAfterEdit() {
-    if (typeof doSearch === 'function') doSearch(curOff, true);
-    else if (typeof triggerActorSearchAjax === 'function') triggerActorSearchAjax();
-    else window.location.reload();
+    if(typeof doSearch==='function')return doSearch(curOff,true,true);
+    if(typeof triggerActorSearchAjax==='function')return triggerActorSearchAjax();
+    window.location.reload();
 }
 function staggerCards(container){
     var cards=container.querySelectorAll('.card-enter');
@@ -452,8 +456,9 @@ def build_page(title, body, cls="", active_tab="", role=None):
 
     modals = _ADMIN_MODALS if role == 'admin' else ""
 
-    return _h(_HEAD_PRE + '<title>' + title + _HEAD_POST
-              + f'<body class="{cls}">' + nav + body + modals + '</body></html>')
+    player = PLAYER_UI if role else ""
+    return _h(_HEAD_PRE + '<title>' + html.escape(str(title)) + _HEAD_POST
+              + f'<body class="{cls}">' + nav + body + modals + player + '</body></html>')
 
 
 def form_wrapper(title, content, err="", msg=""):

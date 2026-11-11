@@ -239,11 +239,12 @@ async def media_download(request, message_id: int):
                 else f"file_{secrets.token_hex(3)}.bin"
             )
 
-        mime_type = (
-            info.mime_type
-            or mimetypes.guess_type(file_name)[0]
-            or "application/octet-stream"
-        )
+        declared_type = (info.mime_type or "").split(";", 1)[0].strip().lower()
+        guessed_type = mimetypes.guess_type(file_name)[0]
+        # Telegram documents often report octet-stream even when they have a
+        # playable extension. Preserve specific types; infer only generic ones.
+        mime_type = (guessed_type or ("video/mp4" if info.is_video else "application/octet-stream")) \
+            if declared_type in ("", "application/octet-stream", "binary/octet-stream") else declared_type
 
         # ── Range Header Parse + Clamp/Validate (देखें parse_range) ──
         parsed = parse_range(request.headers.get('Range'), file_size)
@@ -263,10 +264,14 @@ async def media_download(request, message_id: int):
         parts     = math.ceil((req_len + first_cut) / ncs)
 
         enc_fn = quote(file_name)
+        # Only media types may be served inline; other files keep download-only
+        # disposition even when a signed URL contains the inline flag.
+        disposition = "inline" if request.query.get("inline") == "1" and mime_type.startswith(("video/", "audio/")) else "attachment"
         headers = {
             "Content-Type":        mime_type,
-            "Content-Disposition": f'attachment; filename="{enc_fn}"; filename*=UTF-8\'\'{enc_fn}',
+            "Content-Disposition": f'{disposition}; filename="{enc_fn}"; filename*=UTF-8\'\'{enc_fn}',
             "Accept-Ranges":       "bytes",
+            "X-Content-Type-Options": "nosniff",
             "Content-Length":      str(req_len),
         }
         if is_partial:

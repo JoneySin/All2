@@ -1,13 +1,37 @@
-import io, time, html, re
+import io, time, html, re, uuid
+from urllib.parse import urlencode
 from aiohttp import web
 from bson.objectid import ObjectId
-from utils import temp, get_size, get_duration_str
+from utils import temp
 from info import MAX_WEB_RESULTS, ACTOR_STORAGE_CHANNEL
-from database.ia_filterdb import actors, get_actor_search_results, delete_actor_profile, delete_gallery_image_by_index, doc_resolution_text
+from database.ia_filterdb import actors, get_actor_search_results, delete_actor_profile, delete_gallery_image_by_index
 # ✅ DRY: fast_json + DIRECTORY_CSS अब web_assets से आते हैं (पहले दोनों यहाँ copy थे)
-from web.web_assets import build_page, get_auth, form_wrapper, require_active_plan, fast_json, DIRECTORY_CSS, DEFAULT_CATALOG_MODE, DEFAULT_MEDIA_MODE
+from web.web_assets import build_page, get_auth, require_active_plan, fast_json, DIRECTORY_CSS, DEFAULT_CATALOG_MODE, DEFAULT_MEDIA_MODE
+from web.search_api import _build_results_list, _annotate_raw_groups
 
 actor_routes = web.RouteTableDef()
+
+ACTOR_MEDIA_SCRIPT = r'''<script>
+var actorMediaFiles={};
+function actorEsc(value){return String(value==null?'':value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function actorPlayFile(card){var f=actorMediaFiles[card.dataset.fid];if(f)openInlinePlayer(f.stream_id||f.file_id,f.name);}
+function actorEditFile(card){var f=actorMediaFiles[card.dataset.fid];if(f)editFile(f.file_id,f.raw_collection||'primary',encodeURIComponent(f.name||'').replace(/'/g,'%27'),encodeURIComponent(f.caption||'').replace(/'/g,'%27'));}
+function actorDeleteFile(card){var f=actorMediaFiles[card.dataset.fid];if(f)deleteFile(f.file_id,f.raw_collection||'primary');}
+function renderActorMediaCard(f,mode,isAdmin){
+    actorMediaFiles[f.file_id]=f;
+    var sc=String(f.raw_collection||'primary').toLowerCase();if(!['primary','cloud','archive'].includes(sc))sc='primary';
+    var fid=actorEsc(f.file_id),name=actorEsc(f.name),source='<span class="source-pill '+sc+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>';
+    var id=f.group_num||f.gid,idChip=id?'<span class="actor-group-id">GROUP #'+actorEsc(id)+'</span>':'';
+    var duration=f.duration?'<span class="'+(mode==='none'?'tc-dur':'dur-chip')+'">'+actorEsc(f.duration)+'</span>':'';
+    var res=f.res?'<span class="'+(mode==='none'?'tc-res':'res-chip')+'">'+actorEsc(f.res)+'</span>':'';
+    var menu=isAdmin?'<button type="button" class="file-menu" aria-label="File actions" aria-expanded="false" onclick="toggleAdminBtns(this.closest(\'.file-card\'),event)">&#8942;</button>':'';
+    var actions=isAdmin?'<button class="btn-edit" onclick="event.stopPropagation();actorEditFile(this.closest(\'.file-card\'))">&#9999; Edit</button><button class="btn-del" onclick="event.stopPropagation();actorDeleteFile(this.closest(\'.file-card\'))">&#128465; Delete</button>':'';
+    var badges=idChip+'<span class="'+(mode==='none'?'tc-type':'type-chip')+'">'+actorEsc(f.type||'VIDEO')+'</span><span class="'+(mode==='none'?'tc-size':'size-chip')+'">'+actorEsc(f.size||'')+'</span>'+duration+res+source+menu;
+    var visual=mode==='none'?'<div class="fc-text-info">'+badges+'</div>'+(isAdmin?'<div class="text-admin-row">'+actions+'</div>':''):
+        '<div class="poster-box" id="poster-box-'+fid+'"><img src="'+actorEsc(f.tg_thumb||'')+'" id="img-poster-'+fid+'" class="fc-poster" onload="this.classList.add(\'loaded\')" onerror="handleThumbError(this.closest(\'.file-card\').dataset.fid)" loading="lazy"><div class="poster-top">'+badges+'</div>'+(isAdmin?'<div class="poster-admin">'+actions+'</div>':'')+'</div>';
+    return '<div class="file-card card-enter" data-fid="'+fid+'" role="button" tabindex="0" aria-label="Play '+name+'" onclick="actorPlayFile(this)" onkeydown="if(event.target===this &amp;&amp; (event.key===\'Enter\' || event.key===\' \')){event.preventDefault();actorPlayFile(this)}">'+visual+'<div class="fc-body"><div class="fc-name" id="name-title-'+fid+'">'+name+'</div></div></div>';
+}
+</script><style>.actor-group-id{display:inline-flex;background:#39230b;color:#ffd58a;border:1px solid #d99b3b;border-radius:6px;padding:3px 7px;font-size:10px;font-weight:800;white-space:nowrap}.poster-top{flex-wrap:wrap;align-content:flex-start}</style>'''
 
 # ─────────────────────────────────────────────────────────
 # 🌐 MAIN HOMEPAGE: UNIVERSAL DIRECTORY WITH SEARCH & FILTERS
@@ -58,7 +82,7 @@ async def actors_directory_page(req):
     for a in all_actors:
         cat = a.get("category", "actor")
         i = "🎭" if cat == "actor" else "📱" if cat == "app" else "🌐"
-        v = int(a.get("photo_updated_at") or a.get("created_at") or 0)
+        v = a.get("photo_revision") or int(a.get("photo_updated_at") or a.get("created_at") or 0)
         # ✅ Centralized default: text mode ⇒ initial server render भी text cards देता है (API text branch जैसा ही markup)
         if DEFAULT_CATALOG_MODE == "text":
             act_items += f'''<div class="act-text-card" style="background:var(--card); border:1px solid var(--border); padding:15px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; transition:0.2s;" onclick="window.location.href=\'/actor/{str(a["_id"])}\'" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'"><div style="font-weight:800; color:var(--text); font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:65%;">{html.escape(a.get("name",""))}</div><div style="background:var(--bg3); padding:4px 10px; border-radius:6px; font-size:11px; font-weight:800; color:var(--muted); white-space:nowrap; border:1px solid var(--border);">{i} {cat.capitalize()}</div></div>'''
@@ -227,7 +251,7 @@ async def api_directory_search(req):
         for a in docs:
             c = a.get("category", "actor")
             i = "🎭" if c == "actor" else "📱" if c == "app" else "🌐"
-            v = int(a.get("photo_updated_at") or a.get("created_at") or 0)
+            v = a.get("photo_revision") or int(a.get("photo_updated_at") or a.get("created_at") or 0)
             html_out += f'''<div class="act-card card-enter" onclick="window.location.href=\'/actor/{str(a["_id"])}\'">\n            <div class="poster-wrap" style="position:relative; padding-top:135%; background:var(--bg3); overflow:hidden;">\n                <img src="/api/actor/photo?id={str(a["_id"])}&v={v}" class="act-poster" loading="lazy">\n                <div style="position:absolute; top:8px; left:8px; background:rgba(229,9,20,0.9); color:#fff; font-size:10px; padding:4px 8px; border-radius:4px; font-weight:800; backdrop-filter:blur(4px); z-index:2; text-transform:uppercase; box-shadow:0 2px 10px rgba(0,0,0,0.5);">{i} {c.capitalize()}</div>\n                <div style="position:absolute; bottom:0; left:0; right:0; background:linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 40%, transparent 100%); padding:30px 12px 12px 12px; z-index:2; text-align:center;">\n                    <div style="font-size:14.5px; font-weight:900; color:#fff; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; text-shadow:0 2px 6px rgba(0,0,0,0.9); letter-spacing:0.5px;">{html.escape(a.get("name", ""))}</div>\n                </div>\n            </div>\n            <div class="card-body">\n                <div style="font-size:14px; font-weight:800; color:var(--text); text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">{html.escape(a.get("name", ""))}</div>\n                <div style="font-size:11px; color:var(--muted); font-weight:700; margin-top:4px;">{html.escape(c.capitalize())}</div>\n            </div>\n        </div>'''
             
     return web.json_response({"html": html_out, "has_next": has_next}, dumps=fast_json)
@@ -249,33 +273,84 @@ def _clean_link(v):
     return v[:300]
 
 
-def actor_form_fields(name="", category="actor", bio="", tags="", social=None):
-    social = social or {}
-    esc = html.escape
+ACTOR_FORM_CSS = '''<style>
+.profile-studio{max-width:880px;margin:0 auto;padding:30px 20px 60px}
+.profile-studio-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:22px}
+.profile-back,.profile-cancel{color:var(--text);text-decoration:none;border:1px solid var(--border);background:var(--bg3);border-radius:9px;padding:10px 14px;font-size:13px;font-weight:700;white-space:nowrap;cursor:pointer}
+.profile-studio-kicker,.profile-section-kicker{font-size:10px;letter-spacing:1.3px;text-transform:uppercase;color:var(--accent);font-weight:900}
+.profile-studio-head h1{font-size:26px;line-height:1.2;margin:5px 0}.profile-studio-head p,.profile-help{font-size:12px;line-height:1.55;color:var(--muted)}
+.profile-section{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px}
+.profile-section-head{margin-bottom:16px}.profile-section-head h2{font-size:16px;margin:5px 0}.profile-section-head p{font-size:12px;line-height:1.5;color:var(--muted)}
+.profile-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.profile-field{display:flex;flex-direction:column;gap:7px;min-width:0;color:var(--text);font-size:12px;font-weight:800}
+.profile-field.full{grid-column:1/-1}.profile-field .em-input{margin:0;padding:12px;background:var(--bg);font-family:inherit;font-weight:500;line-height:1.4}
+.profile-field textarea{min-height:110px;resize:vertical}.profile-field small{font-weight:500;color:var(--muted);line-height:1.4}
+.profile-media{display:flex;gap:18px;align-items:center}.profile-photo{width:100px;aspect-ratio:3/4;flex:none;border:1px solid var(--border);border-radius:10px;background:var(--bg3);display:grid;place-items:center;overflow:hidden;color:var(--muted);font-size:27px}
+.profile-photo img{width:100%;height:100%;object-fit:cover}.profile-photo img[hidden]{display:none}.profile-photo img:not([hidden])+span{display:none}
+.profile-media-copy{flex:1;min-width:0}.profile-file{display:block;max-width:100%;margin:10px 0;color:var(--muted);font:inherit;font-size:12px}.profile-file::file-selector-button{border:1px solid var(--border);background:var(--bg3);color:var(--text);padding:9px 12px;border-radius:8px;font:inherit;font-weight:700;cursor:pointer;margin-right:10px}
+.profile-form-actions{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:18px}.profile-form-actions .em-save-btn{width:auto;min-width:170px}
+.profile-modal-card{max-width:720px!important;max-height:calc(100dvh - 30px);overflow:auto;padding:22px!important}.profile-modal-card .profile-section{background:var(--card);padding:16px}.profile-modal-card .profile-section:last-of-type{margin-bottom:0}
+.profile-modal-card .em-title{padding-right:35px;margin-bottom:5px}.profile-modal-card .profile-help{margin-bottom:16px}
+@media(max-width:600px){.profile-studio{padding:20px 14px 50px}.profile-studio-head{gap:10px}.profile-studio-head h1{font-size:22px}.profile-section{padding:16px}.profile-fields{grid-template-columns:1fr}.profile-field.full{grid-column:auto}.profile-photo{width:78px}.profile-modal-card{padding:16px!important}.profile-form-actions .em-save-btn{flex:1;min-width:0}}
+@media(hover:none){.gallery-del-btn{opacity:1!important}}
+</style>'''
 
-    def lab(t):
-        return '<div class="scard-label">' + t + '</div>'
+PROFILE_FORM_JS = r'''<script>
+(function(){
+    document.querySelectorAll('form[data-profile-form]').forEach(function(form){
+        var button=form.querySelector('button[type=submit]'),notice=form.querySelector('.profile-form-error'),label=button.textContent;
+        var modal=form.closest('#actorEditModal'),avatar=modal&&modal.querySelector('.profile-file');
+        form.addEventListener('submit',async function(event){
+            event.preventDefault();if(button.disabled)return;form.dataset.saving='true';button.disabled=true;button.textContent='Saving…';notice.hidden=true;if(avatar)avatar.disabled=true;
+            try{
+                var response=await fetch(form.action,{method:'POST',body:new FormData(form),headers:{'Accept':'application/json'}});
+                var data=await response.json().catch(function(){return {};});
+                if(!response.ok||!data.success)throw new Error(data.error||'Could not confirm the save. Please retry.');
+                if(typeof data.redirect!=='string'||data.redirect[0]!=='/'||data.redirect[1]==='/')throw new Error('Saved, but could not open the result.');
+                window.location.assign(data.redirect);return;
+            }catch(error){form.dataset.saving='false';notice.textContent=error.message||'Could not confirm the save. Check your connection before retrying.';notice.hidden=false;notice.scrollIntoView({block:'nearest'});button.disabled=false;button.textContent=label;if(avatar)avatar.disabled=false;}
+        });
+        window.addEventListener('pageshow',function(){form.dataset.saving='false';button.disabled=false;button.textContent=label;if(avatar)avatar.disabled=false;});
+    });
+})();
+</script>'''
+
+
+def _actor_result(req, destination, error=None, status=400):
+    if 'application/json' in req.headers.get('Accept', ''):
+        return web.json_response({'error': error} if error else {'success': True, 'redirect': destination},
+                                 status=status if error else 200, dumps=fast_json)
+    if error:
+        return web.HTTPFound(destination + ('&' if '?' in destination else '?') + urlencode({'err': error}))
+    return web.HTTPFound(destination)
+
+
+def actor_form_fields(name="", category="actor", bio="", tags="", social=None):
+    """Shared, escaped fields keep create and edit forms in sync."""
+    social = social or {}
+    esc = lambda value: html.escape(str(value or ""), quote=True)
 
     def opt(val, label):
-        return '<option value="' + val + '"' + (' selected' if category == val else '') + '>' + label + '</option>'
+        return f'<option value="{val}"{" selected" if category == val else ""}>{label}</option>'
 
-    def link(label, field, key, ph):
-        return (lab(label) + '<input type="url" name="' + field + '" value="' + esc(social.get(key, "") or "")
-                + '" placeholder="' + ph + '" class="em-input">')
+    def link(label, field, key, placeholder):
+        return f'<label class="profile-field">{label}<input class="em-input" type="url" name="{field}" value="{esc(social.get(key))}" placeholder="{placeholder}"></label>'
 
+    legacy_category = f'<option value="{esc(category)}" selected>{esc(category)}</option>' if category and category not in ('actor', 'app', 'website') else ''
     return (
-        lab("Full Name") + '<input type="text" name="name" value="' + esc(name)
-        + '" placeholder="Full Name (Actor / App / Website)" class="em-input" required>'
-        + lab("Category") + '<select name="category" class="em-input" required>'
-        + opt("actor", "🎭 Actor Profile") + opt("app", "📱 App Profile") + opt("website", "🌐 Website Profile") + '</select>'
-        + lab("Biography Details") + '<textarea name="bio" placeholder="Biography / Description Details..." '
-        + 'class="em-input" style="min-height:120px;font-family:inherit;line-height:1.5" required>' + esc(bio) + '</textarea>'
-        + lab("Search Tags (Comma Separated)") + '<input type="text" name="tags" value="' + esc(tags)
-        + '" placeholder="e.g. SRK, Netflix, Mod" class="em-input">'
-        + '<div class="em-title" style="font-size:14px;margin-top:15px;margin-bottom:10px;color:var(--text)">🌐 Social Media Channels</div>'
-        + link("Instagram Link", "insta", "instagram", "https://instagram.com/...")
-        + link("YouTube Channel Link", "yt", "youtube", "https://youtube.com/...")
-        + link("Twitter / X Profile Link", "twitter", "twitter", "https://x.com/...")
+        '<section class="profile-section"><div class="profile-section-head"><div class="profile-section-kicker">01 · Identity</div><h2>Profile details</h2><p>Tell visitors who or what this profile represents.</p></div>'
+        '<div class="profile-fields">'
+        f'<label class="profile-field">Display name<input type="text" name="name" value="{esc(name)}" placeholder="Name of actor, app or website" class="em-input" required></label>'
+        '<label class="profile-field">Category<select name="category" class="em-input" required>'
+        + legacy_category + opt("actor", "🎭 Actor") + opt("app", "📱 App") + opt("website", "🌐 Website") + '</select></label>'
+        f'<label class="profile-field full">Biography<textarea name="bio" placeholder="Add a short introduction..." class="em-input" required>{esc(bio)}</textarea></label>'
+        f'<label class="profile-field full">Search tags<input type="text" name="tags" value="{esc(tags)}" placeholder="e.g. Actor name, Alias, Genre" class="em-input"><small>Separate tags with commas to help match linked videos.</small></label>'
+        '</div></section>'
+        '<section class="profile-section"><div class="profile-section-head"><div class="profile-section-kicker">02 · Optional</div><h2>Social links</h2><p>Add the official profiles you want to share.</p></div><div class="profile-fields">'
+        + link("Instagram", "insta", "instagram", "https://instagram.com/...")
+        + link("YouTube", "yt", "youtube", "https://youtube.com/...")
+        + link("Twitter / X", "twitter", "twitter", "https://x.com/...")
+        + '</div></section>'
     )
 
 
@@ -286,13 +361,24 @@ def actor_form_fields(name="", category="actor", bio="", tags="", social=None):
 async def create_actor_page(req):
     role, _ = await get_auth(req)
     if role != 'admin': return web.HTTPFound('/dashboard')
-    content = ('<form action="/api/create_actor" method="post" enctype="multipart/form-data">'
-               + actor_form_fields()
-               + '<div class="scard-label">Profile Photo / Icon</div>'
-               '<input type="file" name="photo" accept="image/*" required style="padding:10px 0;color:var(--text);margin-bottom:15px">'
-               '<button class="em-save-btn" type="submit">Create Profile</button></form>'
-               '<div style="margin-top:15px; text-align:center;"><a href="/actors" style="color:var(--muted); text-decoration:none; font-size:13px;">← Back to Catalog</a></div>')
-    return build_page("Create New Profile", form_wrapper("Add New Entry", content, req.query.get('err',''), req.query.get('msg','')), "login-bg", "actors", role)
+    err, msg = html.escape(req.query.get('err', '')), html.escape(req.query.get('msg', ''))
+    notices = (f'<div class="err-box">{err}</div>' if err else '') + (f'<div class="success-box">{msg}</div>' if msg else '')
+    content = ACTOR_FORM_CSS + f'''
+    <main class="profile-studio">
+      <header class="profile-studio-head"><a class="profile-back" href="/actors">← Profiles</a><div><div class="profile-studio-kicker">Profile studio</div><h1>Create a profile</h1><p>Make a home for an actor, app or website.</p></div></header>
+      {notices}
+      <form action="/api/create_actor" method="post" enctype="multipart/form-data" data-profile-form>
+        <div class="err-box profile-form-error" role="alert" hidden></div>
+        <section class="profile-section"><div class="profile-section-head"><div class="profile-section-kicker">Profile image</div><h2>Choose a portrait or icon</h2><p>This image appears in the directory and at the top of the profile.</p></div>
+          <div class="profile-media"><div class="profile-photo"><img id="newProfilePreview" alt="Selected profile image" hidden><span aria-hidden="true">♙</span></div>
+          <div class="profile-media-copy"><label class="profile-field">Profile photo <input id="newProfilePhoto" class="profile-file" type="file" name="photo" accept="image/*" required></label><div class="profile-help">Select an image from your device. A portrait works best.</div></div></div>
+        </section>
+        {actor_form_fields()}
+        <div class="profile-form-actions"><a class="profile-cancel" href="/actors">Cancel</a><button class="em-save-btn" type="submit">Create profile</button></div>
+      </form>
+    </main>
+    <script>document.getElementById('newProfilePhoto').addEventListener('change',function(){{var img=document.getElementById('newProfilePreview');if(img.dataset.objectUrl)URL.revokeObjectURL(img.dataset.objectUrl);if(this.files&&this.files[0]){{img.dataset.objectUrl=URL.createObjectURL(this.files[0]);img.src=img.dataset.objectUrl;img.hidden=false;}}else{{img.hidden=true;img.removeAttribute('src');}}}});</script>'''
+    return build_page("Create New Profile", content + PROFILE_FORM_JS, "", "actors", role)
 
 @actor_routes.post('/api/create_actor')
 async def api_create_actor(req):
@@ -314,18 +400,21 @@ async def api_create_actor(req):
             elif part.name == 'twitter': twitter = _clean_link((await part.read()).decode())
             elif part.name == 'photo': image_bytes = await part.read()
             
-        if not name or not bio or not image_bytes: return web.HTTPFound('/admin/create_actor?err=All fields are required!')
+        if not name or not bio or not image_bytes:
+            return _actor_result(req, '/admin/create_actor', 'Name, biography and profile photo are required.')
         
         with io.BytesIO(image_bytes) as img_buffer:
             img_buffer.name = f"{name.replace(' ', '_')}.jpg"
             msg = await temp.BOT.send_photo(chat_id=ACTOR_STORAGE_CHANNEL, photo=img_buffer)
-        if not msg or not msg.photo: return web.HTTPFound('/admin/create_actor?err=Telegram Upload Failed!')
+        if not msg or not msg.photo:
+            return _actor_result(req, '/admin/create_actor', 'Profile photo upload failed. Please retry.', 500)
         
         tg_photo_id = msg.photo.sizes[-1].file_id if hasattr(msg.photo, "sizes") and msg.photo.sizes else msg.photo.file_id
         now_ts = int(time.time())
-        await actors.insert_one({"name": name, "bio": bio, "category": category, "tags": [t.strip() for t in tags_raw.split(",") if t.strip()], "photo_url": f"TG_ID:{tg_photo_id}", "is_actor_permanent": True, "photo_updated_at": now_ts, "social_links": {"instagram": insta, "youtube": yt, "twitter": twitter}, "gallery": [], "is_gallery_permanent": True, "created_at": now_ts})
-        return web.HTTPFound('/actors?msg=Profile created successfully!')
-    except Exception as e: return web.HTTPFound(f'/admin/create_actor?err=Server Error: {str(e)}')
+        await actors.insert_one({"name": name, "bio": bio, "category": category, "tags": [t.strip() for t in tags_raw.split(",") if t.strip()], "photo_url": f"TG_ID:{tg_photo_id}", "is_actor_permanent": True, "photo_updated_at": now_ts, "photo_revision": uuid.uuid4().hex, "social_links": {"instagram": insta, "youtube": yt, "twitter": twitter}, "gallery": [], "is_gallery_permanent": True, "created_at": now_ts})
+        return _actor_result(req, '/actors?msg=Profile+created+successfully!')
+    except Exception as e:
+        return _actor_result(req, '/admin/create_actor', str(e) or 'Could not create the profile.', 500)
 
 
 # ─────────────────────────────────────────────────────────
@@ -374,12 +463,12 @@ async def actor_profile_display(req):
     social, gallery_list = actor.get("social_links", {"instagram": "", "youtube": "", "twitter": ""}), actor.get("gallery", [])
     
     cat_emoji = "🎭" if category == "actor" else "📱" if category == "app" else "🌐"
-    cat_badge = f'<span style="background:var(--accent); color:#fff; font-size:11px; padding:3px 8px; border-radius:4px; font-weight:800; margin-right:6px;">{cat_emoji} {category.upper()}</span>'
+    cat_badge = f'<span style="background:var(--accent); color:#fff; font-size:11px; padding:3px 8px; border-radius:4px; font-weight:800; margin-right:6px;">{cat_emoji} {html.escape(str(category).upper())}</span>'
     
     t_html = "".join([f'<span style="background:var(--bg3); border:1px solid var(--border); color:var(--muted); font-size:11px; padding:3px 8px; border-radius:4px; font-weight:600;">#{html.escape(t)}</span>' for t in tags_list])
     tags_chips_html = f'<div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">{cat_badge}{t_html}</div>'
     
-    s_html = "".join([f'<a href="{html.escape(social[k])}" target="_blank" style="background:{c}; color:#fff; padding:6px 14px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:700;">{l}</a>' for k,c,l in [("instagram","#ff007f","📸 Instagram"),("youtube","#ff0000","📺 YouTube"),("twitter","#1da1f2","🐦 Twitter / X")] if social.get(k)])
+    s_html = "".join([f'<a href="{html.escape(_clean_link(social[k]), quote=True)}" target="_blank" rel="noopener noreferrer" style="background:{c}; color:#fff; padding:6px 14px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:700;">{l}</a>' for k,c,l in [("instagram","#ff007f","📸 Instagram"),("youtube","#ff0000","📺 YouTube"),("twitter","#1da1f2","🐦 Twitter / X")] if _clean_link(social.get(k, ''))])
     social_html = f'<div style="display:flex; gap:12px; margin-top:12px; flex-wrap:wrap;">{s_html}</div>'
     
     gallery_grid_html = f'''<div style="background:var(--card); border:1px dashed var(--border); padding:20px; border-radius:8px; text-align:center; margin-bottom:20px;"><form action="/api/actor/gallery_upload" method="post" enctype="multipart/form-data" style="margin:0;"><input type="hidden" name="actor_id" value="{actor_id}"><label style="background:var(--accent); color:#fff; padding:10px 20px; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px; display:inline-block;">📂 Add Images to Gallery<input type="file" name="gallery_img" accept="image/*" multiple style="display:none;" onchange="this.form.submit()"></label><div style="color:var(--muted); font-size:11px; margin-top:8px;">You can select multiple photos at once</div></form></div>''' if role == 'admin' else ""
@@ -390,7 +479,7 @@ async def actor_profile_display(req):
         # param के delete/upload के बाद browser पुरानी image (पुराने gallery_idx URL से)
         # दिखाता रहता था, जिससे लगता था कि photo delete ही नहीं हुई। अब &v={gallery_v}
         # हर बदलाव पर URL बदल देता है।
-        gallery_v = int(actor.get("gallery_updated_at") or actor.get("photo_updated_at") or actor.get("created_at") or 0)
+        gallery_v = actor.get("gallery_revision") or int(actor.get("gallery_updated_at") or actor.get("photo_updated_at") or actor.get("created_at") or 0)
         g_items = "".join([f'<div class="gallery-item-wrap" onclick="openLightbox(\'/api/actor/photo?id={actor_id}&gallery_idx={i}&v={gallery_v}\')"><img src="/api/actor/photo?id={actor_id}&gallery_idx={i}&v={gallery_v}" class="gallery-item" loading="lazy">' + (f'<button class="gallery-del-btn" onclick="deleteGalleryImage(\'{actor_id}\', {i}, event)">🗑️ Delete</button>' if role=='admin' else "") + '</div>' for i in range(len(gallery_list))])
         gallery_grid_html += f'<div class="gallery-grid">{g_items}</div>'
 
@@ -398,7 +487,20 @@ async def actor_profile_display(req):
         
     tags_json_payload = html.escape(fast_json(tags_list))
     safe_bio = html.escape(actor.get("bio", ""))
-    photo_v = int(actor.get("photo_updated_at") or actor.get("created_at") or 0)
+    photo_v = actor.get("photo_revision") or int(actor.get("photo_updated_at") or actor.get("created_at") or 0)
+    profile_edit_modal = f'''
+    <div class="edit-modal" id="actorEditModal" role="dialog" aria-modal="true" aria-labelledby="actorEditTitle" onclick="if(event.target===this)closeActorEditModal()">
+      <div class="em-card profile-modal-card"><button class="em-close" type="button" aria-label="Close" onclick="closeActorEditModal()">&#10005;</button>
+        <div class="profile-studio-kicker">Profile studio</div><h2 class="em-title" id="actorEditTitle">Edit profile</h2><p class="profile-help">Update the details below. Your photo can be changed here too.</p>
+        <div class="profile-section"><div class="profile-media"><div class="profile-photo"><img id="actorEditPreview" src="/api/actor/photo?id={actor_id}&amp;v={html.escape(str(photo_v), quote=True)}" alt="Current profile photo"></div>
+          <div class="profile-media-copy"><label class="profile-field">Profile photo<input class="profile-file" type="file" accept="image/*" onchange="updateActorAvatar('{actor_id}',this)"></label><div class="profile-help">The photo is updated immediately when selected.</div></div></div></div>
+        <form action="/api/actor/update_profile" method="post" data-profile-form><input type="hidden" name="actor_id" value="{actor_id}">
+          <div class="err-box profile-form-error" role="alert" hidden></div>
+          {actor_form_fields(actor_name, category, actor.get("bio", ""), ", ".join(tags_list), social)}
+          <div class="profile-form-actions"><button class="profile-cancel" type="button" onclick="closeActorEditModal()">Cancel</button><button class="em-save-btn" type="submit">Save changes</button></div>
+        </form>
+      </div>
+    </div>''' if role == 'admin' else ""
     
     # 🎛️ Default media mode (centralized via DEFAULT_MEDIA_MODE in web_assets.py)
     ap_mode_tg_lbl = "🖼️ Original TG Thumb"
@@ -409,9 +511,9 @@ async def actor_profile_display(req):
 
 
     # ✅ CSS MINIFIED (DUPLICATES REMOVED)
-    css_js_minified = f'''<style>.actor-tab-bar{{display:flex;gap:10px;border-bottom:2px solid var(--border);margin-bottom:25px}}.actor-tab{{background:0 0;border:none;color:var(--muted);padding:12px 20px;font-size:15px;font-weight:700;cursor:pointer;transition:.2s;position:relative;font-family:inherit}}.actor-tab.active{{color:var(--text)!important}}.actor-tab.active::after{{content:'';position:absolute;bottom:-2px;left:0;right:0;height:2px;background:var(--accent)}}.actor-panel{{display:none}}.actor-panel.active{{display:block!important}}.gallery-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px}}@media(min-width:600px){{.gallery-grid{{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}}}}.gallery-item-wrap{{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--border);aspect-ratio:1;cursor:pointer}}.gallery-item{{width:100%;height:100%;object-fit:cover;transition:transform .2s}}.gallery-item-wrap:hover .gallery-item{{transform:scale(1.04)}}.gallery-del-btn{{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);background:rgba(160,8,8,.85);border:1px solid var(--accent);color:#fff;padding:4px 10px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;z-index:5;opacity:0;transition:opacity .15s}}.gallery-item-wrap:hover .gallery-del-btn{{opacity:1}}.lightbox{{position:fixed;inset:0;background:rgba(0,0,0,.92);backdrop-filter:blur(15px);z-index:99999;display:none;align-items:center;justify-content:center;opacity:0;transition:opacity .2s ease}}.lightbox.open{{display:flex;opacity:1}}.lightbox-img{{max-width:92%;max-height:88vh;object-fit:contain;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.8);transform:scale(.95);transition:transform .2s cubic-bezier(.4,0,.2,1)}}.lightbox.open .lightbox-img{{transform:scale(1)}}.lightbox-close{{position:absolute;top:20px;right:25px;background:none;border:none;color:#fff;font-size:32px;cursor:pointer;opacity:.7}}.lightbox-close:hover{{opacity:1}}.search-zone-actor{{padding:16px 0 0}}.search-row1-actor{{display:flex;align-items:center;gap:10px;margin-bottom:10px}}.search-row2-actor{{display:flex;align-items:center;justify-content:flex-start;gap:10px;margin-bottom:16px}}@media(min-width:768px){{.search-zone-actor{{display:flex;align-items:center;gap:10px;flex-wrap:nowrap;padding-bottom:16px}}.search-row1-actor{{flex:1;margin-bottom:0}}.search-row2-actor{{margin-bottom:0;flex-shrink:0}}}}.search-wrap-actor{{flex:1;min-width:0;display:flex;align-items:center;background:var(--bg3);border:1.5px solid var(--border);border-radius:12px;padding:0 6px 0 18px;gap:8px;overflow:hidden;min-height:38px}}.search-spinner-actor{{display:none;width:15px;height:15px;flex-shrink:0;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:searchSpinActor .6s linear infinite}}.search-wrap-actor.loading .search-spinner-actor{{display:inline-block}}@keyframes searchSpinActor{{to{{transform:rotate(360deg)}}}}.search-input-actor{{flex:1;min-width:0;width:100%;background:0 0;border:none;outline:none;color:var(--text);font-size:14px;font-weight:600;padding:6px 0;font-family:inherit}}.search-input-actor::placeholder{{color:var(--muted);font-weight:400}}.search-btn-actor{{flex-shrink:0;background:var(--accent);color:#fff;border:none;border-radius:12px;padding:0 20px;height:38px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;transition:transform .15s,background .15s}}.search-btn-actor:hover{{background:var(--accent-hover);transform:scale(1.03)}}.cdd-wrap-actor{{flex:0 1 auto;min-width:0;position:relative;user-select:none}}.cdd-btn-actor{{width:auto;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:999px;padding:8px 28px 8px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;box-sizing:border-box;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:border-color .15s}}.cdd-btn-actor.open,.cdd-btn-actor:hover{{border-color:var(--accent)}}.cdd-arrow-actor{{position:absolute;right:12px;top:50%;transform:translateY(-50%);pointer-events:none;font-size:9px;color:var(--muted);transition:transform .2s}}.cdd-btn-actor.open+.cdd-arrow-actor{{transform:translateY(-50%) rotate(180deg)}}.cdd-menu-actor{{position:absolute;top:calc(100% + 7px);left:50%;transform:translateX(-50%);min-width:max-content;background:var(--bg2);border:1.5px solid var(--border);border-radius:16px;overflow:hidden;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.45);display:none}}.cdd-item-actor{{display:flex;align-items:center;gap:10px;padding:11px 14px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;transition:background .12s;border-bottom:1px solid var(--border)}}.cdd-item-actor:last-child{{border-bottom:none}}.cdd-item-actor:hover{{background:var(--bg3)}}.cdd-item-actor.selected{{color:var(--accent)}}.cdd-radio-actor{{width:16px;height:16px;border-radius:50%;border:2px solid var(--border);margin-left:auto;flex-shrink:0;display:flex;align-items:center;justify-content:center}}.cdd-item-actor.selected .cdd-radio-actor{{border-color:var(--accent)}}.cdd-radio-dot-actor{{width:6px;height:6px;border-radius:50%;background:var(--accent);display:none}}.cdd-item-actor.selected .cdd-radio-dot-actor{{display:block}}.actor-header-wrap{{display:flex;gap:25px;background:var(--card);border:1px solid var(--border);padding:25px;border-radius:12px;margin-bottom:35px;flex-direction:column;align-items:center;width:100%;box-sizing:border-box}}.avatar-box-master{{width:100%;max-width:340px;height:auto;aspect-ratio:3/4;background:var(--bg3);border-radius:8px;overflow:hidden;border:1px solid var(--border);flex-shrink:0}}@media(min-width:768px){{.actor-header-wrap{{flex-direction:row;align-items:stretch}}.avatar-box-master{{width:260px;height:350px;max-width:none;aspect-ratio:auto}}}}</style><div class="main" style="padding-top:30px;max-width:1100px;margin:0 auto;padding-left:20px;padding-right:20px"><div style="margin-bottom:15px"><a href="/actors" style="color:var(--muted);text-decoration:none;font-size:14px;font-weight:700">← Back to Catalog</a></div><div class="actor-header-wrap"><div class="avatar-box-master"><img id="actorMasterAvatarImage" src="/api/actor/photo?id={actor_id}&v={photo_v}" style="width:100%;height:100%;object-fit:cover"></div><div style="flex:1;min-width:300px;display:flex;flex-direction:column;justify-content:center;width:100%"><h1 style="font-size:32px;font-weight:900;color:var(--text);margin-bottom:2px">{html.escape(actor_name)}</h1>{tags_chips_html}{social_html}{admin_actions_html}</div></div><div class="actor-tab-bar"><button class="actor-tab active" onclick="switchActorTab(event,'tab-info')">ℹ️ Info</button><button class="actor-tab" onclick="switchActorTab(event,'tab-video')">🎬 Linked Media</button><button class="actor-tab" onclick="switchActorTab(event,'tab-gallery')">🖼️ Gallery</button></div><div id="tab-info" class="actor-panel active"><div style="background:var(--card);border:1px solid var(--border);padding:25px;border-radius:8px;line-height:1.7;color:var(--text);font-size:15px;white-space:pre-line">{safe_bio}</div></div><div id="tab-video" class="actor-panel"><div class="search-zone-actor"><div class="search-row1-actor"><div class="search-wrap-actor" id="actMovieWrap"><input type="text" id="actor_movie_q" value="" placeholder="Search inside this profile..." class="search-input-actor"><span class="search-spinner-actor" id="actMovieSpinner"></span></div></div><div class="search-row2-actor"><div class="cdd-wrap-actor"><div class="cdd-btn-actor" id="cddColBtnActor" onclick="toggleActorCdd('col',event)"><span id="cddColLabelActor">📂 All Collections</span></div><span class="cdd-arrow-actor">&#9660;</span><div class="cdd-menu-actor" id="cddColMenuActor"><div class="cdd-item-actor selected" data-val="all" onclick="pickActorCol('all','📂 All Collections',this,event)">📂 All Collections<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor" data-val="primary" onclick="pickActorCol('primary','🟢 Primary',this,event)">🟢 Primary<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor" data-val="cloud" onclick="pickActorCol('cloud','🔵 Cloud',this,event)">🔵 Cloud<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor" data-val="archive" onclick="pickActorCol('archive','🟠 Archive',this,event)">🟠 Archive<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div></div></div><div class="cdd-wrap-actor"><div class="cdd-btn-actor" id="cddModeBtnActor" onclick="toggleActorCdd('mode',event)"><span id="cddModeLabelActor">{ap_mode_lbl}</span></div><span class="cdd-arrow-actor">&#9660;</span><div class="cdd-menu-actor" id="cddModeMenuActor"><div class="cdd-item-actor{ap_sel_tg}" data-val="tg" onclick="pickActorMode('tg','🖼️ Original TG Thumb',this,event)">🖼️ Original TG Thumb<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor{ap_sel_none}" data-val="none" onclick="pickActorMode('none','⚡ Text Only (Fastest)',this,event)">⚡ Text Only (Fastest)<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div></div></div></div></div><div id="actor_video_results" class="res-grid"></div><div class="pagination" id="actor_page_box" style="display:none"><button class="pg-btn" id="actor_pBtn" onclick="actorPagePrev()" disabled>Previous</button><span class="pg-info" id="actor_pgInfo">Page 1</span><button class="pg-btn" id="actor_nBtn" onclick="actorPageNext()">Next</button></div></div><div id="tab-gallery" class="actor-panel">{gallery_grid_html}</div></div><div id="actorLightboxModal" class="lightbox" onclick="closeLightbox()"><button class="lightbox-close" onclick="closeLightbox()">&times;</button><img id="lightboxTargetImg" class="lightbox-img" src="" onclick="event.stopPropagation()"></div><input type="hidden" id="actor_master_tags_payload" value="{tags_json_payload}"><div class="edit-modal" id="actorEditModal" onclick="if(event.target===this)closeActorEditModal()"><div class="em-card" style="max-width:550px;background:var(--card);border:1px solid var(--border);padding:25px;border-radius:12px"><button class="em-close" onclick="closeActorEditModal()" style="position:absolute;top:15px;right:20px;background:0 0;border:none;color:var(--muted);font-size:24px;cursor:pointer">&#10005;</button><div class="em-title" style="font-size:18px;font-weight:700;margin-bottom:20px;color:var(--text)">✏️ Edit Profile Matrix</div><form action="/api/actor/update_profile" method="post"><input type="hidden" name="actor_id" value="{actor_id}">{actor_form_fields(actor_name, category, actor.get("bio", ""), ", ".join(tags_list), social)}<button class="em-save-btn" type="submit" style="width:100%;background:var(--accent);color:#fff;border:none;padding:14px;font-weight:700;border-radius:6px;cursor:pointer;font-size:15px">Save Changes & Sync Grid</button></form></div></div><script>var actCurPage=1,actOffset=0,actNextOffset="",actLimit={MAX_WEB_RESULTS},actCol="all",actMode="{DEFAULT_MEDIA_MODE}",actMovieReqId=0;function closeActorCdds(){{document.getElementById('cddColMenuActor').style.display='none';document.getElementById('cddColBtnActor').classList.remove('open');document.getElementById('cddModeMenuActor').style.display='none';document.getElementById('cddModeBtnActor').classList.remove('open');}}function toggleActorCdd(w,e){{if(e)e.stopPropagation();var mid=w==='col'?'cddColMenuActor':'cddModeMenuActor',bid=w==='col'?'cddColBtnActor':'cddModeBtnActor',oid=w==='col'?'cddModeMenuActor':'cddColMenuActor',obid=w==='col'?'cddModeBtnActor':'cddColBtnActor';document.getElementById(oid).style.display='none';document.getElementById(obid).classList.remove('open');var m=document.getElementById(mid),b=document.getElementById(bid);if(m.style.display==='block'){{m.style.display='none';b.classList.remove('open');}}else{{m.style.display='block';b.classList.add('open');}}}}function pickActorCol(v,l,el,e){{if(e)e.stopPropagation();actCol=v;document.getElementById('cddColLabelActor').textContent=l;document.querySelectorAll('#cddColMenuActor .cdd-item-actor').forEach(i=>i.classList.remove('selected'));el.classList.add('selected');closeActorCdds();resetActorSearchPage();triggerActorSearchAjax();}}function pickActorMode(v,l,el,e){{if(e)e.stopPropagation();actMode=v;document.getElementById('cddModeLabelActor').textContent=l;document.querySelectorAll('#cddModeMenuActor .cdd-item-actor').forEach(i=>i.classList.remove('selected'));el.classList.add('selected');closeActorCdds();resetActorSearchPage();triggerActorSearchAjax();}}document.addEventListener('click',closeActorCdds);function openLightbox(s){{document.getElementById('lightboxTargetImg').src=s;var lb=document.getElementById('actorLightboxModal');lb.style.display='flex';setTimeout(()=>lb.classList.add('open'),10);}}function closeLightbox(){{var lb=document.getElementById('actorLightboxModal');lb.classList.remove('open');setTimeout(()=>lb.style.display='none',200);}}function switchActorTab(ev,tId){{document.querySelectorAll('.actor-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.actor-tab').forEach(t=>t.classList.remove('active'));document.getElementById(tId).classList.add('active');ev.currentTarget.classList.add('active');if(tId==='tab-video'&&!document.getElementById('actor_video_results').innerHTML)triggerActorSearchAjax();}}function openActorEditModal(){{document.getElementById('actorEditModal').classList.add('open');}}function closeActorEditModal(){{document.getElementById('actorEditModal').classList.remove('open');}}function resetActorSearchPage(){{actCurPage=1;actOffset=0;}}async function triggerActorSearchAjax(){{var q=document.getElementById('actor_movie_q').value.trim(),grid=document.getElementById('actor_video_results');var wrap=document.getElementById('actMovieWrap');var myReq=++actMovieReqId;var loadTimer=setTimeout(function(){{if(myReq!==actMovieReqId)return;if(wrap)wrap.classList.add('loading');}},150);try{{var r=await fetch('/api/actor/search?q='+encodeURIComponent(q)+'&offset='+actOffset+'&col='+actCol+'&mode='+actMode+'&id={actor_id}');if(myReq!==actMovieReqId){{clearTimeout(loadTimer);if(wrap)wrap.classList.remove('loading');return;}}clearTimeout(loadTimer);if(wrap)wrap.classList.remove('loading');var d=await r.json();if(myReq!==actMovieReqId)return;grid.className='res-grid mode-'+actMode;if(!d.results||!d.results.length){{grid.innerHTML='<div class="empty"><p>No video assets matching filters found.</p></div>';document.getElementById('actor_page_box').style.display='none';return;}}var h='';d.results.forEach(f=>{{var sc=(f.raw_collection||'primary').toLowerCase(),ph='';/*⏱️ duration chip: khali duration par chip banta hi nahi*/var durC=f.duration?'<span class="dur-chip">'+f.duration+'</span>':'',durT=f.duration?'<span class="tc-dur">'+f.duration+'</span>':'';var resC=f.res?'<span class="res-chip">'+f.res+'</span>':'',resT=f.res?'<span class="tc-res">'+f.res+'</span>':'';var encName=encodeURIComponent(f.name||'').replace(/'/g,"%27").replace(/"/g,"%22");var encCap=encodeURIComponent(f.caption||'').replace(/'/g,"%27").replace(/"/g,"%22");var isAdmin=document.getElementById('editCombinedModal')!==null;var adminBtns='';if(isAdmin){{adminBtns='<div class="poster-admin"><button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+sc+'\\',\\''+encName+'\\',\\''+encCap+'\\')">&#9999; Edit</button><button class="btn-del" onclick="event.stopPropagation();deleteFile(\\''+f.file_id+'\\',\\''+sc+'\\')">&#128465; Delete</button></div>';}}if(actMode!=='none'){{ph='<div class="poster-box" onclick="toggleAdminBtns(this.closest(\\'.file-card\\'),event)"><img src="'+f.tg_thumb+'" class="fc-poster" onload="this.classList.add(\\'loaded\\')" loading="lazy"><div class="poster-top"><span class="type-chip">'+f.type.toUpperCase()+'</span><span class="size-chip">'+f.size+'</span>'+durC+resC+'<span class="source-pill '+sc+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span></div>'+adminBtns+'</div>';}}else{{var textBtns=isAdmin?'<div class="text-admin-row"><button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+sc+'\\',\\''+encName+'\\',\\''+encCap+'\\')">&#9999; Edit</button><button class="btn-del" onclick="event.stopPropagation();deleteFile(\\''+f.file_id+'\\',\\''+sc+'\\')">&#128465; Delete</button></div>':'';ph='<div class="fc-text-info" onclick="toggleAdminBtns(this.closest(\\'.file-card\\'),event)"><span class="tc-type">'+f.type.toUpperCase()+'</span><span class="tc-size">'+f.size+'</span>'+durT+resT+'<span class="source-pill '+sc+'" style="margin-left:auto"><span class="source-dot"></span>'+sc.toUpperCase()+'</span></div>'+textBtns;}}h+='<div class="file-card card-enter">'+ph+'<div class="fc-body"><div class="fc-name" onclick="window.open(\\''+f.watch+'\\',\\'_blank\\')">'+f.name+'</div></div></div>';}});grid.innerHTML=h;staggerCards(grid);actNextOffset=d.next_offset;document.getElementById('actor_page_box').style.display='flex';document.getElementById('actor_pBtn').disabled=(actOffset===0);document.getElementById('actor_nBtn').disabled=!actNextOffset;document.getElementById('actor_pgInfo').textContent='Page '+actCurPage;}}catch(e){{clearTimeout(loadTimer);if(wrap)wrap.classList.remove('loading');grid.innerHTML='<div class="empty"><p>Matrix pipeline sync error.</p></div>';}}}}async function updateActorAvatar(aid){{var f=document.getElementById('avatarUpdateInput').files[0];if(!f)return;var fd=new FormData();fd.append('actor_id',aid);fd.append('photo',f);try{{var r=await fetch('/api/actor/update_avatar',{{method:'POST',body:fd}}),d=await r.json();if(d.success){{document.getElementById('actorMasterAvatarImage').src='/api/actor/photo?id='+aid+'&v='+(d.photo_updated_at||new Date().getTime());alert("Profile photo updated successfully!");}}else alert(d.error||"Upload failed!");}}catch(e){{alert("Network update error!");}}}}async function deleteGalleryImage(aid,idx,e){{if(e)e.stopPropagation();if(!confirm("Delete this photo from gallery permanently?"))return;try{{var r=await fetch('/api/actor/gallery_delete',{{method:'POST',body:JSON.stringify({{actor_id:aid,index:idx}}),headers:{{'Content-Type':'application/json'}}}}),d=await r.json();if(d.success){{alert("Image removed from gallery!");window.location.reload();}}else alert(d.error||"Delete failed!");}}catch(e){{alert("Network deletion error!");}}}}async function deleteActorProfile(id){{if(!confirm("Are you sure you want to permanently delete this profile?"))return;try{{var r=await fetch('/api/actor/delete?id='+id,{{method:'POST'}}),d=await r.json();if(d.success){{alert("Profile deleted successfully!");window.location.href='/actors';}}else alert(d.error||"Deletion failed!");}}catch(e){{alert("Network communication error!");}}}}function actorPageNext(){{if(actNextOffset){{actCurPage++;actOffset=actNextOffset;triggerActorSearchAjax();window.scrollTo(0,350);}}}}function actorPagePrev(){{if(actCurPage>1){{actCurPage--;actOffset=Math.max(0,actOffset-actLimit);triggerActorSearchAjax();window.scrollTo(0,350);}}}}document.getElementById('actor_movie_q').addEventListener('keydown',function(e){{if(e.key==='Enter'){{clearTimeout(actMovieLiveTimer);resetActorSearchPage();triggerActorSearchAjax();}}}});var actMovieLiveTimer;document.getElementById('actor_movie_q').addEventListener('input',function(){{clearTimeout(actMovieLiveTimer);actMovieLiveTimer=setTimeout(function(){{resetActorSearchPage();triggerActorSearchAjax();}},350);}});</script>'''
+    css_js_minified = f'''<style>.actor-tab-bar{{display:flex;gap:10px;border-bottom:2px solid var(--border);margin-bottom:25px}}.actor-tab{{background:0 0;border:none;color:var(--muted);padding:12px 20px;font-size:15px;font-weight:700;cursor:pointer;transition:.2s;position:relative;font-family:inherit}}.actor-tab.active{{color:var(--text)!important}}.actor-tab.active::after{{content:'';position:absolute;bottom:-2px;left:0;right:0;height:2px;background:var(--accent)}}.actor-panel{{display:none}}.actor-panel.active{{display:block!important}}.gallery-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px}}@media(min-width:600px){{.gallery-grid{{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}}}}.gallery-item-wrap{{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--border);aspect-ratio:1;cursor:pointer}}.gallery-item{{width:100%;height:100%;object-fit:cover;transition:transform .2s}}.gallery-item-wrap:hover .gallery-item{{transform:scale(1.04)}}.gallery-del-btn{{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);background:rgba(160,8,8,.85);border:1px solid var(--accent);color:#fff;padding:4px 10px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;z-index:5;opacity:0;transition:opacity .15s}}.gallery-item-wrap:hover .gallery-del-btn{{opacity:1}}.lightbox{{position:fixed;inset:0;background:rgba(0,0,0,.92);backdrop-filter:blur(15px);z-index:99999;display:none;align-items:center;justify-content:center;opacity:0;transition:opacity .2s ease}}.lightbox.open{{display:flex;opacity:1}}.lightbox-img{{max-width:92%;max-height:88vh;object-fit:contain;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.8);transform:scale(.95);transition:transform .2s cubic-bezier(.4,0,.2,1)}}.lightbox.open .lightbox-img{{transform:scale(1)}}.lightbox-close{{position:absolute;top:20px;right:25px;background:none;border:none;color:#fff;font-size:32px;cursor:pointer;opacity:.7}}.lightbox-close:hover{{opacity:1}}.search-zone-actor{{padding:16px 0 0}}.search-row1-actor{{display:flex;align-items:center;gap:10px;margin-bottom:10px}}.search-row2-actor{{display:flex;align-items:center;justify-content:flex-start;gap:10px;margin-bottom:16px}}@media(min-width:768px){{.search-zone-actor{{display:flex;align-items:center;gap:10px;flex-wrap:nowrap;padding-bottom:16px}}.search-row1-actor{{flex:1;margin-bottom:0}}.search-row2-actor{{margin-bottom:0;flex-shrink:0}}}}.search-wrap-actor{{flex:1;min-width:0;display:flex;align-items:center;background:var(--bg3);border:1.5px solid var(--border);border-radius:12px;padding:0 6px 0 18px;gap:8px;overflow:hidden;min-height:38px}}.search-spinner-actor{{display:none;width:15px;height:15px;flex-shrink:0;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:searchSpinActor .6s linear infinite}}.search-wrap-actor.loading .search-spinner-actor{{display:inline-block}}@keyframes searchSpinActor{{to{{transform:rotate(360deg)}}}}.search-input-actor{{flex:1;min-width:0;width:100%;background:0 0;border:none;outline:none;color:var(--text);font-size:14px;font-weight:600;padding:6px 0;font-family:inherit}}.search-input-actor::placeholder{{color:var(--muted);font-weight:400}}.search-btn-actor{{flex-shrink:0;background:var(--accent);color:#fff;border:none;border-radius:12px;padding:0 20px;height:38px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;transition:transform .15s,background .15s}}.search-btn-actor:hover{{background:var(--accent-hover);transform:scale(1.03)}}.cdd-wrap-actor{{flex:0 1 auto;min-width:0;position:relative;user-select:none}}.cdd-btn-actor{{width:auto;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:999px;padding:8px 28px 8px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;box-sizing:border-box;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:border-color .15s}}.cdd-btn-actor.open,.cdd-btn-actor:hover{{border-color:var(--accent)}}.cdd-arrow-actor{{position:absolute;right:12px;top:50%;transform:translateY(-50%);pointer-events:none;font-size:9px;color:var(--muted);transition:transform .2s}}.cdd-btn-actor.open+.cdd-arrow-actor{{transform:translateY(-50%) rotate(180deg)}}.cdd-menu-actor{{position:absolute;top:calc(100% + 7px);left:50%;transform:translateX(-50%);min-width:max-content;background:var(--bg2);border:1.5px solid var(--border);border-radius:16px;overflow:hidden;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.45);display:none}}.cdd-item-actor{{display:flex;align-items:center;gap:10px;padding:11px 14px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;transition:background .12s;border-bottom:1px solid var(--border)}}.cdd-item-actor:last-child{{border-bottom:none}}.cdd-item-actor:hover{{background:var(--bg3)}}.cdd-item-actor.selected{{color:var(--accent)}}.cdd-radio-actor{{width:16px;height:16px;border-radius:50%;border:2px solid var(--border);margin-left:auto;flex-shrink:0;display:flex;align-items:center;justify-content:center}}.cdd-item-actor.selected .cdd-radio-actor{{border-color:var(--accent)}}.cdd-radio-dot-actor{{width:6px;height:6px;border-radius:50%;background:var(--accent);display:none}}.cdd-item-actor.selected .cdd-radio-dot-actor{{display:block}}.actor-header-wrap{{display:flex;gap:25px;background:var(--card);border:1px solid var(--border);padding:25px;border-radius:12px;margin-bottom:35px;flex-direction:column;align-items:center;width:100%;box-sizing:border-box}}.avatar-box-master{{width:100%;max-width:340px;height:auto;aspect-ratio:3/4;background:var(--bg3);border-radius:8px;overflow:hidden;border:1px solid var(--border);flex-shrink:0}}@media(min-width:768px){{.actor-header-wrap{{flex-direction:row;align-items:stretch}}.avatar-box-master{{width:260px;height:350px;max-width:none;aspect-ratio:auto}}}}</style><div class="main" style="padding-top:30px;max-width:1100px;margin:0 auto;padding-left:20px;padding-right:20px"><div style="margin-bottom:15px"><a href="/actors" style="color:var(--muted);text-decoration:none;font-size:14px;font-weight:700">← Back to Catalog</a></div><div class="actor-header-wrap"><div class="avatar-box-master"><img id="actorMasterAvatarImage" src="/api/actor/photo?id={actor_id}&v={photo_v}" style="width:100%;height:100%;object-fit:cover"></div><div style="flex:1;min-width:300px;display:flex;flex-direction:column;justify-content:center;width:100%"><h1 style="font-size:32px;font-weight:900;color:var(--text);margin-bottom:2px">{html.escape(actor_name)}</h1>{tags_chips_html}{social_html}{admin_actions_html}</div></div><div class="actor-tab-bar"><button class="actor-tab active" onclick="switchActorTab(event,'tab-info')">ℹ️ Info</button><button class="actor-tab" onclick="switchActorTab(event,'tab-video')">🎬 Linked Media</button><button class="actor-tab" onclick="switchActorTab(event,'tab-gallery')">🖼️ Gallery</button></div><div id="tab-info" class="actor-panel active"><div style="background:var(--card);border:1px solid var(--border);padding:25px;border-radius:8px;line-height:1.7;color:var(--text);font-size:15px;white-space:pre-line">{safe_bio}</div></div><div id="tab-video" class="actor-panel"><div class="search-zone-actor"><div class="search-row1-actor"><div class="search-wrap-actor" id="actMovieWrap"><input type="text" id="actor_movie_q" value="" placeholder="Search inside this profile..." class="search-input-actor"><span class="search-spinner-actor" id="actMovieSpinner"></span></div></div><div class="search-row2-actor"><div class="cdd-wrap-actor"><div class="cdd-btn-actor" id="cddColBtnActor" onclick="toggleActorCdd('col',event)"><span id="cddColLabelActor">📂 All Collections</span></div><span class="cdd-arrow-actor">&#9660;</span><div class="cdd-menu-actor" id="cddColMenuActor"><div class="cdd-item-actor selected" data-val="all" onclick="pickActorCol('all','📂 All Collections',this,event)">📂 All Collections<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor" data-val="primary" onclick="pickActorCol('primary','🟢 Primary',this,event)">🟢 Primary<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor" data-val="cloud" onclick="pickActorCol('cloud','🔵 Cloud',this,event)">🔵 Cloud<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor" data-val="archive" onclick="pickActorCol('archive','🟠 Archive',this,event)">🟠 Archive<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div></div></div><div class="cdd-wrap-actor"><div class="cdd-btn-actor" id="cddModeBtnActor" onclick="toggleActorCdd('mode',event)"><span id="cddModeLabelActor">{ap_mode_lbl}</span></div><span class="cdd-arrow-actor">&#9660;</span><div class="cdd-menu-actor" id="cddModeMenuActor"><div class="cdd-item-actor{ap_sel_tg}" data-val="tg" onclick="pickActorMode('tg','🖼️ Original TG Thumb',this,event)">🖼️ Original TG Thumb<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor{ap_sel_none}" data-val="none" onclick="pickActorMode('none','⚡ Text Only (Fastest)',this,event)">⚡ Text Only (Fastest)<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div></div></div></div></div><div id="actor_video_results" class="res-grid"></div><div class="pagination" id="actor_page_box" style="display:none"><button class="pg-btn" id="actor_pBtn" onclick="actorPagePrev()" disabled>Previous</button><span class="pg-info" id="actor_pgInfo">Page 1</span><button class="pg-btn" id="actor_nBtn" onclick="actorPageNext()">Next</button></div></div><div id="tab-gallery" class="actor-panel">{gallery_grid_html}</div></div><div id="actorLightboxModal" class="lightbox" onclick="closeLightbox()"><button class="lightbox-close" onclick="closeLightbox()">&times;</button><img id="lightboxTargetImg" class="lightbox-img" src="" onclick="event.stopPropagation()"></div><input type="hidden" id="actor_master_tags_payload" value="{tags_json_payload}">{profile_edit_modal}<script>var actCurPage=1,actOffset=0,actNextOffset="",actLimit={MAX_WEB_RESULTS},actCol="all",actMode="{DEFAULT_MEDIA_MODE}",actMovieReqId=0;function closeActorCdds(){{document.getElementById('cddColMenuActor').style.display='none';document.getElementById('cddColBtnActor').classList.remove('open');document.getElementById('cddModeMenuActor').style.display='none';document.getElementById('cddModeBtnActor').classList.remove('open');}}function toggleActorCdd(w,e){{if(e)e.stopPropagation();var mid=w==='col'?'cddColMenuActor':'cddModeMenuActor',bid=w==='col'?'cddColBtnActor':'cddModeBtnActor',oid=w==='col'?'cddModeMenuActor':'cddColMenuActor',obid=w==='col'?'cddModeBtnActor':'cddColBtnActor';document.getElementById(oid).style.display='none';document.getElementById(obid).classList.remove('open');var m=document.getElementById(mid),b=document.getElementById(bid);if(m.style.display==='block'){{m.style.display='none';b.classList.remove('open');}}else{{m.style.display='block';b.classList.add('open');}}}}function pickActorCol(v,l,el,e){{if(e)e.stopPropagation();actCol=v;document.getElementById('cddColLabelActor').textContent=l;document.querySelectorAll('#cddColMenuActor .cdd-item-actor').forEach(i=>i.classList.remove('selected'));el.classList.add('selected');closeActorCdds();resetActorSearchPage();triggerActorSearchAjax();}}function pickActorMode(v,l,el,e){{if(e)e.stopPropagation();actMode=v;document.getElementById('cddModeLabelActor').textContent=l;document.querySelectorAll('#cddModeMenuActor .cdd-item-actor').forEach(i=>i.classList.remove('selected'));el.classList.add('selected');closeActorCdds();resetActorSearchPage();triggerActorSearchAjax();}}document.addEventListener('click',closeActorCdds);function openLightbox(s){{document.getElementById('lightboxTargetImg').src=s;var lb=document.getElementById('actorLightboxModal');lb.style.display='flex';setTimeout(()=>lb.classList.add('open'),10);}}function closeLightbox(){{var lb=document.getElementById('actorLightboxModal');lb.classList.remove('open');setTimeout(()=>lb.style.display='none',200);}}function switchActorTab(ev,tId){{document.querySelectorAll('.actor-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.actor-tab').forEach(t=>t.classList.remove('active'));document.getElementById(tId).classList.add('active');ev.currentTarget.classList.add('active');if(tId==='tab-video'&&!document.getElementById('actor_video_results').innerHTML)triggerActorSearchAjax();}}function openActorEditModal(){{document.getElementById('actorEditModal').classList.add('open');}}function closeActorEditModal(){{var m=document.getElementById('actorEditModal'),f=m&&m.querySelector('form[data-profile-form]');if(f&&f.dataset.saving==='true'){{showToast('Please wait for the save to finish.');return;}}if(m)m.classList.remove('open');}}function resetActorSearchPage(){{actCurPage=1;actOffset=0;}}async function triggerActorSearchAjax(){{var q=document.getElementById('actor_movie_q').value.trim(),grid=document.getElementById('actor_video_results');var wrap=document.getElementById('actMovieWrap');var myReq=++actMovieReqId;var loadTimer=setTimeout(function(){{if(myReq!==actMovieReqId)return;if(wrap)wrap.classList.add('loading');}},150);try{{var r=await fetch('/api/actor/search?q='+encodeURIComponent(q)+'&offset='+actOffset+'&col='+actCol+'&mode='+actMode+'&id={actor_id}');if(myReq!==actMovieReqId){{clearTimeout(loadTimer);if(wrap)wrap.classList.remove('loading');return;}}clearTimeout(loadTimer);if(wrap)wrap.classList.remove('loading');var d=await r.json();if(myReq!==actMovieReqId)return;grid.className='res-grid mode-'+actMode;if(!d.results||!d.results.length){{grid.innerHTML='<div class="empty"><p>No video assets matching filters found.</p></div>';document.getElementById('actor_page_box').style.display='none';return;}}var h='';d.results.forEach(f=>{{h+=renderActorMediaCard(f,actMode,document.getElementById('editCombinedModal')!==null);}});grid.innerHTML=h;staggerCards(grid);actNextOffset=d.next_offset;document.getElementById('actor_page_box').style.display='flex';document.getElementById('actor_pBtn').disabled=(actOffset===0);document.getElementById('actor_nBtn').disabled=!actNextOffset;document.getElementById('actor_pgInfo').textContent='Page '+actCurPage;}}catch(e){{clearTimeout(loadTimer);if(myReq!==actMovieReqId)return;if(wrap)wrap.classList.remove('loading');grid.innerHTML='<div class="empty"><p>Could not load linked videos. Please retry.</p></div>';}}}}var actorAvatarInProgress=false;async function updateActorAvatar(aid,input){{var field=input||document.getElementById('avatarUpdateInput'),f=field&&field.files[0];if(!f)return;if(actorAvatarInProgress){{field.value='';showToast('Please wait for the current photo upload.');return;}}actorAvatarInProgress=true;var save=document.querySelector('#actorEditModal button[type=submit]'),oldLabel=save&&save.textContent;if(save){{save.disabled=true;save.textContent='Uploading photo…';}}var fd=new FormData();fd.append('actor_id',aid);fd.append('photo',f);field.disabled=true;try{{var r=await fetch('/api/actor/update_avatar',{{method:'POST',body:fd}}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||'Upload failed');var src='/api/actor/photo?id='+encodeURIComponent(aid)+'&v='+encodeURIComponent(d.photo_revision||Date.now());document.getElementById('actorMasterAvatarImage').src=src;var preview=document.getElementById('actorEditPreview');if(preview)preview.src=src;showToast('Profile photo updated.');}}catch(e){{showToast(e.message||'Network update error','error');}}finally{{field.value='';field.disabled=false;actorAvatarInProgress=false;if(save){{save.disabled=false;save.textContent=oldLabel;}}}}}}async function deleteGalleryImage(aid,idx,e){{if(e)e.stopPropagation();if(!confirm("Delete this photo from gallery permanently?"))return;try{{var r=await fetch('/api/actor/gallery_delete',{{method:'POST',body:JSON.stringify({{actor_id:aid,index:idx}}),headers:{{'Content-Type':'application/json'}}}}),d=await r.json();if(d.success){{alert("Image removed from gallery!");window.location.reload();}}else alert(d.error||"Delete failed!");}}catch(e){{alert("Network deletion error!");}}}}async function deleteActorProfile(id){{if(!confirm("Are you sure you want to permanently delete this profile?"))return;try{{var r=await fetch('/api/actor/delete?id='+id,{{method:'POST'}}),d=await r.json();if(d.success){{alert("Profile deleted successfully!");window.location.href='/actors';}}else alert(d.error||"Deletion failed!");}}catch(e){{alert("Network communication error!");}}}}function actorPageNext(){{if(actNextOffset){{actCurPage++;actOffset=actNextOffset;triggerActorSearchAjax();window.scrollTo(0,350);}}}}function actorPagePrev(){{if(actCurPage>1){{actCurPage--;actOffset=Math.max(0,actOffset-actLimit);triggerActorSearchAjax();window.scrollTo(0,350);}}}}document.getElementById('actor_movie_q').addEventListener('keydown',function(e){{if(e.key==='Enter'){{clearTimeout(actMovieLiveTimer);resetActorSearchPage();triggerActorSearchAjax();}}}});var actMovieLiveTimer;document.getElementById('actor_movie_q').addEventListener('input',function(){{clearTimeout(actMovieLiveTimer);actMovieLiveTimer=setTimeout(function(){{resetActorSearchPage();triggerActorSearchAjax();}},350);}});</script>'''
     
-    return build_page(f"{actor_name} - Directory Profile", css_js_minified, "", "actors", role)
+    return build_page(f"{actor_name} - Directory Profile", ACTOR_FORM_CSS + css_js_minified + ACTOR_MEDIA_SCRIPT + PROFILE_FORM_JS, "", "actors", role)
 
 # ─────────────────────────────────────────────────────────
 # ⚙️ PROFILE PAGE: INTERNAL FILE SEARCH API
@@ -439,20 +541,8 @@ async def api_actor_search_handler(req):
     lim = MAX_WEB_RESULTS
     all_m, next_offset = await get_actor_search_results(search_query, final_tags, max_results=lim, offset=off, collection_type=col)
     
-    # ✅ FIXED API: Added 'caption' and 'raw_collection' safely to JSON response
-    results_list = [{
-        "file_id": d.get("_id"),
-        "name": d.get("file_name", "Unknown File"),
-        "caption": d.get("caption", ""),
-        "raw_collection": d.get("source_col", "primary"),
-        "size": get_size(d.get("file_size", 0)),
-        "duration": get_duration_str(d.get("duration")),  # ✅ web-only video duration
-        "res": doc_resolution_text(d),  # ✅ resolution chip (asli W×H — meta ya file_name se)
-        "type": d.get("file_type", "document").upper(),
-        "source": d.get("source_col", "primary").capitalize(),
-        "tg_thumb": f"/api/thumb?file_id={d.get('_id')}&col={d.get('source_col', 'primary')}&v={(d.get('thumb_url', '')[-8:] if str(d.get('thumb_url', '')).startswith('TG_ID:') else '0')}",
-        "watch": f"/setup_stream?file_id={d.get('file_ref') or d.get('_id')}&mode=watch"
-    } for d in all_m]
+    # Use the same thumbnail revision and file-reference logic as the dashboard.
+    results_list = await _annotate_raw_groups(_build_results_list(all_m, "tg"))
         
     return web.json_response({"results": results_list, "next_offset": next_offset}, dumps=fast_json)
 
@@ -463,17 +553,21 @@ async def api_actor_search_handler(req):
 async def api_actor_update_profile(req):
     role, _ = await get_auth(req)
     if role != 'admin': return web.json_response({"error": "Unauthorized"}, status=403, dumps=fast_json)
-    
-    d = await req.post()
-    actor_id, name, bio = d.get('actor_id'), d.get('name', '').strip(), d.get('bio', '').strip()
-    category = d.get('category', 'actor').strip()
-    if not actor_id or not name or not bio: return web.HTTPFound('/actors?err=Missing assets data')
-    
-    await actors.update_one({"_id": ObjectId(actor_id)}, {"$set": {
-        "name": name, "bio": bio, "category": category, "tags": [t.strip() for t in d.get('tags', '').strip().split(",") if t.strip()],
-        "social_links": {"instagram": _clean_link(d.get('insta', '')), "youtube": _clean_link(d.get('yt', '')), "twitter": _clean_link(d.get('twitter', ''))}
-    }})
-    return web.HTTPFound(f'/actor/{actor_id}?msg=Profile and Social Networks synced successfully!')
+    try:
+        d = await req.post()
+        actor_id, name, bio = d.get('actor_id'), d.get('name', '').strip(), d.get('bio', '').strip()
+        category = d.get('category', 'actor').strip()
+        if not actor_id or not name or not bio:
+            return _actor_result(req, '/actors', 'Name and biography are required.')
+        result = await actors.update_one({"_id": ObjectId(actor_id)}, {"$set": {
+            "name": name, "bio": bio, "category": category, "tags": [t.strip() for t in d.get('tags', '').strip().split(",") if t.strip()],
+            "social_links": {"instagram": _clean_link(d.get('insta', '')), "youtube": _clean_link(d.get('yt', '')), "twitter": _clean_link(d.get('twitter', ''))}
+        }})
+        if not result.matched_count:
+            return _actor_result(req, '/actors', 'Profile not found.', 404)
+        return _actor_result(req, f'/actor/{actor_id}?msg=Profile+updated+successfully!')
+    except Exception as e:
+        return _actor_result(req, '/actors', str(e) or 'Could not update the profile.', 500)
 
 # ─────────────────────────────────────────────────────────
 # ⚙️ PROFILE: UPDATE AVATAR
@@ -494,9 +588,13 @@ async def api_actor_update_avatar(req):
         if not msg or not msg.photo: return web.json_response({"success": False, "error": "Telegram upload failed"}, dumps=fast_json)
         tg_photo_id = msg.photo.sizes[-1].file_id if hasattr(msg.photo, "sizes") and msg.photo.sizes else msg.photo.file_id
         
-        # ✅ UPGRADE: डेटाबेस में अवतार चेंज होने पर परमानेंट 'is_actor_permanent: True' लॉक सिंक
-        await actors.update_one({"_id": ObjectId(data.get("actor_id"))}, {"$set": {"photo_url": f"TG_ID:{tg_photo_id}", "is_actor_permanent": True, "photo_updated_at": int(time.time())}})
-        return web.json_response({"success": True, "photo_updated_at": int(time.time())}, dumps=fast_json)
+        revision, updated_at = uuid.uuid4().hex, int(time.time())
+        result = await actors.update_one({"_id": ObjectId(data.get("actor_id"))}, {"$set": {
+            "photo_url": f"TG_ID:{tg_photo_id}", "is_actor_permanent": True,
+            "photo_updated_at": updated_at, "photo_revision": revision}})
+        if not result.matched_count:
+            return web.json_response({"success": False, "error": "Profile not found"}, status=404, dumps=fast_json)
+        return web.json_response({"success": True, "photo_updated_at": updated_at, "photo_revision": revision}, dumps=fast_json)
     except Exception as e: return web.json_response({"success": False, "error": str(e)}, dumps=fast_json)
 
 # ─────────────────────────────────────────────────────────
@@ -542,7 +640,7 @@ async def api_actor_gallery_upload(req):
         # stored as one ordered batch instead of overwriting earlier images.
         await actors.update_one(
             {"_id": ObjectId(actor_id)},
-            {"$push": {"gallery": {"$each": tg_photo_ids}}, "$set": {"is_gallery_permanent": True, "gallery_updated_at": int(time.time())}}
+            {"$push": {"gallery": {"$each": tg_photo_ids}}, "$set": {"is_gallery_permanent": True, "gallery_updated_at": int(time.time()), "gallery_revision": uuid.uuid4().hex}}
         )
         return web.HTTPFound(f'/actor/{actor_id}?msg={len(tg_photo_ids)} portrait(s) uploaded successfully to star gallery!')
     except Exception as e: return web.HTTPFound(f'/actors?err=System core crash: {str(e)}')
@@ -559,13 +657,10 @@ async def api_actor_gallery_delete(req):
         actor_id, index = body.get("actor_id"), body.get("index")
         if not actor_id or index is None:
             return web.json_response({"success": False, "error": "Missing actor_id/index"}, dumps=fast_json)
-        # ✅ DUPLICATION FIX: यह लॉजिक अब database/ia_filterdb.py के
-        # delete_gallery_image_by_index() से आता है (वही जगह जो पहले से मौजूद थी
-        # और $pull का सुरक्षित atomic तरीका इस्तेमाल करती है, यहाँ दोबारा
-        # find + manual splice + पूरा array $set नहीं लिखा गया)।
+        # The DB helper deletes one index using an atomic compare-and-set.
         ok = await delete_gallery_image_by_index(actor_id, int(index))
         if not ok:
-            return web.json_response({"success": False, "error": "Actor not found or index out of bounds"}, dumps=fast_json)
+            return web.json_response({"success": False, "error": "Profile or gallery changed. Refresh and try again."}, dumps=fast_json)
         return web.json_response({"success": True}, dumps=fast_json)
     except Exception as e: return web.json_response({"success": False, "error": str(e)}, dumps=fast_json)
 

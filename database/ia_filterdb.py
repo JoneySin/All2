@@ -3,6 +3,7 @@ import re
 import base64
 import asyncio
 import time
+import uuid
 from struct import pack
 from bson.objectid import ObjectId
 import motor.motor_asyncio
@@ -35,7 +36,7 @@ cloud   = db["Cloud"]
 archive = db["Archive"]
 actors  = db["Actors"]  # 🎭 एक्टर प्रोफाइल के लिए डेटाबेस कलेक्शन
 posts   = db["Posts"]   # 📝 नया पोस्ट्स (CMS) कलेक्शन
-groups  = db["QualityGroups"]      # 🗂️ एडमिन के क्वालिटी-ग्रुप (नाम, थंबनेल, members) — बॉट के "Groups" (chats) से अलग
+groups  = db["QualityGroups"]      # 🗂️ Quality/series groups; legacy collection name, separate from bot chats
 group_seq = db["QualityGroupSeq"]  # ग्रुप नंबर (1, 2, 3...) का counter
 
 COLLECTIONS = {
@@ -482,8 +483,8 @@ def _build_regex(query: str):
 # chahiye hoti hai (filter/dropdown ke liye), aur yeh sirf ~40 bytes/doc ka hai.
 # ─────────────────────────────────────────────────────────
 FILE_PROJECTION = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1,
-                   "file_ref": 1, "caption": 1, "thumb_url": 1, "duration": 1,
-                   "meta": 1, "group_id": 1}
+                   "file_ref": 1, "caption": 1, "thumb_url": 1, "thumb_revision": 1, "duration": 1,
+                   "meta": 1, "group_id": 1, "group_auto_excluded": 1}
 FILE_PROJECTION_SCORED = {**FILE_PROJECTION, "score": {"$meta": "textScore"}}
 
 # ─────────────────────────────────────────────────────────
@@ -936,7 +937,9 @@ async def get_file_details(file_id):
         return None
 
 GROUP_PROJECTION = {"name": 1, "num": 1, "members": 1, "auto_keys": 1, "excluded": 1,
-                    "thumb_fid": 1, "thumb_col": 1, "thumb_url": 1, "updated_at": 1}
+                    "group_type": 1, "episode_order": 1, "episode_labels": 1,
+                    "thumb_fid": 1, "thumb_col": 1, "thumb_url": 1, "thumb_revision": 1, "updated_at": 1,
+                    "scanned_at": 1}
 
 
 async def search_groups(query, limit=600):
@@ -1089,31 +1092,24 @@ async def delete_actor_profile(actor_id):
         return False
 
 async def delete_gallery_image_by_index(actor_id, index: int):
-    """गैलरी एरे में से स्पेसिफिक इंडेक्स वाली इमेज हटाता है।
+    """Remove exactly one gallery position and atomically change its URL revision.
 
-    ✅ FIX: पहले यह index से value निकालकर `$pull: {gallery: value}` करता था —
-    Telegram identical photos को एक ही file_id देता है, इसलिए duplicate होने पर
-    एक delete में सारी copies उड़ जाती थीं (या semantics गलत हो जाते थे)।
-    अब index-based delete का सही atomic तरीका: पहले उस position को `$unset`
-    (null बन जाता है), फिर null entries को `$pull` — सिर्फ़ वही एक element हटता है।
-
-    साथ ही `gallery_updated_at` bump होता है ताकि frontend की versioned image
-    URLs (&v=) बदल जाएँ और browser का 1-साल वाला immutable cache bust हो जाए।
+    Duplicate Telegram IDs must stay distinct. Compare the observed array when
+    writing so a concurrent upload/delete cannot silently remove the wrong item.
     """
     try:
         oid = ObjectId(actor_id)
-        doc = await actors.find_one({"_id": oid})
-        if not doc or "gallery" not in doc: return False
-        gallery = doc["gallery"]
-        if index < 0 or index >= len(gallery): return False
+        doc = await actors.find_one({"_id": oid}, {"gallery": 1})
+        gallery = (doc or {}).get("gallery")
+        if not isinstance(gallery, list) or index < 0 or index >= len(gallery):
+            return False
+        remaining = gallery[:index] + gallery[index + 1:]
         res = await actors.update_one(
-            {"_id": oid},
-            {"$unset": {f"gallery.{index}": 1}, "$set": {"gallery_updated_at": int(time.time())}},
+            {"_id": oid, "gallery": gallery},
+            {"$set": {"gallery": remaining, "gallery_updated_at": int(time.time()),
+                      "gallery_revision": uuid.uuid4().hex}},
         )
-        if not res.modified_count: return False
-        # $unset array element को null छोड़ता है — उसे निकालना ज़रूरी है
-        await actors.update_one({"_id": oid}, {"$pull": {"gallery": None}})
-        return True
+        return bool(res.matched_count)
     except Exception as e:
         logger.error(f"delete_gallery_image error: {e}")
         return False
