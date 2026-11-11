@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
  async function update(body){const r=await page.request.post(base+'/api/group/update',{data:body});assert.equal(r.status(),200,await r.text());}
  async function openFile(fid,mode='tg'){
    let f=page.locator('.file-card[data-fid="'+fid+'"]').first();await f.waitFor();
-   if(!await f.evaluate(e=>e.classList.contains('admin-active')))await f.locator('.file-actions-toggle').click();
+   if(mode==='tg'&&!await f.evaluate(e=>e.classList.contains('admin-active')))await f.locator('.file-poster-trigger').click();
    let b=f.locator(mode==='tg'?'.poster-admin button':'.text-admin-row button').filter({hasText:'Merge'});await b.click();
    await page.locator('#mergeModal').waitFor();return b;
  }
@@ -26,19 +26,29 @@ const assert = require('node:assert/strict');
  const series=page.locator('.grp-card').filter({hasText:'The Long Way Home'}).first();
  assert.equal(await page.locator('.grp-action').count(),0);
  assert.equal(await page.locator('.file-card .type-chip, .file-card .tc-type').count(),0);
- assert.equal(await page.locator('.file-card .poster-box .file-actions-toggle, .file-card .poster-box .file-menu').count(),0);
- const fileAction=page.locator('.file-card[data-fid="f1"] .file-actions-toggle');
+ assert.equal(await page.locator('.file-actions-toggle, .file-menu').count(),0);
+ const fileAction=page.locator('.file-card[data-fid="f1"] .file-poster-trigger');
  await fileAction.focus();await page.keyboard.press('Enter');
  assert.equal(await fileAction.getAttribute('aria-expanded'),'true');
  assert.equal(await page.locator('.file-card[data-fid="f1"] .poster-admin').isVisible(),true);
  assert.equal(await page.locator('#inlinePlayer').isHidden(),true);
  await page.keyboard.press('Enter');assert.equal(await fileAction.getAttribute('aria-expanded'),'false');
  assert.equal(await page.locator('.file-card[data-fid="f1"] .poster-admin').isVisible(),false);
+ await page.evaluate(()=>{window.__originalPlayer=window.openInlinePlayer;window.__played=0;window.openInlinePlayer=()=>window.__played++;});
+ const fileName=page.locator('.file-card[data-fid="f1"] .fc-name');
+ await fileName.click();await fileName.focus();await page.keyboard.press('Enter');
+ assert.equal(await page.evaluate(()=>window.__played),2);
+ await page.evaluate(()=>window.openInlinePlayer=window.__originalPlayer);
  assert.equal(await quality.locator('.grp-master .poster-top .dur-chip').textContent(),'0:03');
  assert.equal(await series.locator('.grp-master .poster-top .dur-chip').count(),0);
  assert.equal(await quality.locator('.grp-master .poster-top .grp-badge').textContent(),'3 QUALITY');
  assert.equal(await series.locator('.grp-master .poster-top .grp-badge').textContent(),'2 EPISODES');
  assert.ok((await quality.locator('.grp-master .poster-top .group-id-chip').textContent()).includes('#11'));
+ const groupPoster=quality.locator('.group-poster-trigger');await groupPoster.focus();await page.keyboard.press('Enter');
+ assert.equal(await groupPoster.getAttribute('aria-expanded'),'true');
+ assert.equal(await quality.locator('.grp-master .poster-admin').isVisible(),true);
+ assert.equal(await quality.evaluate(e=>e.classList.contains('open')),false);
+ await page.keyboard.press('Enter');assert.equal(await groupPoster.getAttribute('aria-expanded'),'false');
  await quality.locator('.grp-title-button').focus();await page.keyboard.press('Enter');
  assert.equal(await quality.evaluate(e=>e.classList.contains('open')),true);
  assert.equal(await quality.locator('.grp-title-button').getAttribute('aria-expanded'),'true');
@@ -47,12 +57,26 @@ const assert = require('node:assert/strict');
  assert.equal(await quality.locator('.grp-title-button').evaluate(e=>document.activeElement===e),true);
  await series.locator('.grp-title-button').click();assert.equal(await series.locator('.grp-variants .file-card').count(),2);
  const nested=series.locator('.grp-variants .file-card').first();
- assert.equal(await nested.locator('.poster-box .file-actions-toggle').count(),0);
- await nested.locator('.file-actions-toggle').click();
+ assert.equal(await nested.locator('.file-actions-toggle').count(),0);
+ await nested.locator('.file-poster-trigger').click();
  assert.equal(await nested.locator('.poster-admin').isVisible(),true);
- assert.equal(await nested.locator('.file-actions-toggle').getAttribute('aria-expanded'),'true');
+ assert.equal(await nested.locator('.file-poster-trigger').getAttribute('aria-expanded'),'true');
  assert.equal(await series.evaluate(e=>e.classList.contains('open')),true);
  await series.locator('.grp-openhead').click();
+ // A non-admin still plays by file name and opens by group name, without
+ // receiving any edit controls on the thumbnail.
+ await page.evaluate(()=>{
+   isAdminView=false;window.__originalPlayer=window.openInlinePlayer;window.__played=0;window.openInlinePlayer=()=>window.__played++;
+   const fixture=document.createElement('div');fixture.id='non-admin-cards';fixture.className='res-grid mode-tg';
+   fixture.innerHTML=cardHtml(FILE_DATA.f1,false)+groupHtml({...GROUP_DATA.m11,key:'non-admin-test'});document.body.appendChild(fixture);
+ });
+ const guestFile=page.locator('#non-admin-cards .file-card[data-fid="f1"]');
+ assert.equal(await guestFile.locator('.file-poster-trigger, .poster-admin').count(),0);
+ await guestFile.locator('.fc-name').click();assert.equal(await page.evaluate(()=>window.__played),1);
+ const guestGroup=page.locator('#non-admin-cards .grp-card');
+ assert.equal(await guestGroup.locator('.poster-admin').count(),0);
+ await guestGroup.locator('.grp-title-button').click();assert.equal(await guestGroup.evaluate(e=>e.classList.contains('open')),true);
+ await page.evaluate(()=>{document.getElementById('non-admin-cards').remove();isAdminView=true;window.openInlinePlayer=window.__originalPlayer;});
  await page.evaluate(()=>localStorage.setItem('ff_dashboard_mode','none'));await page.reload();
  await page.locator('.grp-card').first().waitFor();
  assert.equal(await page.locator('.grp-card').filter({hasText:'Aurora Rising'}).first().locator('.grp-textinfo .dur-chip').textContent(),'0:03');
@@ -232,24 +256,26 @@ const assert = require('node:assert/strict');
  assert.equal(await page.locator('#pgInfo').textContent(),'Page 1');assert.equal(offsets[offsets.length-1],'0');
  console.log('Pagination: empty-page Previous and fresh stored-cursor reset OK');
 
- // Actor cards use the same control below the thumbnail. Verify both modes,
- // keyboard access, edit, playback and absence of admin controls for users.
+ // Actor cards follow the same thumbnail/edit and name/play behavior. Text
+ // mode has no thumbnail, so admin editing controls are shown directly.
  await page.goto(base+'/fixture/actor-cards');
  for(const mode of ['tg','none']){
    await page.evaluate(mode=>showActorCard(mode,true),mode);
    const card=page.locator('#fixture-actor .file-card');
-   const toggle=card.locator('.file-actions-toggle');await toggle.waitFor();
-   assert.equal(await card.locator('.poster-box .file-actions-toggle, .file-menu').count(),0);
-   await toggle.focus();await page.keyboard.press('Enter');
-   assert.equal(await toggle.getAttribute('aria-expanded'),'true');
+   assert.equal(await card.locator('.file-actions-toggle, .file-menu').count(),0);
+   if(mode==='tg'){
+     const toggle=card.locator('.file-poster-trigger');await toggle.focus();await page.keyboard.press('Enter');
+     assert.equal(await toggle.getAttribute('aria-expanded'),'true');
+   }
    let edit=card.locator(mode==='tg'?'.poster-admin .btn-edit':'.text-admin-row .btn-edit');
    await edit.click();assert.equal(await page.locator('#emName').inputValue(),'Actor file');
    await page.evaluate(()=>closeCombinedModal());
    await page.evaluate(()=>{window.__actorPlayed=0;window.openInlinePlayer=()=>window.__actorPlayed++;});
-   await card.locator('.fc-name').click();assert.equal(await page.evaluate(()=>window.__actorPlayed),1);
+   const name=card.locator('.fc-name');await name.click();await name.focus();await page.keyboard.press('Enter');
+   assert.equal(await page.evaluate(()=>window.__actorPlayed),2);
    await page.evaluate(mode=>showActorCard(mode,false),mode);
-   assert.equal(await page.locator('#fixture-actor .file-actions-toggle').count(),0);
+   assert.equal(await page.locator('#fixture-actor .file-poster-trigger, #fixture-actor .text-admin-row').count(),0);
  }
- console.log('Actor cards: no dots on thumbnail; actions and playback work in both modes');
+ console.log('Actor cards: thumbnail edit and name playback work in poster and text modes');
  console.log('Page errors:',JSON.stringify(errors));assert.deepEqual(errors,[]);await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});

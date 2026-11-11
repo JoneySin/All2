@@ -108,8 +108,8 @@ CARD_CSS = """
 .grp-arrow{margin-left:auto;color:var(--muted);font-size:13px;transform:rotate(180deg)}
 .grp-card.open .grp-openhead{display:flex}
 .grp-card.open .grp-master{display:none}
-.grp-textadmin{display:none;gap:5px;padding-top:8px}
-.grp-card.grp-active .grp-textadmin{display:flex}
+.grp-textadmin{display:none;gap:5px;padding-top:8px;flex-wrap:wrap}
+.res-grid.mode-none .grp-textadmin{display:flex}
 .grp-card.grp-active .grp-master .poster-admin{opacity:1;visibility:visible;transform:translateY(0);pointer-events:all}
 .grp-title{cursor:pointer}
 .grp-openhead .grp-oadmin{display:flex;gap:5px}
@@ -308,7 +308,7 @@ function cardHtml(f,nested){
             var idChip = groupIdChip(f.group_num||f.gid);
             var epLabel = f.group_type==='series' ? (f.episode_label||(f.episode_position?'File '+f.episode_position:'')) : '';
             var epChip = epLabel ? '<span class="episode-chip">'+esc(epLabel)+'</span>' : '';
-            var menuBtn=isAdminView?'<button type="button" class="file-actions-toggle" aria-label="File actions" aria-expanded="false" onclick="toggleAdminBtns(this.closest(\\'.file-card\\'),event)">Actions</button>':'';
+            var posterTrigger=isAdminView?'<button type="button" class="file-poster-trigger" aria-label="Show file editing options" aria-expanded="false" onclick="toggleAdminBtns(this.closest(\\'.file-card\\'),event)"></button>':'';
 
             var posterHtml='';
             if(pMode!=='none'){
@@ -318,7 +318,7 @@ function cardHtml(f,nested){
                         idChip+epChip+'<span class="size-chip">'+f.size+'</span>'+
                         durChip+resChip+
                         '<span class="source-pill '+sc+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+
-                    '</div>'+
+                    '</div>'+posterTrigger+
                     adminBtns+
                 '</div>';
             }
@@ -339,11 +339,11 @@ function cardHtml(f,nested){
                 }
             }
 
-            return '<div class="file-card'+(nested?'':' card-enter')+(SEL[f.file_id]?' sel':'')+'" data-fid="'+esc(f.file_id)+'" role="button" tabindex="0" aria-label="Play '+esc(f.name)+'" onclick="playDashboardFile(this.getAttribute(\\'data-fid\\'),this)" onkeydown="if(event.target===this &amp;&amp; (event.key===\\'Enter\\' || event.key===\\' \\')){event.preventDefault();playDashboardFile(this.getAttribute(\\'data-fid\\'),this)}">'+
+            return '<div class="file-card'+(nested?'':' card-enter')+(SEL[f.file_id]?' sel':'')+'" data-fid="'+esc(f.file_id)+'">'+
                 posterHtml+
                 textInfo+
                 '<div class="fc-body">'+
-                    '<div class="fc-name" id="name-title-'+f.file_id+'">'+esc(f.name)+'</div>'+menuBtn+
+                    '<button type="button" class="fc-name" id="name-title-'+esc(f.file_id)+'" onclick="playDashboardFile(this.closest(\\'.file-card\\').getAttribute(\\'data-fid\\'),this.closest(\\'.file-card\\'))">'+esc(f.name)+'</button>'+
                 '</div>'+
             '</div>';
 }
@@ -390,14 +390,15 @@ function groupHtml(g){
     }
     var poster='';
     if(pMode!=='none'){
-        poster='<div class="poster-box" onclick="grpPoster(this,event)">'+
+        poster='<div class="poster-box">'+
             (g.tg_thumb?'<img src="'+g.tg_thumb+'" class="fc-poster" onload="this.classList.add(\\'loaded\\')" onerror="this.style.display=\\'none\\'" loading="lazy" decoding="async">':'')+
             '<div class="poster-top">'+idChip+kind+badge+dur+pill+'</div>'+
             '<div class="grp-bottom">'+chips+'</div>'+
+            '<button type="button" class="group-poster-trigger" aria-label="'+(isAdminView?'Show group editing options':'Open group')+'" aria-expanded="'+(!isAdminView&&open?'true':'false')+'" onclick="grpPoster(this,event)"></button>'+
             (isAdminView?'<div class="poster-admin">'+adm+'</div>':'')+
         '</div>';
     }
-    var textInfo='<div class="grp-textinfo" onclick="grpPoster(this,event)">'+idChip+kind+badge+dur+chips+pill+'</div>'+
+    var textInfo='<div class="grp-textinfo">'+idChip+kind+badge+dur+chips+pill+'</div>'+
         ((isAdminView&&pMode==='none')?'<div class="grp-textadmin">'+adm+'</div>':'');
     var inner='';
     g.variants.forEach(function(v){inner+=cardHtml(v,true);});
@@ -412,21 +413,25 @@ function groupHtml(g){
 /* Thumbnail click: admin ko edit popup, baaki users ke liye group khulta hai (title click se bhi khulta hai) */
 function grpPoster(el,e){
     var card=el.closest('.grp-card');
-    if(!isAdminView){toggleGroup(card);return;}
     e.stopPropagation();
+    if(!isAdminView){toggleGroup(card);return;}
     var was=card.classList.contains('grp-active');
-    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');});
-    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-actions-toggle');if(b)b.setAttribute('aria-expanded','false');});
-    if(!was)card.classList.add('grp-active');
+    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');var b=c.querySelector('.group-poster-trigger');if(b)b.setAttribute('aria-expanded','false');});
+    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-poster-trigger');if(b)b.setAttribute('aria-expanded','false');});
+    if(!was){card.classList.add('grp-active');el.setAttribute('aria-expanded','true');}
 }
 document.addEventListener('click',function(){
-    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');});
+    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');var b=c.querySelector('.group-poster-trigger');if(b)b.setAttribute('aria-expanded','false');});
 });
 function toggleGroup(el){
     var k=el.getAttribute('data-gk'),title=el.querySelector('.grp-title-button'),head=el.querySelector('.grp-openhead');
     var focusWasTitle=document.activeElement===title,focusWasHead=document.activeElement===head;
+    el.classList.remove('grp-active');
+    if(isAdminView){var trigger=el.querySelector('.group-poster-trigger');if(trigger)trigger.setAttribute('aria-expanded','false');}
+    el.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-poster-trigger');if(b)b.setAttribute('aria-expanded','false');});
     var isOpen=el.classList.toggle('open');
     if(title)title.setAttribute('aria-expanded',isOpen?'true':'false');
+    if(!isAdminView){var poster=el.querySelector('.group-poster-trigger');if(poster)poster.setAttribute('aria-expanded',isOpen?'true':'false');}
     if(isOpen){openGroups[k]=1;if(focusWasTitle&&head)head.focus();}
     else{delete openGroups[k];if(focusWasHead&&title)title.focus();}
 }

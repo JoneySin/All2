@@ -76,11 +76,10 @@ CSS = """
 /* --- Global Admin Edit Buttons --- */
 .poster-admin{position:absolute;bottom:0;left:0;right:0;display:flex;gap:6px;padding:7px 8px;opacity:0;visibility:hidden;transform:translateY(8px);transition:opacity .2s ease,transform .22s ease;pointer-events:none;z-index:4}
 .file-card.admin-active .poster-admin{opacity:1;visibility:visible;transform:translateY(0);pointer-events:all}
-.text-admin-row{display:none;gap:5px;padding:5px 11px 0;flex-wrap:wrap}
-.file-card.admin-active .text-admin-row{display:flex}
-.file-actions-toggle{align-self:flex-start;margin-top:8px;min-height:32px;padding:5px 10px;border:1px solid var(--border);border-radius:7px;background:var(--bg3);color:var(--text);font-family:inherit;font-size:11px;font-weight:700;line-height:1.2;cursor:pointer}
-.file-actions-toggle:focus-visible,.file-actions-toggle:hover{outline:2px solid var(--accent);outline-offset:2px}
-.file-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.text-admin-row{display:flex;gap:5px;padding:5px 11px 0;flex-wrap:wrap}
+.file-poster-trigger,.group-poster-trigger{position:absolute;inset:0;z-index:3;width:100%;height:100%;border:0;padding:0;background:transparent;cursor:pointer}
+.file-poster-trigger:focus-visible,.group-poster-trigger:focus-visible{outline:3px solid var(--accent);outline-offset:-4px}
+.fc-name:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .btn-edit,.btn-del{flex:1;padding:6px 0;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;transition:background .12s,transform .1s;border:none}
 .btn-edit{background:rgba(42,42,48,.90);backdrop-filter:blur(10px);color:#fff;border:1px solid rgba(255,255,255,.18)}
 .btn-edit:hover{background:rgba(80,80,88,.95)}
@@ -130,7 +129,7 @@ CSS = """
 .archive .source-dot{background:#fb923c;box-shadow:0 0 4px #fb923c}
 
 .fc-body{padding:10px 11px 12px;flex:1;display:flex;flex-direction:column;justify-content:center}
-.fc-name{color:var(--text);font-size:12.5px;font-weight:600;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer;transition:color .18s;text-decoration:none}
+.fc-name{color:var(--text);font-family:inherit;font-size:12.5px;font-weight:600;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer;transition:color .18s;text-decoration:none;text-align:left;border:0;padding:0;background:none}
 .fc-name:hover{color:var(--accent);text-decoration:underline;text-decoration-color:var(--accent);text-underline-offset:2px}
 
 .fc-text-info{display:flex;align-items:center;gap:6px;padding:10px 11px 0;flex-wrap:wrap;margin-bottom:4px}
@@ -203,13 +202,13 @@ function showToast(m,t){
 function toggleAdminBtns(card,e){
     if(e)e.stopPropagation();if(!card)return;
     var isActive=card.classList.contains('admin-active');
-    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');});
-    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-actions-toggle');if(b)b.setAttribute('aria-expanded','false');});
-    if(!isActive){card.classList.add('admin-active');var button=card.querySelector('.file-actions-toggle');if(button)button.setAttribute('aria-expanded','true');}
+    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');var b=c.querySelector('.group-poster-trigger');if(b)b.setAttribute('aria-expanded','false');});
+    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-poster-trigger');if(b)b.setAttribute('aria-expanded','false');});
+    if(!isActive){card.classList.add('admin-active');var button=card.querySelector('.file-poster-trigger');if(button)button.setAttribute('aria-expanded','true');}
 }
 
 document.addEventListener('click',function(){
-    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-actions-toggle');if(b)b.setAttribute('aria-expanded','false');});
+    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-poster-trigger');if(b)b.setAttribute('aria-expanded','false');});
 });
 
 async function deleteFile(fid,col){
