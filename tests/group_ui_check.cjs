@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
  async function update(body){const r=await page.request.post(base+'/api/group/update',{data:body});assert.equal(r.status(),200,await r.text());}
  async function openFile(fid,mode='tg'){
    let f=page.locator('.file-card[data-fid="'+fid+'"]').first();await f.waitFor();
-   if(mode==='tg'&&!await f.evaluate(e=>e.classList.contains('admin-active')))await f.locator('.file-poster-trigger').click();
+   if(!await f.evaluate(e=>e.classList.contains('admin-active')))await f.locator(mode==='tg'?'.file-poster-trigger':'.fc-text-info').click();
    let b=f.locator(mode==='tg'?'.poster-admin button':'.text-admin-row button').filter({hasText:'Merge'});await b.click();
    await page.locator('#mergeModal').waitFor();return b;
  }
@@ -87,6 +87,55 @@ const assert = require('node:assert/strict');
  assert.equal(await page.locator('.grp-card').filter({hasText:'Aurora Rising'}).first().locator('.grp-textinfo .dur-chip').textContent(),'0:03');
  assert.equal(await page.locator('.grp-card').filter({hasText:'The Long Way Home'}).first().locator('.grp-textinfo .dur-chip').count(),0);
  assert.equal(await page.locator('.file-card .type-chip, .file-card .tc-type').count(),0);
+ const textFile=page.locator('.file-card[data-fid="f1"]').first(),textGroup=page.locator('.grp-card').filter({hasText:'Aurora Rising'}).first();
+ assert.equal(await textFile.locator('.text-admin-row').isHidden(),true);
+ assert.equal(await textGroup.locator('.grp-master .grp-textadmin').isHidden(),true);
+ await textFile.locator('.fc-body').click({position:{x:2,y:2}});
+ assert.equal(await textFile.locator('.text-admin-row').isVisible(),true);
+ assert.equal(await textFile.getAttribute('aria-expanded'),'true');
+ assert.equal(await textGroup.locator('.grp-master .grp-textadmin').isHidden(),true);
+ await textGroup.locator('.grp-textinfo .grp-badge').click();
+ assert.equal(await textFile.locator('.text-admin-row').isHidden(),true);
+ assert.equal(await textGroup.locator('.grp-master .grp-textadmin').isVisible(),true);
+ assert.equal(await textGroup.locator('.grp-textinfo').getAttribute('aria-expanded'),'true');
+ await page.evaluate(()=>document.body.click());
+ assert.equal(await textGroup.locator('.grp-master .grp-textadmin').isHidden(),true);
+ await textFile.focus();await page.keyboard.press('Enter');assert.equal(await textFile.locator('.text-admin-row').isVisible(),true);
+ await page.keyboard.press('Enter');assert.equal(await textFile.locator('.text-admin-row').isHidden(),true);
+ await textGroup.locator('.grp-textinfo').focus();await page.keyboard.press('Enter');
+ assert.equal(await textGroup.locator('.grp-master .grp-textadmin').isVisible(),true);
+ await page.keyboard.press('Enter');assert.equal(await textGroup.locator('.grp-master .grp-textadmin').isHidden(),true);
+ await page.evaluate(()=>{window.__originalPlayer=window.openInlinePlayer;window.__played=0;window.openInlinePlayer=()=>window.__played++;});
+ await textFile.locator('.fc-name').click();assert.equal(await page.evaluate(()=>window.__played),1);
+ assert.equal(await textFile.locator('.text-admin-row').isHidden(),true);
+ await page.evaluate(()=>window.openInlinePlayer=window.__originalPlayer);
+ await textGroup.locator('.grp-title-button').focus();await page.keyboard.press('Enter');assert.equal(await textGroup.evaluate(e=>e.classList.contains('open')),true);
+ assert.equal(await textGroup.locator('.grp-open-title').evaluate(e=>document.activeElement===e),true);
+ assert.equal(await textGroup.locator('.grp-openhead .grp-oadmin').isHidden(),true);
+ await textGroup.locator('.grp-openhead .grp-badge').click();
+ assert.equal(await textGroup.locator('.grp-openhead .grp-oadmin').isVisible(),true);
+ const nestedText=textGroup.locator('.grp-variants .file-card').first();
+ assert.equal(await nestedText.locator('.text-admin-row').isHidden(),true);
+ await nestedText.locator('.fc-text-info').click();assert.equal(await nestedText.locator('.text-admin-row').isVisible(),true);
+ assert.equal(await textGroup.locator('.grp-openhead .grp-oadmin').isHidden(),true);
+ await textGroup.locator('.grp-open-title').click();assert.equal(await textGroup.evaluate(e=>e.classList.contains('open')),false);
+ await page.locator('#selFab').click();await textFile.locator('.fc-text-info').click();
+ assert.equal(await textFile.evaluate(e=>e.classList.contains('sel')),true);
+ assert.equal(await textFile.locator('.text-admin-row').isHidden(),true);
+ await textFile.focus();await page.keyboard.press('Enter');assert.equal(await textFile.evaluate(e=>e.classList.contains('sel')),false);
+ await textFile.locator('.fc-name').click();assert.equal(await textFile.evaluate(e=>e.classList.contains('sel')),true);
+ await page.locator('#selBar .alt').click();
+ await page.evaluate(()=>{
+   isAdminView=false;window.__originalPlayer=window.openInlinePlayer;window.__played=0;window.openInlinePlayer=()=>window.__played++;
+   const fixture=document.createElement('div');fixture.id='non-admin-text';fixture.className='res-grid mode-none';
+   fixture.innerHTML=cardHtml(FILE_DATA.f1,false)+groupHtml({...GROUP_DATA.m11,key:'guest-text'});document.body.appendChild(fixture);
+ });
+ const guestText=page.locator('#non-admin-text');
+ assert.equal(await guestText.locator('.text-admin-row, .grp-textadmin, .grp-oadmin').count(),0);
+ await guestText.locator('.file-card .fc-name').first().click();assert.equal(await page.evaluate(()=>window.__played),1);
+ await guestText.locator('.grp-title-button').click();assert.equal(await guestText.locator('.grp-card').evaluate(e=>e.classList.contains('open')),true);
+ await guestText.locator('.grp-open-title').click();assert.equal(await guestText.locator('.grp-card').evaluate(e=>e.classList.contains('open')),false);
+ await page.evaluate(()=>{document.getElementById('non-admin-text').remove();isAdminView=true;window.openInlinePlayer=window.__originalPlayer;});
  await page.evaluate(()=>localStorage.setItem('ff_dashboard_mode','tg'));await page.reload();await page.locator('.grp-card').first().waitFor();
  console.log('Card UI: name/keyboard opening, IDs, quality duration, no series duration or type chip OK');
  let trigger=await openFile('f1');
@@ -261,8 +310,7 @@ const assert = require('node:assert/strict');
  assert.equal(await page.locator('#pgInfo').textContent(),'Page 1');assert.equal(offsets[offsets.length-1],'0');
  console.log('Pagination: empty-page Previous and fresh stored-cursor reset OK');
 
- // Actor cards follow the same thumbnail/edit and name/play behavior. Text
- // mode has no thumbnail, so admin editing controls are shown directly.
+ // Actor cards follow the same click-to-reveal and name/play behavior.
  await page.goto(base+'/fixture/actor-cards');
  for(const mode of ['tg','none']){
    await page.evaluate(mode=>showActorCard(mode,true),mode);
@@ -271,6 +319,11 @@ const assert = require('node:assert/strict');
    if(mode==='tg'){
      const toggle=card.locator('.file-poster-trigger');await toggle.focus();await page.keyboard.press('Enter');
      assert.equal(await toggle.getAttribute('aria-expanded'),'true');
+   }else{
+     assert.equal(await card.locator('.text-admin-row').isHidden(),true);
+     await card.focus();await page.keyboard.press('Enter');
+     assert.equal(await card.getAttribute('aria-expanded'),'true');
+     assert.equal(await card.locator('.text-admin-row').isVisible(),true);
    }
    let edit=card.locator(mode==='tg'?'.poster-admin .btn-edit':'.text-admin-row .btn-edit');
    await edit.click();assert.equal(await page.locator('#emName').inputValue(),'Actor file');

@@ -96,18 +96,22 @@ CARD_CSS = """
 .grp-chip i{font-style:normal;color:#e0f2fe;opacity:1;margin-left:2px}
 .grp-body{padding:12px 12px 13px}
 .grp-title{color:var(--text);font-size:12.5px;font-weight:600;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.grp-title-button{width:100%;padding:0;border:0;background:none;font-family:inherit;text-align:left;cursor:pointer}
+.grp-title-button{width:fit-content;max-width:100%;padding:0;border:0;background:none;font-family:inherit;text-align:left;cursor:pointer}
 .grp-title-button:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:2px}
 .grp-card.open .grp-title{-webkit-line-clamp:unset}
 .grp-textinfo{display:none;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
 .res-grid.mode-none .grp-textinfo{display:flex}
 .grp-openhead{display:none;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;cursor:pointer}
-.grp-openhead .grp-title{flex:1;min-width:140px}
+.grp-openhead .grp-title{min-width:0}
 .grp-arrow{margin-left:auto;color:var(--muted);font-size:13px;transform:rotate(180deg)}
 .grp-card.open .grp-openhead{display:flex}
 .grp-card.open .grp-master{display:none}
 .grp-textadmin{display:none;gap:5px;padding-top:8px;flex-wrap:wrap}
-.res-grid.mode-none .grp-textadmin{display:flex}
+.res-grid.mode-none .grp-card.grp-active .grp-master .grp-textadmin{display:flex}
+.res-grid.mode-none .grp-openhead .grp-oadmin{display:none}
+.res-grid.mode-none .grp-card.grp-active .grp-openhead .grp-oadmin{display:flex}
+.grp-open-title{flex:0 1 auto;width:fit-content;max-width:100%;padding:0;border:0;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.grp-open-title:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .grp-card.grp-active .grp-master .poster-admin{opacity:1;visibility:visible;transform:translateY(0);pointer-events:all}
 .grp-title{cursor:pointer}
 .grp-openhead .grp-oadmin{display:flex;gap:5px}
@@ -337,7 +341,8 @@ function cardHtml(f,nested){
                 }
             }
 
-            return '<div class="file-card'+(nested?'':' card-enter')+(SEL[f.file_id]?' sel':'')+'" data-fid="'+esc(f.file_id)+'">'+
+            var textControl=isAdminView&&pMode==='none'?' role="button" tabindex="0" aria-label="Show file editing options" aria-expanded="false" onclick="textFileClick(this,event)" onkeydown="textFileKey(this,event)"':'';
+            return '<div class="file-card'+(nested?'':' card-enter')+(SEL[f.file_id]?' sel':'')+(textControl?' text-file-trigger':'')+'" data-fid="'+esc(f.file_id)+'"'+textControl+'>'+
                 posterHtml+
                 textInfo+
                 '<div class="fc-body">'+
@@ -395,15 +400,19 @@ function groupHtml(g){
             (isAdminView?'<div class="poster-admin">'+adm+'</div>':'')+
         '</div>';
     }
-    var textInfo='<div class="grp-textinfo">'+idChip+badge+dur+chips+pill+'</div>'+
+    var textTrigger=isAdminView&&pMode==='none'?' role="button" tabindex="0" aria-label="Show group editing options" aria-expanded="false" onkeydown="textGroupKey(this.closest(\\'.grp-card\\'),event)"':'';
+    var textInfo='<div class="grp-textinfo"'+textTrigger+'>'+idChip+badge+dur+chips+pill+'</div>'+
         ((isAdminView&&pMode==='none')?'<div class="grp-textadmin">'+adm+'</div>':'');
     var inner='';
     g.variants.forEach(function(v){inner+=cardHtml(v,true);});
-    return '<div class="grp-card card-enter'+open+'" data-gk="'+g.key+'">'+
+    var textCard=isAdminView&&pMode==='none';
+    var textCardClick=textCard?' onclick="textGroupClick(this,event)"':'';
+    var headControl=textCard?' data-text-trigger role="button" tabindex="0" aria-label="Show group editing options" aria-expanded="false" onkeydown="textGroupKey(this.closest(\\'.grp-card\\'),event)"':' role="button" tabindex="0" aria-label="Collapse group" onclick="toggleGroup(this.parentNode)" onkeydown="if(event.target===this &amp;&amp; (event.key===\\'Enter\\' || event.key===\\' \\')){event.preventDefault();toggleGroup(this.parentNode)}"';
+    return '<div class="grp-card card-enter'+open+'" data-gk="'+g.key+'"'+textCardClick+'>'+
         '<div class="grp-master">'+poster+
             '<div class="grp-body"><button type="button" class="grp-title grp-title-button" aria-expanded="'+(open?'true':'false')+'" aria-controls="gv-'+esc(g.key)+'" onclick="event.stopPropagation();toggleGroup(this.closest(\\'.grp-card\\'))">'+g.title+'</button>'+textInfo+'</div>'+
         '</div>'+
-        '<div class="grp-openhead" role="button" tabindex="0" aria-label="Collapse group" onclick="toggleGroup(this.parentNode)" onkeydown="if(event.target===this &amp;&amp; (event.key===\\'Enter\\' || event.key===\\' \\')){event.preventDefault();toggleGroup(this.parentNode)}">'+idChip+badge+dur+'<div class="grp-title">'+g.title+'</div>'+(isAdminView?'<span class="grp-oadmin">'+adm+'</span>':'')+'<span class="grp-arrow">&#9662;</span></div>'+
+        '<div class="grp-openhead"'+headControl+'>'+idChip+badge+dur+'<button type="button" class="grp-title grp-open-title" onclick="event.stopPropagation();toggleGroup(this.closest(\\'.grp-card\\'))">'+g.title+'</button>'+(isAdminView?'<span class="grp-oadmin">'+adm+'</span>':'')+'<span class="grp-arrow">&#9662;</span></div>'+
         '<div class="grp-variants" id="gv-'+esc(g.key)+'">'+inner+'</div>'+
     '</div>';
 }
@@ -413,23 +422,31 @@ function grpPoster(el,e){
     e.stopPropagation();
     if(!isAdminView){toggleGroup(card);return;}
     var was=card.classList.contains('grp-active');
-    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');var b=c.querySelector('.group-poster-trigger');if(b)b.setAttribute('aria-expanded','false');});
-    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-poster-trigger');if(b)b.setAttribute('aria-expanded','false');});
-    if(!was){card.classList.add('grp-active');el.setAttribute('aria-expanded','true');}
+    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){setGroupMenu(c,false);});
+    document.querySelectorAll('.file-card.admin-active').forEach(function(c){setFileMenu(c,false);});
+    if(!was)setGroupMenu(card,true);
+}
+function textGroupClick(card,e){
+    if(e.target.closest('.file-card,.grp-title-button,.grp-open-title,.grp-textadmin,.grp-oadmin'))return;
+    grpPoster(card,e);
+}
+function textGroupKey(card,e){
+    if(e.target!==e.currentTarget||!(e.key==='Enter'||e.key===' '))return;
+    e.preventDefault();grpPoster(card,e);
 }
 document.addEventListener('click',function(){
-    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');var b=c.querySelector('.group-poster-trigger');if(b)b.setAttribute('aria-expanded','false');});
+    document.querySelectorAll('.grp-card.grp-active').forEach(function(c){setGroupMenu(c,false);});
 });
 function toggleGroup(el){
     var k=el.getAttribute('data-gk'),title=el.querySelector('.grp-title-button'),head=el.querySelector('.grp-openhead');
-    var focusWasTitle=document.activeElement===title,focusWasHead=document.activeElement===head;
-    el.classList.remove('grp-active');
-    if(isAdminView){var trigger=el.querySelector('.group-poster-trigger');if(trigger)trigger.setAttribute('aria-expanded','false');}
-    el.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');var b=c.querySelector('.file-poster-trigger');if(b)b.setAttribute('aria-expanded','false');});
+    var openTitle=el.querySelector('.grp-open-title');
+    var focusWasTitle=document.activeElement===title,focusWasHead=document.activeElement===head||document.activeElement===openTitle;
+    if(isAdminView)setGroupMenu(el,false);
+    el.querySelectorAll('.file-card.admin-active').forEach(function(c){setFileMenu(c,false);});
     var isOpen=el.classList.toggle('open');
     if(title)title.setAttribute('aria-expanded',isOpen?'true':'false');
     if(!isAdminView){var poster=el.querySelector('.group-poster-trigger');if(poster)poster.setAttribute('aria-expanded',isOpen?'true':'false');}
-    if(isOpen){openGroups[k]=1;if(focusWasTitle&&head)head.focus();}
+    if(isOpen){openGroups[k]=1;if(focusWasTitle&&head)(head.hasAttribute('data-text-trigger')?openTitle:head).focus();}
     else{delete openGroups[k];if(focusWasHead&&title)title.focus();}
 }
 
