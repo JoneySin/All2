@@ -10,8 +10,11 @@ import zlib
 import uuid
 import html as _html
 import asyncio
+import base64
 import logging
 import urllib.parse
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta
 from functools import wraps
 from lru import LRU
 from aiohttp import web
@@ -23,14 +26,16 @@ from utils import temp, get_size, is_premium, get_duration_str
 from stream_security import sign_params, STREAM_TTL
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
-from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, get_files_by_ids, find_phrase_files, search_groups, get_groups_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
+from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, group_search_cursors, get_files_by_ids, find_phrase_files, search_groups, get_groups_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
 from media_probe import probe_telegram_file, should_probe_media
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
 # ✅ DRY: fast_json भी अब web_assets से ही आता है (पहले search_api/actor_routes/
 # post_routes तीनों में इसकी अलग-अलग copy थी)।
 from web.web_assets import get_auth as web_get_auth, fast_json, DEFAULT_MEDIA_MODE
-from web.grouping import GROUP_TYPES, group_type, order_series
+from web.grouping import (AUTO_QUALITY_MAX, AUTO_SERIES_MAX, GROUP_TYPES,
+                          auto_group_plan, duration_seconds, episode_identity, group_type,
+                          order_series, quality_title_key, series_key, series_title)
 
 logger = logging.getLogger(__name__)
 
@@ -368,7 +373,8 @@ def _build_results_list(all_m, mode):
             "size": get_size(d.get("file_size", 0)),
             # ✅ NEW: video duration (e.g. "1:02:03"). Purani/unindexed files me duration
             # 0 hota hai, tab khali string jaati hai aur UI me chip ban hi nahi.
-            "duration": get_duration_str(d.get("duration")),
+            "duration": get_duration_str(duration_seconds(d)),
+            "duration_seconds": duration_seconds(d),
             # ✅ NEW: resolution chip — asli resolution jaisa "1280×720"
             # (koi "720p"/"1080p" guess nahi). meta.w/h se, warna file_name se
             # (purani files) — kuch pata na chale to khali, chip ban hi nahi.
@@ -454,94 +460,188 @@ def _quality_label(res_text, name=""):
 # Naam alag hone par jo files auto-group nahi hoti, admin unhe khud ek group me jod sakta hai.
 # Ye DB (Groups collection) me save rehta hai, isliye baar-baar grouping nahi karni padti.
 # Manual membership hamesha auto-grouping se upar chalti hai.
-async def _manual_map(items, joins=None, blocked=None):
-    """Resolve explicit members first, then eligible same-name additions.
+def _row_id(row):
+    return row.get("file_id") or row.get("_id")
 
-    An admin-excluded file must not form another automatic group with the same
-    key or be re-added in a later scan/search. `blocked` carries that decision
-    through page counting and sibling expansion as well.
+
+def _row_name(row):
+    return str(row.get("name") or row.get("file_name") or "")
+
+
+def _file_auto_keys(name):
+    """Include old keys so saved groups remain discoverable without a migration."""
+    keys = {_group_key(name), quality_title_key(name)}
+    if episode_identity(name):
+        keys.add(series_key(name))
+    return {key for key in keys if key}
+
+
+def _stored_auto_keys(group):
+    keys = set()
+    for value in group.get("auto_keys") or []:
+        value = str(value or "")
+        if value:
+            keys.update((value, quality_title_key(value)))
+            if episode_identity(value):
+                keys.add(series_key(value))
+    if keys:
+        # Older keys flattened brackets, making uploader tags impossible to
+        # remove afterwards. Stored filenames provide safe aliases; live
+        # member metadata is still required before anything can join.
+        for item in group.get("files") or []:
+            if isinstance(item, dict):
+                keys.update(_file_auto_keys(item.get("name") or ""))
+    return {key for key in keys if key}
+
+
+def _join_compatible(group, incoming, members):
+    """Fail closed when any live member is missing or incompatible."""
+    ids = list(dict.fromkeys(group.get("members") or []))
+    if not ids or any(fid not in members for fid in ids):
+        return False
+    name = _row_name(incoming)
+    episode = episode_identity(name)
+    if group_type(group) == "series":
+        key = series_key(name) if episode else ""
+        return bool(key) and all(episode_identity(_row_name(members[fid]))
+                                 and series_key(_row_name(members[fid])) == key for fid in ids)
+    key, seconds = quality_title_key(name), duration_seconds(incoming)
+    return bool(key and seconds) and all(
+        quality_title_key(_row_name(members[fid])) == key
+        and duration_seconds(members[fid]) == seconds
+        and episode_identity(_row_name(members[fid])) == episode for fid in ids)
+
+
+async def _manual_map(items, joins=None, blocked=None, strict=False):
+    """Resolve saved members, then only compatible automatic additions.
+
+    The indexed legacy keys may contain an episode or release suffix. Anchored
+    first-word lookups find those old documents; all candidates are checked
+    against *every* live member before an optimistic association is returned.
     """
-    items = [(i, n) for i, n in items if i]
+    rows = []
+    for item in items:
+        if isinstance(item, dict):
+            row = item
+        else:  # Older internal callers may supply (file_id, name).
+            row = {"file_id": item[0], "name": item[1]}
+        if _row_id(row):
+            rows.append(row)
     out = {}
-    if not items:
+    if not rows:
         return out
-    ids = {i for i, _ in items}
-    keys = list({k for k in (_group_key(n) for _, n in items) if k})
+    ids = {_row_id(row) for row in rows}
+    keys = set().union(*(_file_auto_keys(_row_name(row)) for row in rows))
+    # Existing auto_keys were built from full filenames. Match title words even
+    # when legacy release words appear between them ("show web dl name").
+    def legacy_prefix(key):
+        words = key.split()[:12]
+        if not words or len(words[0]) < 2:
+            return None
+        # Independent lookaheads avoid pathological backtracking on long or
+        # attacker-controlled filenames. Compatibility is checked afterwards.
+        return re.compile("^" + re.escape(words[0]) + r"(?=\s|$)" + "".join(
+            r"(?=.*\s" + re.escape(word) + r"(?=\s|$))" for word in words[1:]))
+    prefixes = {pattern for key in keys if (pattern := legacy_prefix(key))}
     try:
         cond = [{"members": {"$in": list(ids)}}]
         if keys:
-            cond.append({"auto_keys": {"$in": keys}})
+            cond.append({"auto_keys": {"$in": list(keys | prefixes)}})
         found = [g async for g in groups.find({"$or": cond})]
-        by_key = {}
-        for g in found:
-            for k in g.get("auto_keys", []):
-                by_key.setdefault(k, []).append(g)
-            for m in g.get("members", []):
-                if m in ids:
-                    out[m] = g
-        for i, n in items:
-            if i in out or (blocked is not None and i in blocked):
+        by_key = defaultdict(list)
+        for group in found:
+            for key in _stored_auto_keys(group):
+                by_key[key].append(group)
+            for fid in group.get("members") or []:
+                if fid in ids:
+                    out[fid] = group
+        candidates = [row for row in rows if _row_id(row) not in out]
+        if not candidates or not by_key:
+            return out
+        candidate_keys = set().union(*(_file_auto_keys(_row_name(row)) for row in candidates))
+        relevant = {str(group["_id"]): group for key in candidate_keys for group in by_key.get(key, [])}
+        if not relevant:
+            return out
+        member_ids = {fid for group in relevant.values() for fid in (group.get("members") or [])}
+        live, exclusions = await _live_group_files(member_ids | {_row_id(row) for row in candidates})
+        if blocked is not None:
+            blocked.update(exclusions)
+        for row in candidates:
+            fid = _row_id(row)
+            if fid not in live or fid in exclusions or (blocked is not None and fid in blocked):
                 continue
-            matches = by_key.get(_group_key(n), [])
+            matches, seen = [], set()
+            for key in _file_auto_keys(_row_name(live[fid])):
+                for group in by_key.get(key, []):
+                    gid = str(group["_id"])
+                    if gid not in seen:
+                        seen.add(gid)
+                        matches.append(group)
             # A deliberate removal wins even if another group shares this key.
-            if any(i in (g.get("excluded") or []) for g in matches):
+            if any(fid in (group.get("excluded") or []) for group in matches):
                 if blocked is not None:
-                    blocked.add(i)
+                    blocked.add(fid)
                 continue
-            if matches:
-                g = matches[0]
-                out[i] = g
-                if joins is not None:
-                    joins.append((str(g["_id"]), i, n))
+            matches.sort(key=lambda group: (group_type(group) != "series", str(group["_id"])))
+            for group in matches:
+                if _join_compatible(group, live[fid], live):
+                    out[fid] = group
+                    if joins is not None:
+                        joins.append((str(group["_id"]), fid, _row_name(live[fid])))
+                    break
     except Exception as e:
         logger.warning(f"manual group lookup failed: {e}")
+        if strict:
+            raise
     return out
 
 
-def _bucket_key(file_id, name, manual, blocked=None):
-    """Saved group > explicit exclusion > conservative automatic name key."""
-    g = manual.get(file_id)
-    if g:
-        return "m:" + str(g["_id"])
-    if blocked and file_id in blocked:
-        return "s:" + str(file_id)
-    k = _group_key(name)
-    return ("a:" + k) if k else ("s:" + str(file_id))
-
-
 def group_results(results, manual=None, blocked=None):
-    """Build cards without mutating cached input; legacy groups default to quality."""
+    """Build cards without mutating inputs; saved groups keep even one member."""
     manual = manual or {}
-    order, buckets, bucket_ids = [], {}, {}
-    for r in results:
-        k = _bucket_key(r.get("file_id"), r.get("name"), manual, blocked)
-        if k.startswith("s:"):
-            order.append(("single", r))
+    blocked = set(blocked or ())
+    rows, seen = [], set()
+    for row in results:
+        fid = _row_id(row)
+        if row.get("group_auto_excluded") and fid:
+            blocked.add(fid)
+        if fid and fid in seen:
+            continue  # multiple collections can contain the same Telegram file
+        if fid:
+            seen.add(fid)
+        rows.append(row)
+
+    plans = auto_group_plan([row for row in rows if _row_id(row) not in manual], blocked)
+    automatic = {}
+    for index, plan in enumerate(plans):
+        for fid, _ in plan["items"]:
+            automatic[fid] = index
+    order, buckets = [], {}
+    for row in rows:
+        fid = _row_id(row)
+        if fid in manual:
+            key = ("saved", str(manual[fid]["_id"]))
+        elif fid in automatic:
+            key = ("auto", automatic[fid])
+        else:
+            order.append(("single", row))
             continue
-        if k not in buckets:
-            buckets[k] = []
-            bucket_ids[k] = set()
-            order.append(("group", k))
-        fid = r.get("file_id")
-        if fid and fid in bucket_ids[k]:
-            continue  # the same Telegram file can be indexed in multiple collections
-        bucket_ids[k].add(fid)
-        buckets[k].append(r)
+        if key not in buckets:
+            buckets[key] = []
+            order.append(("group", key))
+        buckets[key].append(row)
 
     out = []
-    for kind, v in order:
+    for kind, bucket in order:
         if kind == "single":
-            out.append(v)
+            out.append(bucket)
             continue
-        items = buckets[v]
-        mg = manual.get(items[0].get("file_id")) if v.startswith("m:") else None
-        # A saved group can have one remaining member; keep it editable and numbered.
-        if len(items) == 1 and not mg:
-            out.append(items[0])
-            continue
+        items = buckets[bucket]
+        mg = manual.get(_row_id(items[0])) if bucket[0] == "saved" else None
+        plan = plans[bucket[1]] if not mg else None
         gid = str(mg["_id"]) if mg else ""
         num = (mg.get("num") or gid) if mg else ""
-        gtype = group_type(mg)
+        gtype = group_type(mg) if mg else plan["kind"]
         variants = []
         for it in items:
             lab, height = _quality_label(it.get("res"), it.get("name"))
@@ -583,14 +683,18 @@ def group_results(results, manual=None, blocked=None):
             title = _html.escape(str(mg.get("name") or ""))
             key = "m" + gid
         else:
-            title = _html.escape(_group_title(items[0].get("name")) or str(items[0].get("name") or ""))
-            key = f"{zlib.crc32(v.encode('utf-8')):08x}"
+            name = _row_name(items[0])
+            title = _html.escape((series_title(name) if gtype == "series" else _group_title(name)) or name)
+            identity = (gtype, plan["key"], plan.get("seconds", 0), plan.get("episode", ""))
+            key = f"{zlib.crc32(repr(identity).encode('utf-8')):08x}"
+        runtimes = [duration_seconds(item) for item in vlist if duration_seconds(item)]
+        common_duration = Counter(runtimes).most_common(1)[0][0] if runtimes else 0
         out.append({
             "group": True,
             "group_type": gtype,
             "manual": bool(mg),
             "gid": gid,
-            "nkey": "" if mg else v[2:],
+            "nkey": "" if mg else plan["key"],
             "num": num,
             "custom_thumb": bool(mg and mg.get("thumb_url")),
             "key": key,
@@ -599,7 +703,7 @@ def group_results(results, manual=None, blocked=None):
             "type": rep.get("type", "VIDEO"),
             "tg_thumb": thumb,
             "thumb_fid": (mg.get("thumb_fid") or "") if mg else "",
-            "duration": rep.get("duration", "") if gtype == "quality" else "",
+            "duration": get_duration_str(common_duration) if gtype == "quality" else "",
             "size": rep.get("size", ""),
             "source": rep.get("raw_collection", "primary"),
             "sources": [c for c in ("primary", "cloud", "archive")
@@ -630,24 +734,18 @@ async def _fetch_page(q, col, off, lim, group, gf="all", exclude_grouped=False):
     if not group:
         return await raw_fetch(off, lim)
 
-    batch = lim * 4
+    batch = max(lim * 4, 4)
     hops_max = 4 if gf == "all" else 12
     raw, cur, more, manual, blocked = [], off, True, {}, set()
 
-    def kof(d):
-        return _bucket_key(d.get("_id"), d.get("file_name"), manual, blocked)
-
-    def count_buckets(rows):
-        unique = {}
-        for d in rows:
-            unique.setdefault(kof(d), set()).add(d.get("_id"))
-        cnt = {k: len(ids) for k, ids in unique.items()}
-        for d in rows:                       # saved group = hamesha "group" (uski baaki files bhi dikhengi)
-            g = manual.get(d.get("_id"))
-            if g:
-                k = kof(d)
-                cnt[k] = max(cnt[k], len(g.get("members", [])))
-        return cnt
+    def selected(card):
+        if gf == "group":
+            return bool(card.get("group"))
+        if gf in ("quality", "series"):
+            return bool(card.get("group")) and card.get("group_type") == gf
+        if gf == "single":
+            return not card.get("group")
+        return True
 
     for _hop in range(hops_max):
         docs, nxt = await raw_fetch(cur, batch)
@@ -656,45 +754,30 @@ async def _fetch_page(q, col, off, lim, group, gf="all", exclude_grouped=False):
             break
         raw.extend(docs)
         blocked.update(d.get("_id") for d in docs if d.get("group_auto_excluded"))
-        manual.update(await _manual_map([(d.get("_id"), d.get("file_name")) for d in docs], blocked=blocked))
+        manual.update(await _manual_map(docs, blocked=blocked))
         more = bool(nxt)
-        cur = nxt if nxt != "" else None
-
-        cnt = count_buckets(raw)
-        bucket_groups = {kof(d): manual[d["_id"]] for d in raw if d.get("_id") in manual}
-
-        def ok(k):
-            is_group = k.startswith("m:") or cnt[k] >= 2
-            if gf == "group":
-                return is_group
-            if gf in ("quality", "series"):
-                if not is_group:
-                    return False
-                return group_type(bucket_groups.get(k)) == gf
-            if gf == "single":
-                return not is_group
-            return True
-
-        keys, cut = set(), None
-        for i, d in enumerate(raw):
-            k = kof(d)
-            if not ok(k):
-                continue
-            if k not in keys:
-                if len(keys) >= lim:
-                    cut = i
-                    break
-                keys.add(k)
-        if cut is not None:
-            return [d for d in raw[:cut] if ok(kof(d))], off + cut
+        cur = nxt if more else None
+        cards = group_results(_build_results_list(raw, "none"), manual, blocked)
+        ids_by_card = [[v.get("file_id") for v in card["variants"]] if card.get("group")
+                       else [card.get("file_id")] for card in cards]
+        card_for_id = {fid: index for index, ids in enumerate(ids_by_card) for fid in ids}
+        accepted = [index for index, card in enumerate(cards) if selected(card)]
+        if len(accepted) > lim:
+            omitted = accepted[lim]
+            cut = next(i for i, doc in enumerate(raw) if card_for_id.get(doc.get("_id")) == omitted)
+            chosen = set(accepted[:lim])
+            # Keep all known members of a selected auto bucket even when its
+            # remaining rows occur after the page boundary.
+            return [doc for i, doc in enumerate(raw)
+                    if card_for_id.get(doc.get("_id")) in chosen
+                    and (i < cut or cards[card_for_id[doc["_id"]]].get("group"))], off + cut
         if not more:
             break
 
-    scanned = len(raw)
-    cnt = count_buckets(raw)
-    if raw and gf != "all":
-        raw = [d for d in raw if ok(kof(d))]
-    return raw, (off + scanned if more else "")
+    cards = group_results(_build_results_list(raw, "none"), manual, blocked)
+    allowed = {v.get("file_id") for card in cards if selected(card)
+               for v in (card.get("variants") if card.get("group") else [card])}
+    return [doc for doc in raw if doc.get("_id") in allowed], (off + len(raw) if more else "")
 
 
 GROUP_RESCAN_SECS = 6 * 3600     # saved group ko itni der me ek baar hi naye saathi ke liye scan karte hain
@@ -732,68 +815,85 @@ async def _mark_files(ids, gid, expected_gid=None, suppress_auto=False, strict=F
 
 
 async def _live_group_files(ids):
-    """Re-read names and exclusions from every file collection, in bounded batches.
+    """Strictly re-read canonical names, durations and exclusions from all copies.
 
-    A Telegram file ID can appear in several collections. Its first copy in
-    primary/cloud/archive order supplies the canonical name, while an explicit
-    auto-group exclusion in any copy must be respected. Unlike the ordinary
-    display lookup, a failed collection read aborts this write-side check.
+    The first collection supplies the name. A known runtime on another copy can
+    fill an unknown one, but conflicting positive runtimes are treated as unknown
+    so they cannot accidentally create or join a quality group.
     """
     ids = list(dict.fromkeys(i for i in ids if i))
-    names, blocked = {}, set()
+    rows, runtimes, blocked = {}, defaultdict(set), set()
     for start in range(0, len(ids), 1000):
         batch = ids[start:start + 1000]
         for col in FILE_COLLECTIONS.values():
-            async for d in col.find({"_id": {"$in": batch}}, {"file_name": 1, "group_auto_excluded": 1}):
-                fid = d["_id"]
-                names.setdefault(fid, str(d.get("file_name") or ""))
-                if d.get("group_auto_excluded"):
+            projection = {"file_name": 1, "duration": 1, "duration_seconds": 1, "group_auto_excluded": 1}
+            async for doc in col.find({"_id": {"$in": batch}}, projection):
+                fid = doc["_id"]
+                rows.setdefault(fid, {"_id": fid, "file_name": str(doc.get("file_name") or "")})
+                seconds = duration_seconds(doc)
+                if seconds:
+                    runtimes[fid].add(seconds)
+                if doc.get("group_auto_excluded"):
                     blocked.add(fid)
-    return names, blocked
+    for fid, row in rows.items():
+        values = runtimes[fid]
+        row["duration_seconds"] = next(iter(values)) if len(values) == 1 else 0
+        row["duration"] = row["duration_seconds"]
+    return rows, blocked
 
 
-async def _persist_joins(joins):
+async def _persist_joins(joins, strict=False):
     """Serialize automatic joins with administrative membership changes."""
     async with _AUTO_GROUP_LOCK:
-        return await _persist_joins_locked(joins)
+        return await _persist_joins_locked(joins, strict=strict)
 
 
-async def _persist_joins_locked(joins):
-    """Persist new same-name members without undoing an admin removal/move."""
+async def _persist_joins_locked(joins, strict=False):
+    """Recheck ownership, exclusions, filenames and all member metadata at write time."""
     accepted, blocked = set(), set()
     try:
         by = {}
-        for gid, i, n in joins:
-            by.setdefault(gid, {})[i] = n
-        all_ids = list({i for candidates in by.values() for i in candidates})
-        fresh, blocked = await _live_group_files(all_ids)
+        for gid, fid, name in joins:
+            by.setdefault(str(gid), {})[fid] = name
+        fresh, blocked = await _live_group_files({fid for candidates in by.values() for fid in candidates})
         for gid, candidates in by.items():
-            g = await groups.find_one({"_id": gid}, {"excluded": 1, "auto_keys": 1})
-            if not g:
+            group = await groups.find_one({"_id": gid})
+            if not group:
                 continue
+            member_meta, _ = await _live_group_files(group.get("members") or [])
             claimed = set()
             async for other in groups.find({"_id": {"$ne": gid}, "members": {"$in": list(candidates)}}, {"members": 1}):
                 claimed.update(other.get("members") or [])
-            excluded = set(g.get("excluded") or [])
-            blocked.update(i for i in candidates if i in excluded)
-            keys = set(g.get("auto_keys") or [])
-            items = {i: fresh[i] for i in candidates if i in fresh and i not in blocked
-                     and i not in excluded and i not in claimed and _group_key(fresh[i]) in keys}
+            excluded = set(group.get("excluded") or [])
+            blocked.update(fid for fid in candidates if fid in excluded)
+            keys = _stored_auto_keys(group)
+            items = {fid: row for fid, row in fresh.items() if fid in candidates and fid not in blocked
+                     and fid not in excluded and fid not in claimed
+                     and keys.intersection(_file_auto_keys(_row_name(row)))
+                     and _join_compatible(group, row, member_meta)}
             if not items:
                 continue
             ids = list(items)
-            # If an admin excluded a member since the read, skip this batch. A later
-            # search can retry the remaining members safely.
-            result = await groups.update_one({"_id": gid, "excluded": {"$nin": ids}}, {"$addToSet": {
+            # The exact member list, type and keys guard against edits by another
+            # worker between our read and write as well as against exclusions.
+            flt = {"_id": gid, "members": group.get("members", []), "excluded": {"$nin": ids}}
+            for field in ("group_type", "auto_keys"):
+                flt[field] = group[field] if field in group else {"$exists": False}
+            added_keys = set().union(*(_file_auto_keys(_row_name(row)) for row in items.values()))
+            result = await groups.update_one(flt, {"$addToSet": {
                 "members": {"$each": ids},
-                "files": {"$each": [{"id": i, "name": n or ""} for i, n in items.items()]}}})
+                "files": {"$each": [{"id": fid, "name": _row_name(row)} for fid, row in items.items()]},
+                "auto_keys": {"$each": sorted(added_keys)}}})
             if result.matched_count:
-                accepted.update((gid, i) for i in ids)
-                await _mark_files(ids, gid, only_unassigned=True)
+                accepted.update((gid, fid) for fid in ids)
+                await _mark_files(ids, gid, only_unassigned=True, strict=strict)
                 logger.info(f"🗂️ Group #{gid}: {len(ids)} new file(s) added")
-        _GH_CACHE.clear()
+        if accepted:
+            _GH_CACHE.clear()
     except Exception as e:
         logger.warning(f"persist group joins failed: {e}")
+        if strict:
+            raise
     return accepted, blocked
 
 
@@ -834,56 +934,66 @@ def _serialize_group_writes(handler):
     return wrapped
 
 
-async def _auto_persist(cards):
-    """Save auto-groups before returning them, so the first response has a real ID.
+async def _auto_persist(cards, scan=False):
+    """Revalidate and save automatic groups before returning their real IDs.
 
-    Return resolved memberships and exclusions. On database failure cards remain
-    usable but unnumbered rather than displaying a fabricated ID.
+    An unavailable database leaves a usable, unnumbered virtual card; a changed
+    filename or runtime is instead reflected in the response and re-partitioned.
     """
-    resolved, blocked = {}, set()
+    resolved, blocked, fresh = {}, set(), {}
+    stats = {"created": 0, "added": 0}
     async with _AUTO_GROUP_LOCK:
-        ids = list({v["file_id"] for c in cards for v in c.get("variants", []) if v.get("file_id")})
+        ids = list(dict.fromkeys(v["file_id"] for card in cards
+                                 for v in card.get("variants", []) if v.get("file_id")))
         try:
             fresh, blocked = await _live_group_files(ids)
-        except Exception as e:
-            logger.warning(f"auto group recheck failed: {e}")
-            return resolved, blocked
-        for c in cards:
-            k = c.get("nkey")
-            if not k:
-                continue
-            try:
-                card_ids = dict.fromkeys(v.get("file_id") for v in c.get("variants", []) if v.get("file_id"))
-                items = [(i, fresh[i]) for i in card_ids if i in fresh and _group_key(fresh[i]) == k]
-                joins = []
-                existing = await _manual_map(items, joins, blocked)
-                if joins:
-                    accepted, excluded = await _persist_joins_locked(joins)
-                    blocked.update(excluded)
-                    await _confirm_joined_members(existing, joins, accepted)
-                resolved.update(existing)
-                remaining = [(i, n) for i, n in items if i not in existing and i not in blocked]
-                if len(remaining) < 2 or await groups.find_one({"auto_keys": k}, {"_id": 1}):
-                    continue
-                ids = [i for i, _ in remaining]
+            blocked.update(fid for fid in ids if fid not in fresh)
+            joins = []
+            resolved = await _manual_map([fresh[fid] for fid in ids if fid in fresh], joins, blocked, strict=True)
+            if joins:
+                accepted, excluded = await _persist_joins_locked(joins, strict=scan)
+                blocked.update(excluded)
+                stats["added"] = len(accepted)
+                await _confirm_joined_members(resolved, joins, accepted)
+
+            # Membership can change after a search snapshot. Never make a second
+            # group for a file that an admin or another request has already claimed.
+            for start in range(0, len(ids), 1000):
+                async for group in groups.find({"members": {"$in": ids[start:start + 1000]}}):
+                    for fid in group.get("members") or []:
+                        if fid in fresh:
+                            resolved[fid] = group
+
+            remaining = [fresh[fid] for fid in ids if fid in fresh and fid not in resolved and fid not in blocked]
+            for plan in auto_group_plan(remaining, blocked):
+                entries = plan["items"]
+                member_ids = [fid for fid, _ in entries]
+                name = _row_name(entries[0][1])
+                title = series_title(name) if plan["kind"] == "series" else _group_title(name)
                 num = await _next_group_num()
-                gid = str(num)
-                now = int(time.time())
+                gid, now = str(num), int(time.time())
+                keys = set().union(*(_file_auto_keys(_row_name(row)) for _, row in entries))
                 group = {
-                    "_id": gid, "num": num, "name": (_group_title(remaining[0][1]) or remaining[0][1])[:200],
-                    "members": ids, "files": [{"id": i, "name": n} for i, n in remaining],
-                    "auto_keys": [k], "excluded": [], "auto_created": True, "group_type": "quality",
-                    "thumb_fid": "", "thumb_col": "", "thumb_url": "",
+                    "_id": gid, "num": num, "name": (title or name)[:200],
+                    "members": member_ids, "files": [{"id": fid, "name": _row_name(row)} for fid, row in entries],
+                    "auto_keys": sorted(keys), "excluded": [], "auto_created": True,
+                    "group_type": plan["kind"], "thumb_fid": "", "thumb_col": "", "thumb_url": "",
                     "scanned_at": now, "created_at": now, "updated_at": now,
                 }
+                if scan:
+                    group["scan_created"] = True
                 await groups.insert_one(group)
-                await _mark_files(ids, gid)
-                resolved.update({i: group for i in ids})
+                await _mark_files(member_ids, gid, only_unassigned=True, strict=scan)
+                resolved.update({fid: group for fid in member_ids})
+                stats["created"] += 1
+                logger.info(f"🗂️ Auto {plan['kind']} group #{gid} saved ({len(member_ids)} files)")
+            if stats["created"] or stats["added"]:
                 _GH_CACHE.clear()
-                logger.info(f"🗂️ Auto group #{gid} saved ({len(ids)} files)")
-            except Exception as e:
-                logger.warning(f"auto group persist failed: {e}")
-    return resolved, blocked
+        except Exception as e:
+            logger.warning(f"auto group persist failed: {e}")
+            if scan:
+                raise
+    return resolved, blocked, fresh, stats
 
 
 _SIB_CACHE = {}
@@ -891,18 +1001,19 @@ _SIB_TTL = 300
 
 
 async def _siblings(key):
-    """Is naam-key wali SAARI files (search se independent). 5 min cache."""
+    """Find bounded title/series candidates independently of the search query."""
     now = time.time()
-    c = _SIB_CACHE.get(key)
-    if c and c[0] > now:
-        return c[1]
+    cached = _SIB_CACHE.get(key)
+    if cached and cached[0] > now:
+        return cached[1]
     epoch = _SEARCH_CACHE_EPOCH
     try:
-        docs = await asyncio.wait_for(find_phrase_files(key, 100), timeout=4)
+        docs = await asyncio.wait_for(find_phrase_files(key, AUTO_SERIES_MAX + 1), timeout=4)
     except Exception as e:
         logger.warning(f"siblings lookup failed for '{key}': {e}")
         return None
-    docs = [d for d in docs if _group_key(d.get("file_name")) == key]
+    docs = [doc for doc in docs if quality_title_key(doc.get("file_name")) == key
+            or (episode_identity(doc.get("file_name")) and series_key(doc.get("file_name")) == key)]
     if epoch == _SEARCH_CACHE_EPOCH:
         if len(_SIB_CACHE) > 800:
             _SIB_CACHE.clear()
@@ -911,96 +1022,87 @@ async def _siblings(key):
 
 
 async def _expand_groups(results_list, manual, mode, joins=None, siblings=True, blocked=None):
-    """Group kabhi adhoora nahi dikhna chahiye. Isliye:
-    (1) Saved group ki saari members (kisi bhi collection se, search se match ho ya na ho)
-    (2) Har group/file ki same-naam wali baaki saari files (auto-group ki siblings;
-        saved group ke auto_keys wali nayi quality bhi) — search query kuch bhi ho, count same."""
-    have = {r.get("file_id") for r in results_list}
+    """Expand saved members and find compatible title/episode siblings."""
+    have = {row.get("file_id") for row in results_list}
     results_list = list(results_list)
-
-    # (1) saved-group members
-    need, seen_g = [], set()
-    for g in list(manual.values()):
-        if g["_id"] in seen_g:
+    need, seen_groups = [], set()
+    for group in list(manual.values()):
+        if group["_id"] in seen_groups:
             continue
-        seen_g.add(g["_id"])
-        for m in g.get("members", []):
-            if m not in have:
-                need.append((m, g))
+        seen_groups.add(group["_id"])
+        for fid in group.get("members") or []:
+            if fid not in have:
+                need.append((fid, group))
     if need:
         try:
-            docs = await get_files_by_ids([m for m, _ in need])
-            owner = {m: g for m, g in need}
+            docs = await get_files_by_ids([fid for fid, _ in need])
+            owner = {fid: group for fid, group in need}
             extra = _build_results_list(docs, mode)
-            for r in extra:
-                manual[r["file_id"]] = owner[r["file_id"]]
-                have.add(r["file_id"])
+            for row in extra:
+                manual[row["file_id"]] = owner[row["file_id"]]
+                have.add(row["file_id"])
             results_list += extra
         except Exception as e:
             logger.warning(f"group expand failed: {e}")
 
     if not siblings:
         return results_list
-    # (2) same-naam siblings.
-    #     Saved group ko DB me `scanned_at` se yaad rehta hai: ek baar scan hone ke baad
-    #     GROUP_RESCAN_SECS tak dobara scan nahi hota (members DB se hi aate hain).
-    #     Scan me jo nayi file mile wo turant group ke members me DB me jud jaati hai.
     try:
         joins = joins if joins is not None else []
         now = time.time()
-        targets, key_groups = {}, {}
-        for r in results_list:
-            g = manual.get(r.get("file_id"))
-            if g:
-                if (g.get("scanned_at") or 0) + GROUP_RESCAN_SECS > now:
-                    continue
-                for k in (g.get("auto_keys") or [])[:6]:
-                    targets.setdefault(k, g)
-                    key_groups.setdefault(g["_id"], set()).add(k)
-            elif not blocked or r.get("file_id") not in blocked:
-                k = _group_key(r.get("name"))
-                if k:
-                    targets.setdefault(k, None)
-        keys = list(targets)[:40]
+        targets, key_groups = set(), defaultdict(set)
+        for row in results_list:
+            fid, name = row.get("file_id"), _row_name(row)
+            group = manual.get(fid)
+            if group and ((group.get("scanned_at") or 0) + GROUP_RESCAN_SECS > now
+                          or not group.get("auto_keys")):
+                continue
+            if not group and blocked and fid in blocked:
+                continue
+            if not episode_identity(name) and not duration_seconds(row):
+                continue  # an unknown-runtime movie cannot form a safe auto group
+            keys = {quality_title_key(name)}
+            if episode_identity(name):
+                keys.add(series_key(name))
+            keys.discard("")
+            targets.update(keys)
+            if group:
+                key_groups[group["_id"]].update(keys)
+        keys = sorted(targets)[:40]
         if keys:
-            sibs = await asyncio.gather(*[_siblings(k) for k in keys])
-            sib_of = dict(zip(keys, sibs))
-            cand = {}
-            for k, docs in sib_of.items():
-                owner = targets[k]
-                for d in (docs or []):
-                    i = d["_id"]
-                    if i in have or i in cand:
-                        continue
-                    if owner and i in (owner.get("excluded") or []):
-                        continue
-                    cand[i] = (d, owner)
-            if cand:
-                if blocked is not None:
-                    blocked.update(i for i, (d, _) in cand.items() if d.get("group_auto_excluded"))
-                m2 = await _manual_map([(i, d.get("file_name")) for i, (d, _) in cand.items()], blocked=blocked)
+            sibling_rows = await asyncio.gather(*[_siblings(key) for key in keys])
+            sib_of = dict(zip(keys, sibling_rows))
+            candidates = {}
+            for docs in sibling_rows:
+                for doc in docs or []:
+                    fid = doc["_id"]
+                    if blocked is not None and doc.get("group_auto_excluded"):
+                        blocked.add(fid)
+                    if fid not in have:
+                        candidates.setdefault(fid, doc)
+            if candidates:
+                possible_joins = []
+                owners = await _manual_map(list(candidates.values()), possible_joins, blocked)
                 use = []
-                for i, (d, owner) in cand.items():
-                    if blocked and i in blocked:
+                for fid, doc in candidates.items():
+                    if blocked and fid in blocked:
                         continue
-                    g2 = m2.get(i)
+                    owner = owners.get(fid)
+                    if owner and owner["_id"] not in seen_groups:
+                        continue  # Do not pull another saved group into this result.
                     if owner:
-                        if g2 and g2["_id"] != owner["_id"]:
-                            continue
-                        manual[i] = owner
-                        joins.append((str(owner["_id"]), i, d.get("file_name")))
-                    elif g2:
-                        continue                      # kisi saved group ki hai, auto-sibling nahi
-                    use.append(d)
-                if use:
-                    results_list += _build_results_list(use, mode)
-            done = [gid for gid, ks in key_groups.items()
-                    if all(k in sib_of and sib_of[k] is not None for k in ks)]
+                        manual[fid] = owner
+                    use.append(doc)
+                used = {doc["_id"] for doc in use}
+                joins.extend(join for join in possible_joins if join[1] in used)
+                results_list += _build_results_list(use, mode)
+            done = [gid for gid, wanted in key_groups.items()
+                    if wanted and all(key in sib_of and sib_of[key] is not None for key in wanted)]
             if done:
                 asyncio.create_task(_mark_scanned(done))
-                for g in manual.values():
-                    if g["_id"] in done:
-                        g["scanned_at"] = int(now)
+                for group in manual.values():
+                    if group["_id"] in done:
+                        group["scanned_at"] = int(now)
     except Exception as e:
         logger.warning(f"sibling expand failed: {e}")
     return results_list
@@ -1030,30 +1132,62 @@ async def _annotate_raw_groups(results_list):
         return results_list  # Keep any file-level marks when MongoDB is unavailable.
 
 
+async def _refresh_group_rows(rows, blocked, ids):
+    """Use the same cross-collection metadata as the write-side safety check."""
+    ids = {fid for fid in ids if fid}
+    if not ids:
+        return rows, set()
+    try:
+        fresh, exclusions = await _live_group_files(ids)
+        blocked.update(exclusions)
+        updated = [dict(row, name=_row_name(fresh[row["file_id"]]),
+                        duration_seconds=duration_seconds(fresh[row["file_id"]]),
+                        duration=get_duration_str(duration_seconds(fresh[row["file_id"]])))
+                   if row.get("file_id") in fresh else row for row in rows]
+        return updated, set(fresh)
+    except Exception as exc:
+        logger.warning(f"group metadata lookup failed: {exc}")
+        return rows, set()
+
+
 async def _finalize(results_list, want_group, gf="all", mode=DEFAULT_MEDIA_MODE, siblings=True):
     if not want_group:
         return await _annotate_raw_groups(results_list)
+    anchors = {row.get("file_id") for row in results_list if row.get("file_id")}
     joins = []
-    blocked = {r.get("file_id") for r in results_list if r.get("group_auto_excluded")}
-    manual = await _manual_map([(r.get("file_id"), r.get("name")) for r in results_list], joins, blocked)
+    blocked = {row.get("file_id") for row in results_list if row.get("group_auto_excluded")}
+    results_list, checked = await _refresh_group_rows(results_list, blocked, anchors)
+    manual = await _manual_map(results_list, joins, blocked)
     results_list = await _expand_groups(results_list, manual, mode, joins, siblings, blocked)
+    added_ids = {row.get("file_id") for row in results_list} - checked
+    results_list, _ = await _refresh_group_rows(results_list, blocked, added_ids)
     if joins:
         accepted, excluded = await _persist_joins(joins)
         blocked.update(excluded)
         await _confirm_joined_members(manual, joins, accepted)
     out = group_results(results_list, manual, blocked)
-    autos = [r for r in out if r.get("group") and not r.get("manual")]
+    autos = [row for row in out if row.get("group") and not row.get("manual")]
     if autos:
-        saved, newly_blocked = await _auto_persist(autos)
+        saved, newly_blocked, fresh, _ = await _auto_persist(autos)
         manual.update(saved)
         blocked.update(newly_blocked)
+        if fresh:
+            # Do not show a group based on a stale filename or runtime.
+            results_list = [dict(row, name=_row_name(fresh[row["file_id"]]),
+                                 duration_seconds=duration_seconds(fresh[row["file_id"]]),
+                                 duration=get_duration_str(duration_seconds(fresh[row["file_id"]])))
+                            if row.get("file_id") in fresh else row for row in results_list]
+        results_list = await _expand_groups(results_list, manual, mode, siblings=False, blocked=blocked)
         out = group_results(results_list, manual, blocked)
+    # Sibling lookups provide context, not unrelated additional search results.
+    out = [row for row in out if (any(v.get("file_id") in anchors for v in row.get("variants", []))
+                                  if row.get("group") else row.get("file_id") in anchors)]
     if gf == "group":
-        out = [r for r in out if r.get("group")]
+        out = [row for row in out if row.get("group")]
     elif gf in ("quality", "series"):
-        out = [r for r in out if r.get("group") and r.get("group_type") == gf]
+        out = [row for row in out if row.get("group") and row.get("group_type") == gf]
     elif gf == "single":
-        out = [r for r in out if not r.get("group")]
+        out = [row for row in out if not row.get("group")]
     return out
 
 
@@ -1109,7 +1243,9 @@ async def _group_cards(page_groups, mode):
             if d:
                 ordered.append(d)
                 manual[m] = g
-    return group_results(_build_results_list(ordered, mode), manual)
+    rows = _build_results_list(ordered, mode)
+    rows, _ = await _refresh_group_rows(rows, set(), {row.get("file_id") for row in rows})
+    return group_results(rows, manual)
 
 
 async def _grouped_first_page(q, off, lim, mode, gf, gs):
@@ -1143,6 +1279,215 @@ async def _grouped_first_page(q, off, lim, mode, gf, gs):
     return cards + file_cards, ((G + nf) if nf != "" else "")
 
 
+_GROUP_CURSOR_PREFIX = "g1_"
+_GROUP_CURSOR_STORED_PREFIX = "g2_"
+_GROUP_CURSOR_INLINE_LIMIT = 3200  # Leave room for the URL, query and proxy limits.
+_GROUP_CURSOR_INLINE_RAW_LIMIT = 131072
+_GROUP_CURSOR_RAW_LIMIT = 4_000_000
+_GROUP_CURSOR_SEEN_LIMIT = 100_000
+_GROUP_CURSOR_TTL = 2 * 60 * 60
+
+
+class _GroupCursorStorageError(RuntimeError):
+    pass
+
+
+class _GroupCursorLimitError(RuntimeError):
+    pass
+
+
+def _cursor_context(q, col, gf):
+    return hashlib.sha256(json.dumps([q.lower(), col, gf], ensure_ascii=False).encode()).hexdigest()[:20]
+
+
+def _validate_group_cursor(state, context):
+    # _group_hits() takes at most 600 direct hits and 600 member-file hits.
+    if (not isinstance(state, dict) or state.get("v") != 1 or state.get("ctx") != context
+            or not isinstance(state.get("groups"), list) or len(state["groups"]) > 1200
+            or not isinstance(state.get("seen"), list) or len(state["seen"]) > _GROUP_CURSOR_SEEN_LIMIT
+            or any(not isinstance(item, str) or len(item) > 256 for item in state["groups"] + state["seen"])
+            or not isinstance(state.get("gp"), int) or not 0 <= state["gp"] <= len(state["groups"])
+            or not isinstance(state.get("fp"), int) or not 0 <= state["fp"] <= 100000000):
+        raise ValueError("Invalid cursor data")
+
+
+async def _encode_group_cursor(state):
+    """Keep small cursors in the URL; store larger immutable snapshots in MongoDB.
+
+    A short random token works across workers and is safe to reuse for Back and
+    prefetch. TTL cleanup bounds how long old snapshots occupy the database.
+    """
+    try:
+        _validate_group_cursor(state, state.get("ctx"))
+    except ValueError as exc:
+        raise _GroupCursorLimitError from exc
+    payload = json.dumps(state, separators=(",", ":"), ensure_ascii=False).encode()
+    if len(payload) > _GROUP_CURSOR_RAW_LIMIT:
+        raise _GroupCursorLimitError
+    compressed = zlib.compress(payload, 6)
+    inline = _GROUP_CURSOR_PREFIX + base64.urlsafe_b64encode(compressed).decode().rstrip("=")
+    if len(inline) <= _GROUP_CURSOR_INLINE_LIMIT and len(payload) <= _GROUP_CURSOR_INLINE_RAW_LIMIT:
+        return inline
+    token = uuid.uuid4().hex
+    try:
+        await group_search_cursors.insert_one({
+            "_id": token, "payload": compressed,
+            "expires_at": datetime.utcnow() + timedelta(seconds=_GROUP_CURSOR_TTL),
+        })
+    except Exception as exc:
+        logger.warning(f"group pagination snapshot write failed: {exc}")
+        raise _GroupCursorStorageError from exc
+    return _GROUP_CURSOR_STORED_PREFIX + token
+
+
+async def _decode_group_cursor(value, context):
+    """Read a bounded, query-specific continuation token; offsets are opaque to the UI."""
+    try:
+        if value.startswith(_GROUP_CURSOR_PREFIX) and len(value) <= 48000:
+            encoded = value[len(_GROUP_CURSOR_PREFIX):]
+            compressed = base64.b64decode(encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True)
+            limit = _GROUP_CURSOR_INLINE_RAW_LIMIT
+        elif re.fullmatch(r"g2_[0-9a-f]{32}", value):
+            try:
+                stored = await group_search_cursors.find_one({
+                    "_id": value[len(_GROUP_CURSOR_STORED_PREFIX):],
+                    "expires_at": {"$gt": datetime.utcnow()},
+                })
+            except Exception as exc:
+                logger.warning(f"group pagination snapshot read failed: {exc}")
+                raise _GroupCursorStorageError from exc
+            if not stored:
+                raise ValueError("Expired group pagination cursor")
+            compressed = bytes(stored["payload"])
+            limit = _GROUP_CURSOR_RAW_LIMIT
+        else:
+            raise ValueError("Invalid group pagination cursor")
+        decoder = zlib.decompressobj()
+        payload = decoder.decompress(compressed, limit + 1)
+        if len(payload) > limit or decoder.unconsumed_tail or decoder.unused_data or not decoder.eof:
+            raise ValueError("Cursor too large or incomplete")
+        state = json.loads(payload)
+        _validate_group_cursor(state, context)
+        return state
+    except (ValueError, TypeError, KeyError, zlib.error) as exc:
+        raise ValueError("Invalid or expired group pagination cursor.") from exc
+
+
+def _card_cursor_token(card):
+    if card.get("group"):
+        return "g:" + str(card.get("gid") or card.get("key") or "")
+    fid = str(card.get("file_id") or "")
+    return "f:" + hashlib.blake2s(fid.encode(), digest_size=16).hexdigest()
+
+
+async def _grouped_cursor_page(q, col, offset, lim, mode, gf):
+    """Page a stable raw-file stream, with saved groups first for all-source search.
+
+    The cursor records which groups have already appeared. Raw positions never
+    depend on group_id marks, so saving a new group between page requests cannot
+    shift the file stream or skip unrelated files.
+    """
+    context = _cursor_context(q, col, gf)
+    value = str(offset or "0")
+    if value.startswith((_GROUP_CURSOR_PREFIX, _GROUP_CURSOR_STORED_PREFIX)):
+        state = await _decode_group_cursor(value, context)
+    else:
+        try:
+            legacy_offset = max(0, int(value))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid group pagination offset.") from exc
+        found = await _group_hits(q) if q and col == "all" else []
+        found = found or []
+        if gf in ("quality", "series"):
+            found = [group for group in found if group_type(group) == gf]
+        group_ids = list(dict.fromkeys(str(group["_id"]) for group in found if group.get("_id")))
+        gp = min(legacy_offset, len(group_ids))
+        state = {"v": 1, "ctx": context, "groups": group_ids, "gp": gp,
+                 "fp": max(0, legacy_offset - len(group_ids)),
+                 "seen": ["g:" + gid for gid in group_ids[:gp]]}
+
+    seen = set(state["seen"])
+    cards = []
+    positions = {}
+
+    def remember(token):
+        seen.add(token)
+
+    def save_seen():
+        # Keep every seen fingerprint, including copies separated by many
+        # pages. Large snapshots use a short, expiring database-backed cursor.
+        state["seen"] = sorted(seen)
+
+    def eligible(card):
+        if gf == "group":
+            return bool(card.get("group"))
+        if gf in ("quality", "series"):
+            return bool(card.get("group")) and card.get("group_type") == gf
+        return True
+
+    # The group-first list is captured once per search, rather than changing
+    # when automatic groups are persisted on later pages.
+    while state["gp"] < len(state["groups"]) and len(cards) < lim:
+        wanted = state["groups"][state["gp"]:state["gp"] + max(1, lim - len(cards))]
+        page_groups = await get_groups_by_ids(wanted)
+        state["gp"] += len(wanted)
+        for card in await _group_cards(page_groups, mode):
+            token = _card_cursor_token(card)
+            if token not in seen and eligible(card):
+                positions[token] = len(cards)
+                cards.append(card)
+                remember(token)
+    if state["gp"] < len(state["groups"]):
+        save_seen()
+        return cards, await _encode_group_cursor(state)
+
+    async def raw_fetch(pos, count):
+        if not q:
+            return await get_recent_files(count, offset=pos, collection_type=col)
+        docs, nxt, _, _ = await get_search_results(q, count, offset=pos, collection_type=col, bypass_count=True)
+        return docs, nxt
+
+    # The finite hop cap keeps a selective group filter responsive on a very
+    # large library; a continuation may legitimately lead to an empty page.
+    more = False
+    for _ in range(4 if gf == "all" else 12):
+        pos = state["fp"]
+        docs, nxt = await raw_fetch(pos, max(lim * 2, 16))
+        if not docs:
+            more = False
+            break
+        by_id = {}
+        for index, doc in enumerate(docs):
+            by_id.setdefault(doc.get("_id"), index)
+        results = await _finalize(_build_results_list(docs, mode), True, "all", mode, siblings=True)
+        for card in results:
+            ids = [variant.get("file_id") for variant in card.get("variants", [])] if card.get("group") else [card.get("file_id")]
+            anchor = min((by_id[fid] for fid in ids if fid in by_id), default=None)
+            if anchor is None or not eligible(card):
+                continue
+            token = _card_cursor_token(card)
+            if token in seen:
+                # A just-joined member can refresh a group already on this page.
+                if card.get("group") and token in positions:
+                    cards[positions[token]] = card
+                continue
+            if len(cards) >= lim:
+                state["fp"] = pos + anchor
+                save_seen()
+                return cards, await _encode_group_cursor(state)
+            positions[token] = len(cards)
+            cards.append(card)
+            remember(token)
+        state["fp"] = pos + len(docs)
+        more = bool(nxt)
+        if not more:
+            break
+    if more:
+        save_seen()
+        return cards, await _encode_group_cursor(state)
+    return cards, ""
+
+
 @search_routes.get("/api/search")
 async def api_search(req):
     role, tg_id = await get_user_role(req)
@@ -1164,6 +1509,20 @@ async def api_search(req):
         want_group, gf = False, "all"      # UNGROUP = ग्रुप फीचर से पहले वाला साधारण सर्च (सारी फाइलें, कोई ग्रुपिंग नहीं)
     gflag = ("g1" + gf) if want_group else "g0"
 
+    if want_group:
+        try:
+            cards, nxt = await _grouped_cursor_page(q, col, off, MAX_WEB_RESULTS, mode, gf)
+        except ValueError:
+            return web.json_response({"error": "Invalid or expired pagination cursor. Start the search again."}, status=400, dumps=fast_json)
+        except _GroupCursorLimitError:
+            return web.json_response({"error": "Too many results to continue. Please narrow your search."}, status=400, dumps=fast_json)
+        except _GroupCursorStorageError:
+            return web.json_response({"error": "Pagination is temporarily unavailable. Please try again."}, status=503, dumps=fast_json)
+        return web.json_response({
+            "results": cards, "total": len(cards) + (1 if nxt else 0), "next_offset": nxt,
+            "is_admin": role == "admin", "is_recent": not bool(q),
+        }, dumps=fast_json)
+
     try:
         off = max(0, int(off))
     except Exception:
@@ -1183,20 +1542,6 @@ async def api_search(req):
             "is_admin": role == "admin",
             "is_recent": True,
         }, dumps=fast_json)
-
-    # 🗂️ GROUP-FIRST: pehle groups, phir ungrouped files (sirf "all" collections par)
-    if want_group and col == "all":
-        gs = await _group_hits(q)
-        if gs is not None:
-            if gf in ("quality", "series"):
-                gs = [g for g in gs if group_type(g) == gf]
-            cards, nxt = await _grouped_first_page(q, off, lim, mode, gf, gs)
-            return web.json_response({
-                "results": cards,
-                "total": off + len(cards) + (1 if nxt else 0),
-                "next_offset": nxt,
-                "is_admin": role == "admin",
-            }, dumps=fast_json)
 
     cache_epoch = _SEARCH_CACHE_EPOCH
     trend_key = f"{col}_{mode}_{q.lower()}_{gflag}"
@@ -1361,6 +1706,7 @@ async def api_delete(req):
 
 
 @search_routes.post("/api/edit_name")
+@_serialize_group_writes
 async def api_edit_name(req):
     role, _ = await get_user_role(req)
     if role != "admin":
@@ -1398,8 +1744,9 @@ async def api_edit_name(req):
         
         if new_name:
             # Keep group-first search in sync with an edited member filename.
-            await groups.update_many({"files.id": fid}, {"$set": {
-                "files.$.name": new_name, "scanned_at": 0, "updated_at": int(time.time())}})
+            await groups.update_many({"files.id": fid}, {
+                "$set": {"files.$.name": new_name, "scanned_at": 0, "updated_at": int(time.time())},
+                "$addToSet": {"auto_keys": {"$each": sorted(_file_auto_keys(new_name))}}})
         if col != target_col:
             await groups.update_many({"thumb_fid": fid, "thumb_col": col}, {"$set": {
                 "thumb_col": target_col, "thumb_revision": uuid.uuid4().hex, "updated_at": int(time.time())}})
@@ -1513,197 +1860,209 @@ def _episode_updates(data, members):
 
 
 SCAN_STATE = {"running": False}
-SCAN_MAX_GROUP = 30        # isse bade bucket generic naam maane jaate hain, group nahi bante
 
 
 async def _scan_all_groups():
-    """Poori library (primary+cloud+archive) ek baar scan karke PERMANENT groups banata hai.
-    - Same naam-key wali 2+ files → ek group (apna number, members DB me, file par group_id mark)
-    - Pehle se bane groups me sirf nayi files jodta hai
-    - Jo file kisi group ki `excluded` (blacklist) me hai wo wahan nahi jodi jaati
-    - Jo file kisi aur group ki member hai use chhedta nahi
-    Dobara chalana safe hai."""
+    """Scan all collections using the same safe rules as search.
+
+    Existing groups are retained regardless of size. New automatic groups need
+    at least three distinct file IDs; joins are checked against live metadata.
+    """
     st = SCAN_STATE
     st.update(running=True, phase="groups load ho rahe hain", scanned=0, total=0, created=0,
               added=0, skipped_big=0, skipped_keys=[], fixed_marks=0, existing_groups=0,
               multi_buckets=0, error="", started=time.time(), finished=0)
     try:
-        key2g, owner = {}, {}
-        async for g in groups.find({}, {"auto_keys": 1, "members": 1, "excluded": 1}):
-            gd = {"id": g["_id"], "excl": set(g.get("excluded") or [])}
-            for m in g.get("members", []):
-                owner[m] = g["_id"]
-            for k in g.get("auto_keys", []):
-                key2g.setdefault(k, gd)
-
-        st["existing_groups"] = len({g["id"] for g in key2g.values()})
-        total = 0
+        existing = [group async for group in groups.find({})]
+        st["existing_groups"] = len(existing)
+        owner = {fid: str(group["_id"]) for group in existing for fid in (group.get("members") or [])}
         for col in FILE_COLLECTIONS.values():
             try:
-                total += await col.estimated_document_count()
+                st["total"] += await col.estimated_document_count()
             except Exception:
                 pass
-        st["total"] = total
 
         st["phase"] = "files scan ho rahi hain"
-        buckets, canonical_names, excluded_ids = {}, {}, set()
-        fix_set, fix_unset = {}, {}
+        canonical, runtimes, locations = {}, defaultdict(set), defaultdict(list)
+        excluded_ids, fix_set, fix_unset = set(), defaultdict(list), defaultdict(list)
+        projection = {"file_name": 1, "duration": 1, "duration_seconds": 1,
+                      "group_id": 1, "group_auto_excluded": 1}
         for cname, col in FILE_COLLECTIONS.items():
-            async for d in col.find({}, {"file_name": 1, "group_id": 1, "group_auto_excluded": 1}).batch_size(2000):
+            async for doc in col.find({}, projection).batch_size(2000):
                 st["scanned"] += 1
                 if st["scanned"] % 2000 == 0:
                     await asyncio.sleep(0)
-                og, cg = owner.get(d["_id"]), d.get("group_id")
-                if og and cg != og:
-                    fix_set.setdefault((cname, og), []).append(d["_id"])      # member hai par mark nahi/galat
-                elif not og and cg:
-                    fix_unset.setdefault((cname, cg), []).append(d["_id"])  # remember the observed mark
-                if d.get("group_auto_excluded") and not og:
-                    excluded_ids.add(d["_id"])  # any copy can carry the admin's decision
-                nm = str(d.get("file_name") or "")
-                nm, k = canonical_names.setdefault(d["_id"], (nm, _group_key(nm)))
-                if len(k) >= 3:
-                    # Copies with divergent names follow the first collection's
-                    # canonical name, but all copies still receive group marks.
-                    buckets.setdefault(k, []).append((d["_id"], nm, cname))
+                fid = doc["_id"]
+                canonical.setdefault(fid, {"_id": fid, "file_name": str(doc.get("file_name") or "")})
+                seconds = duration_seconds(doc)
+                if seconds:
+                    runtimes[fid].add(seconds)
+                locations[fid].append(cname)
+                if doc.get("group_auto_excluded") and fid not in owner:
+                    excluded_ids.add(fid)
+                observed, actual = doc.get("group_id"), owner.get(fid)
+                if actual and observed != actual:
+                    fix_set[(cname, actual)].append(fid)
+                elif not actual and observed:
+                    fix_unset[(cname, observed)].append(fid)
+        for fid, row in canonical.items():
+            values = runtimes[fid]
+            row["duration_seconds"] = next(iter(values)) if len(values) == 1 else 0
+            row["duration"] = row["duration_seconds"]
 
         st["phase"] = "groups tay ho rahe hain"
-        new_docs, adds, marks = [], {}, dict(fix_set)
-        now = int(time.time())
-        for k, items in buckets.items():
-            items = [item for item in items if item[0] not in excluded_ids]
-            g = key2g.get(k)
-            unique_count = len({i for i, _, _ in items})
-            if unique_count >= 2:
-                st["multi_buckets"] += 1
-            if g:
-                fresh = [it for it in items if it[0] not in owner and it[0] not in g["excl"]]
-                if not fresh:
-                    continue
-                adds.setdefault(g["id"], []).extend(fresh)
-                st["added"] += len({i for i, _, _ in fresh})
+        # Add normalized aliases to existing nonempty keys, without deleting or
+        # replacing the administrator's data. This also upgrades legacy series
+        # keys that contained an individual episode marker.
+        key_groups = defaultdict(list)
+        upgrades = []
+        for group in existing:
+            keys = _stored_auto_keys(group)
+            if group.get("auto_keys"):
+                for fid in group.get("members") or []:
+                    if fid in canonical:
+                        keys.update(_file_auto_keys(_row_name(canonical[fid])))
+                new_keys = keys.difference(group.get("auto_keys") or [])
+                if new_keys:
+                    upgrades.append((group, sorted(new_keys)))
+            for key in keys:
+                key_groups[key].append(group)
+        if upgrades:
+            async with _AUTO_GROUP_LOCK:
+                for group, keys in upgrades:
+                    await groups.update_one({"_id": group["_id"], "members": group.get("members", [])},
+                                            {"$addToSet": {"auto_keys": {"$each": keys}}})
+                    await asyncio.sleep(0)
+
+        # A single compatible file may join an existing group; the three-file
+        # threshold only applies when creating a new automatic group.
+        joins = []
+        for fid, row in canonical.items():
+            if fid in owner or fid in excluded_ids:
                 continue
-            if unique_count < 2:
+            matches, seen = [], set()
+            for key in _file_auto_keys(_row_name(row)):
+                for group in key_groups.get(key, []):
+                    gid = str(group["_id"])
+                    if gid not in seen:
+                        seen.add(gid)
+                        matches.append(group)
+            if any(fid in (group.get("excluded") or []) for group in matches):
+                excluded_ids.add(fid)
                 continue
-            if unique_count > SCAN_MAX_GROUP:
+            matches.sort(key=lambda group: (group_type(group) != "series", str(group["_id"])))
+            for group in matches:
+                if _join_compatible(group, row, canonical):
+                    joins.append((str(group["_id"]), fid, _row_name(row)))
+                    break
+        if joins:
+            accepted, blocked = await _persist_joins(joins, strict=True)
+            excluded_ids.update(blocked)
+            st["added"] += len(accepted)
+            for gid, fid in accepted:
+                owner[fid] = gid
+                for cname in locations[fid]:
+                    fix_set[(cname, gid)].append(fid)
+            if accepted:
+                await _mark_scanned({gid for gid, _ in accepted})
+
+        available = [row for fid, row in canonical.items() if fid not in owner and fid not in excluded_ids]
+        plans = auto_group_plan(available, excluded_ids)
+        st["multi_buckets"] = len(plans)
+        series_ids = {fid for plan in plans if plan["kind"] == "series" for fid, _ in plan["items"]}
+        series_counts, quality_counts = defaultdict(list), defaultdict(list)
+        for row in available:
+            name, fid = _row_name(row), row["_id"]
+            if episode_identity(name) and series_key(name):
+                series_counts[series_key(name)].append(row)
+            if fid not in series_ids and quality_title_key(name) and duration_seconds(row):
+                quality_counts[(quality_title_key(name), duration_seconds(row), episode_identity(name))].append(row)
+        for key, rows in series_counts.items():
+            if len(rows) > AUTO_SERIES_MAX and len({episode_identity(_row_name(row)) for row in rows}) >= 2:
                 st["skipped_big"] += 1
                 if len(st["skipped_keys"]) < 20:
-                    st["skipped_keys"].append(f"{k} ({unique_count} files)")
-                continue
-            cand = [it for it in items if it[0] not in owner]
-            if len({i for i, _, _ in cand}) < 2:
-                continue
-            new_docs.append((k, cand))
+                    st["skipped_keys"].append(f"{key} ({len(rows)} files)")
+        for (key, _, _), rows in quality_counts.items():
+            if len(rows) > AUTO_QUALITY_MAX:
+                st["skipped_big"] += 1
+                if len(st["skipped_keys"]) < 20:
+                    st["skipped_keys"].append(f"{key} ({len(rows)} files)")
 
-        if new_docs:
-            async with _AUTO_GROUP_LOCK:
-                keys = [k for k, _ in new_docs]
-                existing = set()
-                for start in range(0, len(keys), 1000):
-                    async for g in groups.find({"auto_keys": {"$in": keys[start:start + 1000]}}, {"auto_keys": 1}):
-                        existing.update(g.get("auto_keys") or [])
-                new_docs = [entry for entry in new_docs if entry[0] not in existing]
+        st["phase"] = "groups DB me save ho rahe hain"
+        # Recheck the snapshot under the same lock as edits and search writes.
+        # Keep whole buckets together, but bound each live metadata lookup.
+        batch, batch_size = [], 0
 
-                # Scanning a large library takes time. Re-check current ownership,
-                # names and exclusions before turning the old snapshot into groups.
-                candidate_ids = list({i for _, cand in new_docs for i, _, _ in cand})
-                fresh, blocked = await _live_group_files(candidate_ids)
-                claimed = set()
-                for start in range(0, len(candidate_ids), 1000):
-                    batch = candidate_ids[start:start + 1000]
-                    async for g in groups.find({"members": {"$in": batch}}, {"members": 1}):
-                        claimed.update(g.get("members") or [])
-                checked = []
-                for k, cand in new_docs:
-                    cand = [(i, fresh[i], cn) for i, _, cn in cand
-                            if i in fresh and i not in blocked and i not in claimed and _group_key(fresh[i]) == k]
-                    if len({i for i, _, _ in cand}) >= 2:
-                        checked.append((k, cand))
-                new_docs = checked
-                if new_docs:
-                    seq = await group_seq.find_one_and_update(
-                        {"_id": "seq"}, {"$inc": {"n": len(new_docs)}}, upsert=True, return_document=ReturnDocument.AFTER)
-                    start = int(seq["n"]) - len(new_docs) + 1
-                    docs = []
-                    for idx, (k, cand) in enumerate(new_docs):
-                        num = start + idx
-                        gid = str(num)
-                        unique_files = {}
-                        for i, n, _ in cand:
-                            unique_files.setdefault(i, n)
-                        docs.append({
-                            "_id": gid, "num": num, "name": (_group_title(cand[0][1]) or cand[0][1])[:200],
-                            "members": list(unique_files),
-                            "files": [{"id": i, "name": n} for i, n in unique_files.items()],
-                            "auto_keys": [k], "excluded": [], "auto_created": True, "scan_created": True,
-                            "group_type": "quality",
-                            "thumb_fid": "", "thumb_col": "", "thumb_url": "",
-                            "scanned_at": now, "created_at": now, "updated_at": now})
-                        for i, _, cn in cand:
-                            marks.setdefault((cn, gid), []).append(i)
-                    st["created"] = len(docs)
-                    st["phase"] = "groups DB me save ho rahe hain"
-                    for n in range(0, len(docs), 500):
-                        await groups.insert_many(docs[n:n + 500], ordered=False)
+        async def save_batch(cards):
+            resolved, _, _, stats = await _auto_persist(cards, scan=True)
+            st["created"] += stats["created"]
+            st["added"] += stats["added"]
+            for fid, group in resolved.items():
+                gid = str(group["_id"])
+                for cname in locations.get(fid, []):
+                    fix_set[(cname, gid)].append(fid)
 
-        if adds:
-            # Reuse search's guarded join path: the scan snapshot may be stale if
-            # an admin removed or moved a member while the scan was running.
-            await _persist_joins([(gid, i, n) for gid, items in adds.items() for i, n, _ in items])
-            await _mark_scanned(adds.keys())
+        for plan in plans:
+            card = {"variants": [{"file_id": fid} for fid, _ in plan["items"]]}
+            if batch and batch_size + len(card["variants"]) > 1500:
+                await save_batch(batch)
+                batch, batch_size = [], 0
+                await asyncio.sleep(0)
+            batch.append(card)
+            batch_size += len(card["variants"])
+        if batch:
+            await save_batch(batch)
 
         st["phase"] = "files par group_id mark ho raha hai"
         async with _AUTO_GROUP_LOCK:
-            # Revalidate the snapshot: a group may have been edited/deleted mid-scan.
             live_members = {}
-            gids = list({gid for _, gid in marks})
+            gids = list({gid for _, gid in fix_set})
             for start in range(0, len(gids), 1000):
-                async for g in groups.find({"_id": {"$in": gids[start:start + 1000]}}, {"members": 1}):
-                    live_members[g["_id"]] = set(g.get("members") or [])
-            per_col = {}
-            for (cn, gid), ids in marks.items():
-                members_now = live_members.get(gid, set())
-                ids = [i for i in ids if i in members_now]
+                async for group in groups.find({"_id": {"$in": gids[start:start + 1000]}}, {"members": 1}):
+                    live_members[str(group["_id"])] = set(group.get("members") or [])
+            per_col = defaultdict(list)
+            for (cname, gid), ids in fix_set.items():
+                current = live_members.get(gid, set())
+                ids = list({fid for fid in ids if fid in current})
                 for start in range(0, len(ids), 1000):
-                    per_col.setdefault(cn, []).append(UpdateMany(
+                    per_col[cname].append(UpdateMany(
                         {"_id": {"$in": ids[start:start + 1000]}, "group_auto_excluded": {"$ne": True}},
                         {"$set": {"group_id": gid}}))
-            for cn, ops in per_col.items():
-                for n in range(0, len(ops), 500):
-                    await FILE_COLLECTIONS[cn].bulk_write(ops[n:n + 500], ordered=False)
+            for cname, ops in per_col.items():
+                for start in range(0, len(ops), 500):
+                    await FILE_COLLECTIONS[cname].bulk_write(ops[start:start + 500], ordered=False)
                     await asyncio.sleep(0)
 
-            stale_ids = {i for ids in fix_unset.values() for i in ids}
+            stale_ids = {fid for ids in fix_unset.values() for fid in ids}
             still_owned = set()
             stale_list = list(stale_ids)
             for start in range(0, len(stale_list), 1000):
-                async for g in groups.find({"members": {"$in": stale_list[start:start + 1000]}}, {"members": 1}):
-                    still_owned.update(i for i in (g.get("members") or []) if i in stale_ids)
-            for (cn, observed_gid), ids in fix_unset.items():
-                ids = [i for i in ids if i not in still_owned]
-                ops = [UpdateMany({"_id": {"$in": ids[n:n + 1000]}, "group_id": observed_gid},
+                async for group in groups.find({"members": {"$in": stale_list[start:start + 1000]}}, {"members": 1}):
+                    still_owned.update(fid for fid in (group.get("members") or []) if fid in stale_ids)
+            for (cname, observed), ids in fix_unset.items():
+                ids = [fid for fid in ids if fid not in still_owned]
+                ops = [UpdateMany({"_id": {"$in": ids[start:start + 1000]}, "group_id": observed},
                                   {"$unset": {"group_id": ""}})
-                       for n in range(0, len(ids), 1000)]
-                for n in range(0, len(ops), 500):
-                    await FILE_COLLECTIONS[cn].bulk_write(ops[n:n + 500], ordered=False)
-            st["fixed_marks"] = sum(len(v) for v in fix_set.values()) + sum(len(v) for v in fix_unset.values())
+                       for start in range(0, len(ids), 1000)]
+                for start in range(0, len(ops), 500):
+                    await FILE_COLLECTIONS[cname].bulk_write(ops[start:start + 500], ordered=False)
+            st["fixed_marks"] = sum(len(set(ids)) for ids in fix_set.values()) + sum(len(ids) for ids in fix_unset.values())
 
         _invalidate_search_caches()
         st["phase"] = "complete"
-    except Exception as e:
-        logger.error(f"group scan failed: {e}")
-        st["error"] = str(e)
+    except Exception as exc:
+        logger.error(f"group scan failed: {exc}")
+        st["error"] = str(exc)
         st["phase"] = "error"
     finally:
         st["running"] = False
         st["finished"] = time.time()
         logger.info(f"🗂️ Group scan done: scanned={st.get('scanned')}/{st.get('total')} "
-                    f"existing_groups={st.get('existing_groups')} same-name buckets={st.get('multi_buckets')} "
+                    f"existing_groups={st.get('existing_groups')} buckets={st.get('multi_buckets')} "
                     f"created={st.get('created')} added={st.get('added')} fixed_marks={st.get('fixed_marks')} "
                     f"skipped_big={st.get('skipped_big')} err={st.get('error')}")
         if st.get("skipped_keys"):
-            logger.info("🗂️ Skipped (30+ files, bahut aam naam): " + " | ".join(st["skipped_keys"]))
-
+            logger.info("🗂️ Skipped large buckets: " + " | ".join(st["skipped_keys"]))
 
 @search_routes.post("/api/group/scan_all")
 async def api_group_scan_all(req):
@@ -1910,7 +2269,7 @@ async def api_group_save(req):
         if any(fid not in by_id for fid in file_ids):
             return web.json_response({"error": "Some selected files no longer exist. Refresh and try again."}, status=400, dumps=fast_json)
         items = [(fid, str(by_id[fid].get("file_name") or "")) for fid in file_ids]
-        auto_keys = list({k for k in (_group_key(n) for _, n in items) if k})
+        auto_keys = sorted(set().union(*(_file_auto_keys(name) for _, name in items)))
         try:
             episode_data = _episode_updates(data, file_ids) if not target else {}
         except ValueError as exc:
@@ -1981,6 +2340,8 @@ async def api_group_update(req):
             if not isinstance(kind, str) or kind not in GROUP_TYPES:
                 return web.json_response({"error": "Choose quality or series."}, status=400, dumps=fast_json)
             upd["group_type"] = kind
+            if kind != group_type(g):
+                upd["scanned_at"] = 0
         try:
             upd.update(_episode_updates(data, g.get("members") or []))
         except ValueError as exc:

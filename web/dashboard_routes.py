@@ -97,10 +97,9 @@ CARD_CSS = """
 .grp-chip{background:#082f49;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:5px;font-size:10px;font-weight:800;padding:2px 8px;line-height:1.5;text-shadow:none}
 .grp-chip i{font-style:normal;color:#e0f2fe;opacity:1;margin-left:2px}
 .grp-body{padding:12px 12px 13px}
-.grp-action{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;width:100%;border:1px solid var(--border);border-radius:8px;background:var(--bg3);color:var(--text);padding:8px 10px;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;text-align:left}
-.grp-action:hover,.grp-action:focus-visible{border-color:var(--accent);color:var(--accent)}
-.grp-action span{font-size:13px;color:var(--accent)}
 .grp-title{color:var(--text);font-size:12.5px;font-weight:600;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.grp-title-button{width:100%;padding:0;border:0;background:none;font-family:inherit;text-align:left;cursor:pointer}
+.grp-title-button:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:2px}
 .grp-card.open .grp-title{-webkit-line-clamp:unset}
 .grp-textinfo{display:none;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
 .res-grid.mode-none .grp-textinfo{display:flex}
@@ -316,8 +315,7 @@ function cardHtml(f,nested){
                 posterHtml='<div class="poster-box" id="poster-box-'+f.file_id+'">'+
                     '<img src="'+f.tg_thumb+'" id="img-poster-'+f.file_id+'" class="fc-poster" onload="this.classList.add(\\'loaded\\')" onerror="handleThumbError(\\''+f.file_id+'\\')" loading="lazy" decoding="async">'+
                     '<div class="poster-top">'+
-                        idChip+epChip+'<span class="type-chip">'+esc(f.type.toUpperCase())+'</span>'+
-                        '<span class="size-chip">'+f.size+'</span>'+
+                        idChip+epChip+'<span class="size-chip">'+f.size+'</span>'+
                         durChip+resChip+
                         '<span class="source-pill '+sc+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+menuBtn+
                     '</div>'+
@@ -328,8 +326,7 @@ function cardHtml(f,nested){
             var textInfo='';
             if(pMode==='none'){
                 textInfo='<div class="fc-text-info">'+
-                    idChip+epChip+'<span class="tc-type">'+esc(f.type.toUpperCase())+'</span>'+
-                    '<span class="tc-size">'+f.size+'</span>'+
+                    idChip+epChip+'<span class="tc-size">'+f.size+'</span>'+
                     durText+resText+
                     '<span class="source-pill '+sc+'" style="margin-left:auto"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+menuBtn+
                 '</div>';
@@ -381,7 +378,7 @@ function groupHtml(g){
     var sc=srcs.length>1?'mixed':srcs[0];
     if(!['primary','cloud','archive','mixed'].includes(sc))sc='primary';
     var pill='<span class="source-pill '+sc+'" title="'+esc(srcs.join(' + ').toUpperCase())+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>';
-    var dur=g.duration?'<span class="dur-chip">'+esc(g.duration)+'</span>':'';
+    var dur=!series&&g.duration?'<span class="dur-chip">'+esc(g.duration)+'</span>':'';
     var idChip=groupIdChip(g.num||g.gid,true);
     var kind='<span class="grp-kind'+(series?' series':'')+'">'+(series?'SERIES':'QUALITY')+'</span>';
     var badge='<span class="grp-badge">'+g.count+(series?' FILES':' VERSIONS')+'</span>';
@@ -406,11 +403,10 @@ function groupHtml(g){
     g.variants.forEach(function(v){inner+=cardHtml(v,true);});
     return '<div class="grp-card card-enter'+open+'" data-gk="'+g.key+'">'+
         '<div class="grp-master">'+poster+
-            '<div class="grp-body"><div class="grp-title" onclick="event.stopPropagation();toggleGroup(this.closest(\\'.grp-card\\'))">'+g.title+'</div>'+textInfo+
-            '<button class="grp-action" onclick="event.stopPropagation();toggleGroup(this.closest(\\'.grp-card\\'))">'+(series?'Browse series files':'View quality versions')+' <span>&#8594;</span></button></div>'+
+            '<div class="grp-body"><button type="button" class="grp-title grp-title-button" aria-expanded="'+(open?'true':'false')+'" aria-controls="gv-'+esc(g.key)+'" onclick="event.stopPropagation();toggleGroup(this.closest(\\'.grp-card\\'))">'+g.title+'</button>'+textInfo+'</div>'+
         '</div>'+
-        '<div class="grp-openhead" role="button" tabindex="0" aria-label="Collapse group" onclick="toggleGroup(this.parentNode)" onkeydown="if(event.target===this &amp;&amp; (event.key===\\'Enter\\' || event.key===\\' \\')){event.preventDefault();toggleGroup(this.parentNode)}">'+idChip+kind+badge+'<div class="grp-title">'+g.title+'</div>'+(isAdminView?'<span class="grp-oadmin">'+adm+'</span>':'')+'<span class="grp-arrow">&#9662;</span></div>'+
-        '<div class="grp-variants">'+inner+'</div>'+
+        '<div class="grp-openhead" role="button" tabindex="0" aria-label="Collapse group" onclick="toggleGroup(this.parentNode)" onkeydown="if(event.target===this &amp;&amp; (event.key===\\'Enter\\' || event.key===\\' \\')){event.preventDefault();toggleGroup(this.parentNode)}">'+idChip+kind+badge+dur+'<div class="grp-title">'+g.title+'</div>'+(isAdminView?'<span class="grp-oadmin">'+adm+'</span>':'')+'<span class="grp-arrow">&#9662;</span></div>'+
+        '<div class="grp-variants" id="gv-'+esc(g.key)+'">'+inner+'</div>'+
     '</div>';
 }
 /* Thumbnail click: admin ko edit popup, baaki users ke liye group khulta hai (title click se bhi khulta hai) */
@@ -427,9 +423,12 @@ document.addEventListener('click',function(){
     document.querySelectorAll('.grp-card.grp-active').forEach(function(c){c.classList.remove('grp-active');});
 });
 function toggleGroup(el){
-    var k=el.getAttribute('data-gk');
+    var k=el.getAttribute('data-gk'),title=el.querySelector('.grp-title-button'),head=el.querySelector('.grp-openhead');
+    var focusWasTitle=document.activeElement===title,focusWasHead=document.activeElement===head;
     var isOpen=el.classList.toggle('open');
-    if(isOpen){openGroups[k]=1;}else{delete openGroups[k];}
+    if(title)title.setAttribute('aria-expanded',isOpen?'true':'false');
+    if(isOpen){openGroups[k]=1;if(focusWasTitle&&head)head.focus();}
+    else{delete openGroups[k];if(focusWasHead&&title)title.focus();}
 }
 
 /* ───────── 🛠️ ADMIN: group banana / edit / select-mode ───────── */
@@ -961,6 +960,8 @@ async function saveGroupModal(){
 }
 
 async function doSearch(o,allowEmpty,fresh){
+    // After an edit, start a fresh snapshot so moved/new groups appear immediately.
+    if(fresh&&typeof o==='string'&&/^g[12]_/.test(o))o=0;
     var q=document.getElementById('q').value.trim();
     if(!q && !allowEmpty){showToast('Please enter a movie name','error');return;}
     curQ=q;curOff=o;if(o===0){curPage=1;offHist=[];pageGroups={};}
@@ -975,7 +976,7 @@ async function doSearch(o,allowEmpty,fresh){
     },150);
 
     try{
-        var r=await fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+o+'&col='+curCol+'&mode='+pMode+'&group=1&gf='+curGF+(fresh?'&fresh=1':''),{cache:'no-store'});
+        var r=await fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+encodeURIComponent(o)+'&col='+curCol+'&mode='+pMode+'&group=1&gf='+curGF+(fresh?'&fresh=1':''),{cache:'no-store'});
         if(myReq!==searchReqId){clearTimeout(loadTimer);if(qWrap)qWrap.classList.remove('loading');return;}
         clearTimeout(loadTimer);
         if(qWrap)qWrap.classList.remove('loading');
@@ -998,7 +999,7 @@ async function doSearch(o,allowEmpty,fresh){
             resDiv.innerHTML = q
                 ? '<div class="empty"><div class="empty-icon">&#9888;</div><p>No results for "'+esc(q)+'" on this page.</p>'+(nextOff?'<p>More results may be on the next page.</p>':'')+'</div>'
                 : '<div class="empty"><div class="empty-icon">&#8981;</div><p>No files found on this page.</p>'+(nextOff?'<p>More results may be on the next page.</p>':'')+'</div>';
-            var emptyPage=document.getElementById('pageBox');emptyPage.style.display=(nextOff||o>0)?'flex':'none';
+            var emptyPage=document.getElementById('pageBox');emptyPage.style.display=(nextOff||curPage>1)?'flex':'none';
             document.getElementById('pBtn').disabled=(o===0);
             document.getElementById('nBtn').disabled=!nextOff;
             document.getElementById('pgInfo').textContent='Page '+curPage;
@@ -1024,7 +1025,7 @@ async function doSearch(o,allowEmpty,fresh){
         document.getElementById('pgInfo').textContent='Page '+curPage;
 
         if(nextOff) {
-            fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+nextOff+'&col='+curCol+'&mode='+pMode+'&group=1&gf='+curGF);
+            fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+encodeURIComponent(nextOff)+'&col='+curCol+'&mode='+pMode+'&group=1&gf='+curGF);
         }
     }catch(e){clearTimeout(loadTimer);if(myReq!==searchReqId)return;if(qWrap)qWrap.classList.remove('loading');showToast('Network error','error');}
 }

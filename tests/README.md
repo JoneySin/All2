@@ -3,8 +3,17 @@
 The grouping, editor, cache-invalidation and streaming tests use an in-memory
 MongoDB mock and test-only configuration. They check signed inline/range headers,
 thumbnail revisions, partial failures, and preservation of post/profile data;
-they do not connect to Telegram or require a running MongoDB server. Actual media
-playback still depends on Telegram access and browser-supported codecs.
+they do not connect to Telegram or require a running MongoDB server. Grouping
+checks cover the three-distinct-file automatic threshold, runtime/episode matching,
+legacy/manual groups, exclusions, live joins, full scans and pagination across
+collections. Actual media playback still depends on Telegram access and browser-
+supported codecs. MongoDB text-index behavior still requires a real-service test.
+
+For grouped `/api/search` requests, treat `next_offset` as an opaque continuation
+value and send it back unchanged, including when a selective filter returns an
+empty page. Large continuations are stored in `GroupSearchCursors` and expire after
+two hours; the application's index setup creates a TTL index to clean them up.
+Restart the search if a cursor expires. Ungrouped search uses numeric offsets.
 
 ```sh
 python -m venv .venv
@@ -14,8 +23,9 @@ python -m venv .venv
 
 ## Optional group-move browser test
 
-The browser test exercises both file/group moves and the group editor: exact ID
-lookup, preview confirmation, stale requests, changed targets and a 320px layout.
+The browser test exercises group-card keyboard/name opening, duration and ID chips,
+both file/group moves and the group editor: exact ID lookup, preview confirmation,
+stale requests, changed targets, empty-page navigation and a 320px layout.
 It uses a **test-only, always-admin, in-memory** server; never deploy that server.
 Install Node.js and Playwright separately, for example:
 

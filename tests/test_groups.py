@@ -3,7 +3,9 @@
 import asyncio
 import copy
 import os
+import re
 import unittest
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 # info.py validates configuration at import time; these are test-only values.
@@ -20,12 +22,13 @@ from mongomock_motor import AsyncMongoMockClient
 
 from database import ia_filterdb as db
 from web import search_api as api
-from web.grouping import episode_number, order_series
+from web.grouping import (auto_group_plan, duration_seconds, episode_identity, episode_number,
+                          order_series, quality_title_key, series_key, series_title)
 
 
 def doc(fid, name, source="primary", **extra):
     return {"_id": fid, "file_ref": fid, "file_name": name, "file_size": 1000,
-            "file_type": "video", "source_col": source, **extra}
+            "file_type": "video", "source_col": source, "duration": 3600, **extra}
 
 
 class GroupingUnitTests(unittest.TestCase):
@@ -56,7 +59,8 @@ class GroupingUnitTests(unittest.TestCase):
         originals = api._build_results_list([doc("a", "Movie 720p.mkv"),
                                              doc("b", "Movie 1080p.mkv")], "tg")
         snapshot = copy.deepcopy(originals)
-        group = {"_id": "17", "num": 17, "name": "Movie", "members": ["a", "b"]}
+        # Previously saved automatic groups remain visible even with two files.
+        group = {"_id": "17", "num": 17, "name": "Movie", "members": ["a", "b"], "auto_created": True}
         result = api.group_results(originals, {"a": group, "b": group})[0]
         self.assertEqual(result["group_type"], "quality")
         self.assertEqual(result["num"], 17)
@@ -79,6 +83,74 @@ class GroupingUnitTests(unittest.TestCase):
         self.assertTrue(card["group"])
         self.assertEqual((card["num"], card["group_type"], card["count"]), (4, "series", 1))
 
+    def test_normalization_and_explicit_episode_formats(self):
+        self.assertEqual(quality_title_key("A New Film 2024 Hindi WEB-DL 720p.mkv"),
+                         quality_title_key("A.New.Film.2024.English.BluRay.1080p.mp4"))
+        self.assertNotEqual(quality_title_key("A New Film 2023 720p"), quality_title_key("A New Film 2024 720p"))
+        self.assertEqual(quality_title_key("A_Film_1920x1080.mkv"), quality_title_key("A Film 720p.mp4"))
+        self.assertEqual(quality_title_key("Film [Uploader A] (2024) 720p"),
+                         quality_title_key("Film [Uploader B] 2024 1080p"))
+        self.assertNotEqual(quality_title_key("Film (2023) 720p"), quality_title_key("Film (2024) 1080p"))
+        for name, identity in (("North Star S01E02", "S01E02"), ("North Star 1x02", "S01E02"),
+                               ("North Star Episode 2", "E02"), ("North Star Part 2", "E02"),
+                               ("North Star Chapter 2", "E02"), ("North Star 2 of 10", "E02")):
+            self.assertEqual(episode_identity(name), identity)
+            self.assertEqual(series_key(name), "north star")
+        self.assertEqual(series_key("24 [S01E01] 1080p.mkv"), "24")
+        self.assertEqual(series_key("नीला आकाश S01E01.mkv"), "नीला आकाश")
+        self.assertEqual(quality_title_key("कहानी 720p.mkv"), "कहानी")
+        self.assertNotEqual(quality_title_key("कहानी 720p.mkv"), quality_title_key("कहनी 1080p.mkv"))
+        self.assertEqual(series_title("Northern Lights [S01E02] WEB-DL 1080p.mkv"), "Northern Lights")
+        self.assertEqual(series_title("Northern Lights (2024) [S01E02].mkv"), "Northern Lights (2024)")
+        self.assertNotEqual(series_key("The Long Journey Home North S01E01.mkv"),
+                            series_key("The Long Journey Home South S01E02.mkv"))
+        self.assertEqual(duration_seconds("1:02:03"), 3723)
+        self.assertEqual(duration_seconds({"duration_seconds": 0, "duration": "2:30"}), 150)
+        self.assertEqual(duration_seconds("unknown"), 0)
+
+    def test_automatic_threshold_runtime_and_series_precedence(self):
+        def cards(*docs):
+            return api.group_results(api._build_results_list(list(docs), "none"))
+
+        # Two matching variants never form a new automatic group.
+        self.assertEqual(len(cards(doc("a", "Film 720p"), doc("b", "Film 1080p"))), 2)
+        quality = cards(doc("a", "Film Hindi 720p", duration=5400),
+                        doc("b", "Film English 1080p", duration=5400),
+                        doc("c", "Film WEB-DL 480p", duration=5400))[0]
+        self.assertEqual((quality["group_type"], quality["count"], quality["duration"]), ("quality", 3, "1:30:00"))
+        self.assertTrue(all(not c.get("group") for c in cards(
+            doc("a", "Film 720p", duration=5400), doc("b", "Film 1080p", duration=5401),
+            doc("c", "Film 480p", duration=0))))
+
+        # Three files need at least two episode identities to become a series.
+        same_ep = cards(doc("a", "Show S01E01 720p"), doc("b", "Show S01E01 1080p"),
+                        doc("c", "Show 1x01 480p"))[0]
+        self.assertEqual(same_ep["group_type"], "quality")
+        series = cards(doc("a", "Show S01E01 720p", duration=1200),
+                       doc("b", "Show S01E01 1080p", duration=1200),
+                       doc("c", "Show S01E02 480p", duration=2400))[0]
+        self.assertEqual((series["group_type"], series["count"], series["duration"]), ("series", 3, ""))
+        self.assertEqual(len(cards(doc("x", "Show S01E01"), doc("y", "Show S01E02"))), 2)
+        self.assertTrue(all(not c.get("group") for c in cards(
+            doc("a", "Show S01E01", duration=100), doc("b", "Show S01E02", duration=100),
+            doc("c", "Other Show S01E03", duration=100))))
+
+    def test_large_automatic_buckets_are_not_misidentified(self):
+        quality = [doc(str(i), "Popular Film 720p", duration=60) for i in range(31)]
+        self.assertEqual(auto_group_plan(quality), [])
+        series = [doc(str(i), f"Popular Series S01E{i:03d}", duration=60) for i in range(1, 502)]
+        self.assertFalse(any(plan["kind"] == "series" for plan in auto_group_plan(series)))
+
+    def test_manual_quality_duration_uses_mode_and_series_never_has_one(self):
+        rows = api._build_results_list([doc("a", "One 720p", duration=3600),
+                                        doc("b", "Two 1080p", duration=4000),
+                                        doc("c", "Three 480p", duration=3600)], "none")
+        group = {"_id": "17", "name": "Manual", "members": ["a", "b", "c"]}
+        manual = {fid: group for fid in ("a", "b", "c")}
+        self.assertEqual(api.group_results(rows, manual)[0]["duration"], "1:00:00")
+        group["group_type"] = "series"
+        self.assertEqual(api.group_results(rows, manual)[0]["duration"], "")
+
 
 class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -89,6 +161,7 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.seq = self.db.QualityGroupSeq
         patches = [
             patch.object(api, "groups", self.groups), patch.object(api, "group_seq", self.seq),
+            patch.object(api, "group_search_cursors", self.db.GroupSearchCursors),
             patch.object(api, "FILE_COLLECTIONS", self.cols),
             patch.object(api, "COLLECTIONS", {**self.cols, "actors": self.db.Actors}),
             patch.object(api, "get_user_role", AsyncMock(return_value=("admin", 1))),
@@ -124,7 +197,8 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         return response.status, await response.json()
 
     async def test_auto_group_has_real_id_on_first_response_and_does_not_duplicate(self):
-        docs = [doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv", "cloud")]
+        docs = [doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv", "cloud"),
+                doc("c", "Film 480p.mkv", "archive")]
         await self.insert_files(*docs)
         rows = api._build_results_list(docs, "tg")
         first, second = await asyncio.gather(api._finalize(rows, True, siblings=False),
@@ -139,21 +213,23 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.cols["cloud"].find_one({"_id": "b"}))["group_id"], "1")
 
     async def test_auto_group_and_admin_move_are_serialized(self):
-        docs = [doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv", "cloud")]
+        docs = [doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv", "cloud"),
+                doc("c", "Film 480p.mkv", "archive")]
         await self.insert_files(*docs)
         entered, release = asyncio.Event(), asyncio.Event()
         real_lookup = api._live_group_files
 
         async def paused_lookup(ids):
-            entered.set()
-            await release.wait()
+            if api._AUTO_GROUP_LOCK.locked():
+                entered.set()
+                await release.wait()
             return await real_lookup(ids)
 
         with patch.object(api, "_live_group_files", paused_lookup):
             auto = asyncio.create_task(api._finalize(api._build_results_list(docs, "none"), True, siblings=False))
             await asyncio.wait_for(entered.wait(), 2)
             admin = asyncio.create_task(self.post("/api/group/save", {
-                "name": "Hand-picked", "items": [{"id": "a"}, {"id": "b"}], "group_type": "series"}))
+                "name": "Hand-picked", "items": [{"id": "a"}, {"id": "b"}, {"id": "c"}], "group_type": "series"}))
             try:
                 await asyncio.sleep(0.02)
                 self.assertFalse(admin.done())
@@ -165,17 +241,18 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.groups.count_documents({}), 1)
         group = await self.groups.find_one({"_id": saved["group_id"]})
         self.assertEqual(group["group_type"], "series")
-        self.assertEqual(set(group["members"]), {"a", "b"})
+        self.assertEqual(set(group["members"]), {"a", "b", "c"})
         self.assertEqual((await self.cols["primary"].find_one({"_id": "a"}))["group_id"], group["_id"])
         self.assertEqual((await self.cols["cloud"].find_one({"_id": "b"}))["group_id"], group["_id"])
+        self.assertEqual((await self.cols["archive"].find_one({"_id": "c"}))["group_id"], group["_id"])
 
     async def test_auto_group_respects_exclusion_in_any_collection(self):
         await self.insert_files(doc("a", "Film 720p.mkv"),
                                 doc("a", "Film 720p.mkv", "cloud", group_auto_excluded=True),
-                                doc("b", "Film 1080p.mkv"))
+                                doc("b", "Film 1080p.mkv"), doc("c", "Film 480p.mkv"))
         # The page may contain the other, stale copy without its exclusion flag.
         cards = await api._finalize(api._build_results_list([
-            doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv")], "none"), True, siblings=False)
+            doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv"), doc("c", "Film 480p.mkv")], "none"), True, siblings=False)
         self.assertTrue(all(not c.get("group") for c in cards))
         self.assertEqual(await self.groups.count_documents({}), 0)
         await api._scan_all_groups()
@@ -183,7 +260,8 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.groups.count_documents({}), 0)
 
     async def test_failed_live_recheck_never_invents_a_group_number(self):
-        rows = api._build_results_list([doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv")], "none")
+        rows = api._build_results_list([doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv"),
+                                         doc("c", "Film 480p.mkv")], "none")
         with patch.object(api, "_live_group_files", AsyncMock(side_effect=RuntimeError("database offline"))):
             cards = await api._finalize(rows, True, siblings=False)
         self.assertTrue(cards[0]["group"])
@@ -191,7 +269,8 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.groups.count_documents({}), 0)
 
     async def test_series_create_edit_order_labels_and_auto_join(self):
-        docs = [doc("a", "Same Name.mkv"), doc("b", "Same Name.mkv", "cloud")]
+        docs = [doc("a", "Same Name Episode 1.mkv", duration=1500),
+                doc("b", "Same Name Episode 2.mkv", "cloud", duration=2500)]
         await self.insert_files(*docs)
         status, result = await self.post("/api/group/save", {
             "name": "My Series", "group_type": "series",
@@ -208,8 +287,8 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([v["episode_label"] for v in card["variants"]], ["Episode 1", "Episode 2"])
         self.assertEqual(card["chips"], [])
 
-        # Adding a same-name episode respects the type and appends after the admin order.
-        new_doc = doc("c", "Same Name.mkv", "archive")
+        # A marked episode of the same series may join despite its different runtime.
+        new_doc = doc("c", "Same Name Episode 3.mkv", "archive", duration=1800)
         await self.insert_files(new_doc)
         card = (await api._finalize(api._build_results_list([new_doc], "none"), True, siblings=False))[0]
         self.assertEqual(card["group_type"], "series")
@@ -554,10 +633,13 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.groups.count_documents({}), 0)
         await self.insert_files(doc("other", "Film 1080p.mkv", "archive"))
         await api._scan_all_groups()
+        self.assertEqual(await self.groups.count_documents({}), 0)
+        await self.insert_files(doc("third", "Film 480p.mkv", "cloud"))
+        await api._scan_all_groups()
         self.assertEqual(api.SCAN_STATE.get("error"), "")
         group = await self.groups.find_one({})
-        self.assertEqual(set(group["members"]), {"same", "other"})
-        self.assertEqual(len(group["members"]), 2)
+        self.assertEqual(set(group["members"]), {"same", "other", "third"})
+        self.assertEqual(len(group["members"]), 3)
         for col in self.cols.values():
             self.assertEqual((await col.find_one({}))["group_id"], group["_id"])
 
@@ -565,13 +647,13 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         # The library resolves duplicate IDs in primary/cloud/archive order.
         await self.insert_files(doc("same", "Film 720p.mkv"),
                                 doc("same", "Different 720p.mkv", "cloud"),
-                                doc("film", "Film 1080p.mkv"),
+                                doc("film", "Film 1080p.mkv"), doc("film2", "Film 480p.mkv", "archive"),
                                 doc("different", "Different 1080p.mkv", "cloud"))
         await api._scan_all_groups()
         self.assertEqual(api.SCAN_STATE.get("error"), "")
         groups = [g async for g in self.groups.find({})]
         self.assertEqual(len(groups), 1)
-        self.assertEqual(set(groups[0]["members"]), {"same", "film"})
+        self.assertEqual(set(groups[0]["members"]), {"same", "film", "film2"})
         self.assertEqual((await self.cols["cloud"].find_one({"_id": "same"}))["group_id"], groups[0]["_id"])
         self.assertNotIn("group_id", await self.cols["cloud"].find_one({"_id": "different"}))
 
@@ -601,7 +683,8 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("group_id", await self.cols["archive"].find_one({"_id": "c"}))
 
     async def test_library_scan_creates_numbered_quality_groups(self):
-        await self.insert_files(doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv", "cloud"))
+        await self.insert_files(doc("a", "Film 720p.mkv"), doc("b", "Film 1080p.mkv", "cloud"),
+                                doc("c", "Film 480p.mkv", "archive"))
         await api._scan_all_groups()
         self.assertEqual(api.SCAN_STATE.get("error"), "")
         self.assertEqual(api.SCAN_STATE.get("created"), 1)
@@ -633,8 +716,8 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
                                       "auto_keys": ["film"], "excluded": []})
         stale = api._build_results_list([doc("b", "Film 1080p.mkv")], "none")
         cards = await api._finalize(stale, True, siblings=False)
-        group = next(c for c in cards if c.get("gid") == "7")
-        self.assertEqual([v["file_id"] for v in group["variants"]], ["a"])
+        # The stale search result must not pull in an unrelated saved group.
+        self.assertFalse(any(c.get("gid") == "7" for c in cards))
         self.assertTrue(any(c.get("file_id") == "b" and not c.get("gid") for c in cards))
         self.assertEqual((await self.groups.find_one({"_id": "7"}))["members"], ["a"])
 
@@ -655,6 +738,539 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         data = await response.json()
         self.assertEqual({r["file_id"]: r["gid"] for r in data["results"]},
                          {"a": "11", "b": "11", "c": "12", "d": "12"})
+
+    async def test_search_partitions_durations_and_series_and_is_idempotent(self):
+        docs = [
+            doc("q1", "River Film 720p.mkv", duration=5400),
+            doc("q2", "River Film 1080p.mkv", "cloud", duration=5400),
+            doc("q3", "River Film 480p.mkv", "archive", duration=5400),
+            doc("d1", "River Film 720p.mkv", duration=5401),
+            doc("d2", "River Film 1080p.mkv", "cloud", duration=5401),
+            doc("d3", "River Film 480p.mkv", "archive", duration=5401),
+            doc("u1", "River Film 720p.mkv", duration=0),
+            doc("u2", "River Film 1080p.mkv", "cloud", duration=0),
+            doc("u3", "River Film 480p.mkv", "archive", duration=0),
+            doc("s1", "North Star S01E01 720p.mkv", duration=1200),
+            doc("s2", "North Star S01E01 1080p.mkv", "cloud", duration=1200),
+            doc("s3", "North Star S01E02 480p.mkv", "archive", duration=2200),
+            doc("t1", "Just Two 720p.mkv"), doc("t2", "Just Two 1080p.mkv", "cloud"),
+        ]
+        await self.insert_files(*docs)
+        rows = api._build_results_list(docs, "none")
+        cards = await api._finalize(rows, True, siblings=False)
+        groups = [card for card in cards if card.get("group")]
+        self.assertEqual(len(groups), 3)
+        self.assertEqual({frozenset(v["file_id"] for v in card["variants"]) for card in groups},
+                         {frozenset({"q1", "q2", "q3"}), frozenset({"d1", "d2", "d3"}),
+                          frozenset({"s1", "s2", "s3"})})
+        series = next(card for card in groups if card["group_type"] == "series")
+        self.assertEqual(series["duration"], "")
+        self.assertEqual({card["duration"] for card in groups if card["group_type"] == "quality"},
+                         {"1:30:00", "1:30:01"})
+        self.assertEqual({card["file_id"] for card in cards if not card.get("group")},
+                         {"u1", "u2", "u3", "t1", "t2"})
+        await api._finalize(rows, True, siblings=False)
+        await api._scan_all_groups()
+        self.assertEqual(api.SCAN_STATE["error"], "")
+        self.assertEqual(await self.groups.count_documents({}), 3)
+
+    async def test_full_scan_creates_only_three_file_compatible_groups(self):
+        docs = [doc("q1", "A Film 720p", duration=100), doc("q2", "A Film 1080p", "cloud", duration=100),
+                doc("q3", "A Film 480p", "archive", duration=100), doc("qd", "A Film 4K", duration=101),
+                doc("u1", "Unknown 720p", duration=0), doc("u2", "Unknown 1080p", duration=0),
+                doc("u3", "Unknown 480p", duration=0),
+                doc("e1", "24 S01E01.mkv", duration=1200), doc("e2", "24 S01E02.mkv", "cloud", duration=2200),
+                doc("e3", "24 S01E03.mkv", "archive", duration=0),
+                doc("t1", "Only Two 720p"), doc("t2", "Only Two 1080p")]
+        await self.insert_files(*docs)
+        await api._scan_all_groups()
+        self.assertEqual(api.SCAN_STATE["error"], "")
+        groups = [group async for group in self.groups.find({})]
+        self.assertEqual(len(groups), 2)
+        by_type = {group["group_type"]: set(group["members"]) for group in groups}
+        self.assertEqual(by_type, {"quality": {"q1", "q2", "q3"}, "series": {"e1", "e2", "e3"}})
+        self.assertTrue(all(group.get("scan_created") for group in groups))
+        for fid in ("qd", "u1", "u2", "u3", "t1", "t2"):
+            self.assertNotIn("group_id", await self.cols["primary"].find_one({"_id": fid}))
+        await api._scan_all_groups()
+        self.assertEqual(api.SCAN_STATE["error"], "")
+        self.assertEqual(await self.groups.count_documents({}), 2)
+
+    async def test_existing_groups_accept_only_fully_compatible_live_members(self):
+        docs = [doc("q1", "Film 720p", group_id="7", duration=100),
+                doc("q2", "Film 1080p", group_id="7", duration=100),
+                doc("good", "Film 480p", "cloud", duration=100),
+                doc("wrong_time", "Film 4K", duration=101),
+                doc("unknown", "Film 360p", duration=0),
+                doc("wrong_episode", "Film S01E01 720p", duration=100),
+                doc("s1", "North Star S01E01", group_id="8", duration=800),
+                doc("s2", "North Star S01E02", group_id="8", duration=900),
+                doc("s3", "North Star S01E03", "archive", duration=0),
+                doc("missing_old", "Broken Film 720p", group_id="9", duration=100),
+                doc("missing_new", "Broken Film 1080p", duration=100)]
+        await self.insert_files(*docs)
+        await self.groups.insert_many([
+            {"_id": "7", "num": 7, "name": "Film", "members": ["q1", "q2"],
+             "auto_keys": ["film"], "excluded": [], "group_type": "quality"},
+            {"_id": "8", "num": 8, "name": "North Star", "members": ["s1", "s2"],
+             "auto_keys": ["north star s01e01", "north star s01e02"], "excluded": [], "group_type": "series"},
+            {"_id": "9", "num": 9, "name": "Broken", "members": ["missing_old", "deleted"],
+             "auto_keys": ["broken film"], "excluded": [], "group_type": "quality"},
+        ])
+        candidates = [next(doc for doc in docs if doc["_id"] == fid)
+                      for fid in ("good", "wrong_time", "unknown", "wrong_episode", "s3", "missing_new")]
+        cards = await api._finalize(api._build_results_list(candidates, "none"), True, siblings=False)
+        self.assertEqual(set((await self.groups.find_one({"_id": "7"}))["members"]), {"q1", "q2", "good"})
+        self.assertEqual(set((await self.groups.find_one({"_id": "8"}))["members"]), {"s1", "s2", "s3"})
+        self.assertEqual((await self.groups.find_one({"_id": "9"}))["members"], ["missing_old", "deleted"])
+        self.assertEqual({card["file_id"] for card in cards if not card.get("group")},
+                         {"wrong_time", "unknown", "wrong_episode", "missing_new"})
+        await api._scan_all_groups()
+        self.assertEqual(api.SCAN_STATE["error"], "")
+        self.assertEqual(set((await self.groups.find_one({"_id": "7"}))["members"]), {"q1", "q2", "good"})
+        self.assertEqual((await self.groups.find_one({"_id": "9"}))["members"], ["missing_old", "deleted"])
+
+    async def test_scan_reports_partial_write_failure_and_retry_repairs_marks(self):
+        await self.insert_files(doc("a", "Film 720p"), doc("b", "Film 1080p", "cloud"),
+                                doc("c", "Film 480p", "archive"))
+        with patch.object(api, "_mark_files", AsyncMock(side_effect=RuntimeError("mark write failed"))):
+            await api._scan_all_groups()
+        self.assertIn("mark write failed", api.SCAN_STATE["error"])
+        self.assertEqual(api.SCAN_STATE["phase"], "error")
+        group = await self.groups.find_one({})
+        self.assertIsNotNone(group)  # the group insert may already have succeeded
+        await api._scan_all_groups()
+        self.assertEqual(api.SCAN_STATE["error"], "")
+        self.assertEqual(await self.groups.count_documents({}), 1)
+        for fid, source in (("a", "primary"), ("b", "cloud"), ("c", "archive")):
+            self.assertEqual((await self.cols[source].find_one({"_id": fid}))["group_id"], group["_id"])
+
+    async def test_live_duration_change_and_conflicting_copies_prevent_grouping(self):
+        stale = [doc("a", "Film 720p", duration=100), doc("b", "Film 1080p", "cloud", duration=100),
+                 doc("c", "Film 480p", "archive", duration=100)]
+        await self.insert_files(stale[0], stale[1], doc("c", "Film 480p", "archive", duration=101))
+        cards = await api._finalize(api._build_results_list(stale, "none"), True, siblings=False)
+        self.assertTrue(all(not card.get("group") for card in cards))
+        self.assertEqual(next(card for card in cards if card["file_id"] == "c")["duration"], "1:41")
+        self.assertEqual(await self.groups.count_documents({}), 0)
+        await self.cols["archive"].update_one({"_id": "c"}, {"$set": {"duration": 100}})
+        await self.insert_files(doc("a", "Film 720p", "archive", duration=102))
+        cards = await api._finalize(api._build_results_list(stale, "none"), True, siblings=False)
+        self.assertTrue(all(not card.get("group") for card in cards))
+        await api._scan_all_groups()
+        self.assertEqual(api.SCAN_STATE["error"], "")
+        self.assertEqual(await self.groups.count_documents({}), 0)
+
+    async def test_known_runtime_on_another_copy_can_complete_a_quality_group(self):
+        rows = [doc("a", "Shared Film 720p", duration=0),
+                doc("b", "Shared Film 1080p", "cloud", duration=120),
+                doc("c", "Shared Film 480p", "archive", duration=120)]
+        await self.insert_files(*rows, doc("a", "Shared Film 720p", "cloud", duration=120))
+        cards = await api._finalize(api._build_results_list(rows, "none"), True, siblings=False)
+        self.assertEqual(len(cards), 1)
+        self.assertEqual((cards[0]["group_type"], cards[0]["duration"]), ("quality", "2:00"))
+        self.assertEqual({item["file_id"] for item in cards[0]["variants"]}, {"a", "b", "c"})
+        self.assertEqual((await self.cols["primary"].find_one({"_id": "a"}))["group_id"], cards[0]["gid"])
+        self.assertEqual((await self.cols["cloud"].find_one({"_id": "a"}))["group_id"], cards[0]["gid"])
+        saved = await self.groups.find_one({"_id": cards[0]["gid"]})
+        self.assertEqual((await api._group_cards([saved], "none"))[0]["duration"], "2:00")
+
+    async def test_sibling_expansion_groups_matching_files_without_leaking_other_results(self):
+        docs = [doc("a", "River Film 720p", duration=100), doc("b", "River Film 1080p", "cloud", duration=100),
+                doc("c", "River Film 480p", "archive", duration=100), doc("wrong", "River Film 4K", duration=101)]
+        await self.insert_files(*docs)
+        with patch.object(api, "_siblings", AsyncMock(return_value=docs)):
+            cards = await api._finalize(api._build_results_list([docs[0]], "none"), True, siblings=True)
+        self.assertEqual(len(cards), 1)
+        self.assertEqual({v["file_id"] for v in cards[0]["variants"]}, {"a", "b", "c"})
+        self.assertEqual(cards[0]["duration"], "1:40")
+        self.assertNotIn("group_id", await self.cols["primary"].find_one({"_id": "wrong"}))
+
+    async def test_sibling_lookup_accepts_release_tags_between_title_words_and_fails_closed(self):
+        class Cursor:
+            def __init__(self, rows):
+                self.rows = rows
+            def limit(self, limit):
+                self.rows = self.rows[:limit]
+                return self
+            async def to_list(self, length):
+                return [dict(row) for row in self.rows[:length]]
+
+        class Collection:
+            def __init__(self, name, rows, fail=False):
+                self.name, self.rows, self.fail, self.query = name, rows, fail, None
+            def find(self, query, projection):
+                if self.fail:
+                    raise RuntimeError("offline")
+                self.query = query
+                return Cursor([row for row in self.rows if query["file_name"].search(row["file_name"])])
+
+        primary = Collection("Primary", [doc("a", "Film [Uploader] (2024) 720p.mkv"),
+                                         doc("wrong", "Film (2023) 720p.mkv")])
+        cloud = Collection("Cloud", [doc("b", "Film.2024.1080p.mkv")])
+        archive = Collection("Archive", [])
+        with patch.object(db, "primary", primary), patch.object(db, "cloud", cloud), patch.object(db, "archive", archive):
+            rows = await db.find_phrase_files("film 2024")
+            self.assertEqual({row["_id"] for row in rows}, {"a", "b"})
+            self.assertIn("$text", primary.query)
+            self.assertEqual({row["source_col"] for row in rows}, {"primary", "cloud"})
+            primary.rows.append(doc("one", "The One 720p.mkv"))
+            self.assertEqual({row["_id"] for row in await db.find_phrase_files("the one")}, {"one"})
+            self.assertEqual(primary.query["$text"]["$search"], '"one"')
+            await db.find_phrase_files("the")
+            self.assertNotIn("$text", primary.query)  # Mongo's English index omits stop words.
+            archive.fail = True
+            with self.assertRaises(RuntimeError):
+                await db.find_phrase_files("film 2024")
+
+    async def test_cross_collection_bypass_offsets_do_not_repeat_or_skip(self):
+        for source, count in (("primary", 3), ("cloud", 4), ("archive", 2)):
+            await self.insert_files(*(doc(f"{source}{i}", f"Query File {i}", source) for i in range(count)))
+        def regex_filter(raw, _regex, lang=None):
+            return {"file_name": re.compile(re.escape(raw), re.I)}, False
+        expected = [(source, f"{source}{i}") for source, count in (("primary", 3), ("cloud", 4), ("archive", 2))
+                    for i in reversed(range(count))]
+        collected, offset = [], 0
+        with patch.object(db, "build_query_filter", regex_filter):
+            for _ in range(10):
+                docs, nxt, _, _ = await db.get_search_results("Query", 2, offset=offset,
+                                                               collection_type="all", bypass_count=True)
+                collected.extend((row["source_col"], row["_id"]) for row in docs)
+                if nxt == "":
+                    break
+                offset = nxt
+        self.assertEqual(collected, expected)
+
+    async def test_text_search_exhaustion_does_not_switch_to_regex_midstream(self):
+        class Cursor:
+            def __init__(self, rows):
+                self.rows, self.offset, self.count = rows, 0, len(rows)
+            def sort(self, *_args):
+                return self
+            def skip(self, offset):
+                self.offset = offset
+                return self
+            def limit(self, count):
+                self.count = count
+                return self
+            async def to_list(self, length):
+                return [dict(row) for row in self.rows[self.offset:self.offset + min(self.count, length)]]
+
+        class Collection:
+            name = "Primary"
+            def __init__(self, text_rows, regex_rows):
+                self.text_rows, self.regex_rows, self.regex_calls = text_rows, regex_rows, 0
+            def find(self, query, _projection):
+                if "$text" in query:
+                    return Cursor(self.text_rows)
+                self.regex_calls += 1
+                return Cursor(self.regex_rows)
+
+        regex = re.compile("Example", re.I)
+        text = [doc("a", "Example A"), doc("b", "Example B")]
+        regex_rows = [doc(str(i), f"Example {i}") for i in range(4)]
+        col = Collection(text, regex_rows)
+        rows, _ = await db._search(col, "Example", regex, 2, 2, bypass_count=True)
+        self.assertEqual(rows, [])
+        self.assertEqual(col.regex_calls, 0)
+        # A genuinely empty text search still uses the regex stream on every page.
+        col = Collection([], regex_rows)
+        rows, _ = await db._search(col, "Example", regex, 2, 2, bypass_count=True)
+        self.assertEqual([row["_id"] for row in rows], ["2", "3"])
+        self.assertEqual(col.regex_calls, 1)
+
+    async def test_single_collection_grouped_only_applies_to_regex_fallback(self):
+        await self.db.Primary.insert_many([doc("a", "Example Alpha", group_id="7"), doc("b", "Example Beta")])
+        # Make the text stream empty, so the regex fallback is exercised.
+        original = self.cols["primary"].find
+        class EmptyTextCursor:
+            def sort(self, *_args): return self
+            def skip(self, *_args): return self
+            def limit(self, *_args): return self
+            async def to_list(self, **_kwargs): return []
+        def find(query, *args, **kwargs):
+            if "$text" in query or ("$and" in query and any("$text" in term for term in query["$and"])):
+                return EmptyTextCursor()
+            return original(query, *args, **kwargs)
+        with patch.object(db, "COLLECTIONS", {"primary": self.cols["primary"]}), \
+             patch.object(self.cols["primary"], "find", side_effect=find):
+            rows, _, _, _ = await db.get_search_results("Example", 10, collection_type="primary",
+                                                       grouped_only=True, bypass_count=True)
+        self.assertEqual([row["_id"] for row in rows], ["a"])
+
+    async def test_cross_collection_text_pages_have_stable_score_tiebreaks(self):
+        class Cursor:
+            def __init__(self, rows, collection):
+                self.rows, self.collection, self.offset, self.count = rows, collection, 0, len(rows)
+            def sort(self, spec):
+                self.collection.sort_specs.append(spec)
+                self.rows = sorted(self.rows, key=lambda row: (row["score"], row["_id"]), reverse=True)
+                return self
+            def skip(self, offset):
+                self.offset = offset
+                return self
+            def limit(self, count):
+                self.count = count
+                return self
+            async def to_list(self, length):
+                return [dict(row) for row in self.rows[self.offset:self.offset + min(self.count, length)]]
+
+        class Collection:
+            def __init__(self, name, count):
+                self.name, self.sort_specs = name, []
+                self.rows = [dict(doc(f"{name}{i}", "Query"), score=1.0) for i in range(count)]
+            def find(self, _query, _projection):
+                return Cursor(self.rows, self)
+            async def count_documents(self, _query):
+                return len(self.rows)
+
+        cols = [Collection("Primary", 3), Collection("Cloud", 4), Collection("Archive", 2)]
+        expected = [(col.name.lower(), f"{col.name}{i}") for col in cols for i in reversed(range(len(col.rows)))]
+        collected, offset = [], 0
+        with patch.object(db, "primary", cols[0]), patch.object(db, "cloud", cols[1]), patch.object(db, "archive", cols[2]):
+            for _ in range(10):
+                rows, nxt, _, _ = await db.get_search_results("Query", 2, offset=offset,
+                                                               collection_type="all", bypass_count=True)
+                collected.extend((row["source_col"], row["_id"]) for row in rows)
+                if not nxt:
+                    break
+                offset = nxt
+        self.assertEqual(collected, expected)
+        for col in cols:
+            self.assertTrue(col.sort_specs)
+            self.assertTrue(all(spec == [("score", {"$meta": "textScore"}), ("_id", -1)]
+                                for spec in col.sort_specs))
+
+    async def test_grouped_cursor_deduplicates_copies_more_than_256_cards_apart(self):
+        stream = ([doc("duplicate", "Library Duplicate", "primary")]
+                  + [doc(f"single{i:03d}", f"Library Unique {i}") for i in range(320)]
+                  + [doc("duplicate", "Library Duplicate", "cloud")])
+
+        async def raw(_q, limit, offset=0, **_kwargs):
+            page = stream[offset:offset + limit]
+            return page, (offset + len(page) if offset + len(page) < len(stream) else ""), 0, "All"
+
+        async def singles(rows, *_args, **_kwargs):
+            return rows
+
+        found, offset, stored = [], "0", False
+        with patch.object(api, "_group_hits", AsyncMock(return_value=[])), patch.object(api, "get_search_results", raw), \
+             patch.object(api, "_finalize", singles), patch.object(api, "MAX_WEB_RESULTS", 21):
+            for _ in range(25):
+                response = await self.client.get("/api/search", params={"q": "Library", "group": "1", "offset": offset})
+                data = await response.json()
+                self.assertEqual(response.status, 200, data)
+                found.extend(row["file_id"] for row in data["results"])
+                offset = data["next_offset"]
+                stored |= str(offset).startswith("g2_")
+                self.assertLessEqual(len(str(offset)), api._GROUP_CURSOR_INLINE_LIMIT)
+                if not offset:
+                    break
+            else:
+                self.fail("grouped cursor did not terminate")
+        self.assertTrue(stored)  # Large seen sets spill to short shared cursors.
+        self.assertEqual(len(found), 321)
+        self.assertEqual(len(set(found)), 321)
+        self.assertEqual(found.count("duplicate"), 1)
+
+    async def test_stored_cursor_is_reusable_query_scoped_and_expires(self):
+        stream = [doc(f"file{i}", f"Library {i}") for i in range(3)]
+
+        async def raw(_q, limit, offset=0, **_kwargs):
+            page = stream[offset:offset + limit]
+            return page, (offset + len(page) if offset + len(page) < len(stream) else ""), 0, "All"
+
+        async def singles(rows, *_args, **_kwargs):
+            return rows
+
+        params = {"q": "Library", "group": "1", "mode": "none"}
+        with patch.object(api, "_group_hits", AsyncMock(return_value=[])), patch.object(api, "get_search_results", raw), \
+             patch.object(api, "_finalize", singles), patch.object(api, "MAX_WEB_RESULTS", 1), \
+             patch.object(api, "_GROUP_CURSOR_INLINE_LIMIT", 1):
+            first = await self.client.get("/api/search", params=params)
+            token = (await first.json())["next_offset"]
+            self.assertRegex(token, r"^g2_[0-9a-f]{32}$")
+            saved = await self.db.GroupSearchCursors.find_one({"_id": token[3:]})
+            self.assertIsNotNone(saved)
+            self.assertGreater(saved["expires_at"], datetime.utcnow())
+            a = await self.client.get("/api/search", params={**params, "offset": token})
+            b = await self.client.get("/api/search", params={**params, "offset": token})
+            self.assertEqual((await a.json())["results"], (await b.json())["results"])
+            wrong = await self.client.get("/api/search", params={**params, "q": "Different", "offset": token})
+            self.assertEqual(wrong.status, 400)
+            await self.db.GroupSearchCursors.update_one({"_id": token[3:]},
+                                                        {"$set": {"expires_at": datetime.utcnow() - timedelta(seconds=1)}})
+            expired = await self.client.get("/api/search", params={**params, "offset": token})
+            self.assertEqual(expired.status, 400)
+            self.assertIn("expired", (await expired.json())["error"].lower())
+
+    async def test_cursor_limits_and_storage_read_failures_are_explicit(self):
+        context = api._cursor_context("Library", "all", "all")
+        state = {"v": 1, "ctx": context, "groups": [], "gp": 0, "fp": 1, "seen": ["f:one", "f:two"]}
+        with patch.object(api, "_GROUP_CURSOR_SEEN_LIMIT", 1):
+            with self.assertRaises(api._GroupCursorLimitError):
+                await api._encode_group_cursor(state)
+        with patch.object(api, "_GROUP_CURSOR_RAW_LIMIT", 1):
+            with self.assertRaises(api._GroupCursorLimitError):
+                await api._encode_group_cursor(state)
+        with patch.object(api.group_search_cursors, "find_one", AsyncMock(side_effect=RuntimeError("offline"))):
+            response = await self.client.get("/api/search", params={"q": "Library", "group": "1",
+                                                                        "offset": "g2_" + "a" * 32})
+        self.assertEqual(response.status, 503)
+        self.assertIn("temporarily unavailable", (await response.json())["error"])
+        response = await self.client.get("/api/search", params={"q": "Library", "group": "1", "offset": "g1_bad"})
+        self.assertEqual(response.status, 400)
+
+    async def test_cursor_ttl_index_is_created(self):
+        with patch.object(db, "db", self.db), patch.object(db, "FILE_COLLECTIONS", self.cols), \
+             patch.object(db, "actors", self.db.Actors), patch.object(db, "posts", self.db.Posts), \
+             patch.object(db, "group_search_cursors", self.db.GroupSearchCursors):
+            await db.ensure_indexes()
+        indexes = await self.db.GroupSearchCursors.index_information()
+        self.assertEqual(indexes["group_search_cursor_ttl"]["expireAfterSeconds"], 0)
+
+    async def test_large_group_hit_snapshot_and_storage_failure(self):
+        hits = [{"_id": str(i)} for i in range(1, 1201)]
+
+        async def lookup(ids):
+            return [{"_id": gid} for gid in ids]
+
+        async def cards(groups, _mode):
+            return [{"group": True, "group_type": "quality", "gid": g["_id"]} for g in groups]
+
+        params = {"q": "Library", "group": "1"}
+        with patch.object(api, "_group_hits", AsyncMock(return_value=hits)), \
+             patch.object(api, "get_groups_by_ids", lookup), patch.object(api, "_group_cards", cards), \
+             patch.object(api, "MAX_WEB_RESULTS", 2), patch.object(api, "_GROUP_CURSOR_INLINE_LIMIT", 1):
+            first = await self.client.get("/api/search", params=params)
+            first_data = await first.json()
+            self.assertEqual(first.status, 200, first_data)
+            token = first_data["next_offset"]
+            self.assertTrue(token.startswith("g2_"))
+            second = await self.client.get("/api/search", params={**params, "offset": token})
+            second_data = await second.json()
+            self.assertEqual(second.status, 200, second_data)
+            self.assertEqual([c["gid"] for c in first_data["results"]], ["1", "2"])
+            self.assertEqual([c["gid"] for c in second_data["results"]], ["3", "4"])
+            with patch.object(api.group_search_cursors, "insert_one", AsyncMock(side_effect=RuntimeError("offline"))):
+                failed = await self.client.get("/api/search", params=params)
+            self.assertEqual(failed.status, 503)
+            self.assertIn("temporarily unavailable", (await failed.json())["error"])
+
+    async def test_selective_filter_may_continue_after_an_empty_page(self):
+        stream = [doc(f"solo{i:03d}", f"Library {i}") for i in range(192)] + [doc("target", "Library Series")]
+
+        async def raw(_q, limit, offset=0, **_kwargs):
+            page = stream[offset:offset + limit]
+            return page, (offset + len(page) if offset + len(page) < len(stream) else ""), 0, "All"
+
+        async def finalize(rows, *_args, **_kwargs):
+            return [{"group": True, "gid": "42", "group_type": "series", "variants": [row]}
+                    if row["file_id"] == "target" else row for row in rows]
+
+        params = {"q": "Library", "group": "1", "gf": "series"}
+        with patch.object(api, "_group_hits", AsyncMock(return_value=[])), patch.object(api, "get_search_results", raw), \
+             patch.object(api, "_finalize", finalize), patch.object(api, "MAX_WEB_RESULTS", 1):
+            first = await self.client.get("/api/search", params=params)
+            data = await first.json()
+            self.assertEqual(data["results"], [])
+            self.assertTrue(data["next_offset"])
+            second = await self.client.get("/api/search", params={**params, "offset": data["next_offset"]})
+            data = await second.json()
+            self.assertEqual([card["gid"] for card in data["results"]], ["42"])
+            self.assertFalse(data["next_offset"])
+
+    async def test_grouped_search_cursor_survives_persisting_groups_and_page_boundaries(self):
+        # The same Telegram ID appears in two collections; variants are separated
+        # by many unrelated files and lie in all three collections.
+        docs = [doc("zzold1", "Library Legacy 720p", group_id="7"),
+                doc("zzold2", "Library Legacy 1080p", "cloud", group_id="7"),
+                doc("zzquality", "Library Ocean 720p", duration=500),
+                doc("bbquality", "Library Ocean 1080p", "cloud", duration=500),
+                doc("aaquality", "Library Ocean 480p", "archive", duration=500)]
+        for i in range(26):
+            source = ("primary", "cloud", "archive")[i % 3]
+            docs.append(doc(f"solo{i:02d}", f"Library Solo {i:02d}", source))
+        docs.append(doc("solo05", "Library Solo 05", "primary"))  # duplicate copy
+        await self.insert_files(*docs)
+        await self.groups.insert_one({"_id": "7", "num": 7, "name": "Library Legacy", "group_type": "quality",
+                                      "members": ["zzold1", "zzold2"], "auto_keys": ["library legacy"],
+                                      "excluded": []})
+
+        def regex_filter(raw, _regex, lang=None):
+            return {"file_name": re.compile(re.escape(raw), re.I)}, False
+
+        async def group_hits(_q):
+            return [group async for group in self.groups.find({})]
+
+        async def siblings(key):
+            rows = []
+            for source, col in self.cols.items():
+                async for item in col.find({}):
+                    name = item.get("file_name", "")
+                    if quality_title_key(name) == key or (episode_identity(name) and series_key(name) == key):
+                        rows.append(dict(item, source_col=source))
+            return rows
+
+        collected, offset, first_cursor = [], "0", None
+        with patch.object(db, "build_query_filter", regex_filter), patch.object(api, "_group_hits", group_hits), \
+             patch.object(api, "_siblings", siblings), patch.object(api, "MAX_WEB_RESULTS", 2):
+            for _ in range(30):
+                response = await self.client.get("/api/search", params={"q": "Library", "group": "1",
+                                                                          "mode": "none", "offset": offset})
+                data = await response.json()
+                self.assertEqual(response.status, 200, data)
+                self.assertLessEqual(len(data["results"]), 2)
+                collected.extend(data["results"])
+                offset = data["next_offset"]
+                if first_cursor is None:
+                    first_cursor = offset
+                if not offset:
+                    break
+            else:
+                self.fail("group cursor did not terminate")
+            wrong_query = await self.client.get("/api/search", params={"q": "Different", "group": "1",
+                                                                         "mode": "none", "offset": first_cursor})
+            self.assertEqual(wrong_query.status, 400)
+        groups = [card for card in collected if card.get("group")]
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[0]["gid"], "7")  # saved groups remain first
+        self.assertEqual({frozenset(v["file_id"] for v in card["variants"]) for card in groups},
+                         {frozenset({"zzold1", "zzold2"}), frozenset({"zzquality", "bbquality", "aaquality"})})
+        singles = [card["file_id"] for card in collected if not card.get("group")]
+        self.assertEqual(len(singles), 26)
+        self.assertEqual(set(singles), {f"solo{i:02d}" for i in range(26)})
+        self.assertEqual(await self.groups.count_documents({}), 2)
+
+    async def test_recent_series_filter_paginates_with_small_saved_group(self):
+        docs = [doc("old1", "Older Show S01E01", group_id="12"),
+                doc("old2", "Older Show S01E02", "cloud", group_id="12"),
+                doc("new1", "New Show S01E01", duration=0), doc("new2", "New Show S01E02", duration=0),
+                doc("new3", "New Show S01E03", "archive", duration=0),
+                doc("alone", "Unrelated", duration=0)]
+        await self.insert_files(*docs)
+        await self.groups.insert_one({"_id": "12", "num": 12, "name": "Older Show", "group_type": "series",
+                                      "members": ["old1", "old2"], "auto_keys": ["older show"], "excluded": []})
+
+        async def siblings(key):
+            return [item for item in docs if series_key(item["file_name"]) == key]
+
+        collected, offset = [], "0"
+        with patch.object(api, "_siblings", siblings), patch.object(api, "MAX_WEB_RESULTS", 1):
+            for _ in range(8):
+                response = await self.client.get("/api/search", params={"group": "1", "gf": "series",
+                                                                          "mode": "none", "offset": offset})
+                data = await response.json()
+                self.assertEqual(response.status, 200, data)
+                collected.extend(data["results"])
+                offset = data["next_offset"]
+                if not offset:
+                    break
+            else:
+                self.fail("series cursor did not terminate")
+        self.assertEqual(len(collected), 2)
+        self.assertTrue(all(card["group_type"] == "series" and not card["duration"] for card in collected))
+        self.assertEqual({card["count"] for card in collected}, {2, 3})
 
     async def test_admin_endpoints_require_admin(self):
         api.get_user_role.return_value = ("user", 9)

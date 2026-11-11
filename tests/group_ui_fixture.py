@@ -28,6 +28,7 @@ for name, col in cols.items():
 db.COLLECTIONS = api.COLLECTIONS = {**cols, "actors": store.Actors}
 db.groups = api.groups = store.QualityGroups
 api.group_seq = store.QualityGroupSeq
+api.group_search_cursors = store.GroupSearchCursors
 api.FILE_COLLECTIONS = cols
 
 
@@ -76,6 +77,26 @@ async def seed(_app):
     await store.QualityGroupSeq.insert_one({"_id": "seq", "n": 12})
 
 
+async def seed_automatic_examples(_req):
+    # Test-only data added after the move/editor scenarios have finished.
+    specs = [
+        ("aq1", "Auto Movie 720p.mkv", 65), ("aq2", "Auto Movie 1080p.mkv", 65),
+        ("aq3", "Auto Movie 480p.mkv", 65),
+        ("as1", "Auto Mystery S01E01.mkv", 1200), ("as2", "Auto Mystery S01E02.mkv", 1800),
+        ("as3", "Auto Mystery S01E03.mkv", 0),
+        ("two1", "Duo Film 720p.mkv", 65), ("two2", "Duo Film 1080p.mkv", 65),
+        ("no1", "Unknown Runtime 720p.mkv", 0), ("no2", "Unknown Runtime 1080p.mkv", 0),
+        ("no3", "Unknown Runtime 480p.mkv", 0),
+    ]
+    now = int(time.time()) + 100
+    for index, (fid, name, duration) in enumerate(specs):
+        source = ("primary", "cloud", "archive")[index % 3]
+        await cols[source].insert_one({"_id": fid, "file_ref": fid, "file_name": name, "file_type": "video",
+                                       "file_size": 1000, "duration": duration, "added_on": now - index})
+    api._invalidate_search_caches()
+    return web.json_response({"ok": True})
+
+
 async def dashboard(_req):
     return build_page("Mock Dashboard", DASHBOARD_BODY, "", "dash", "admin")
 
@@ -88,6 +109,7 @@ async def thumb(_req):
 
 app = web.Application()
 app.router.add_get("/dashboard", dashboard)
+app.router.add_post("/fixture/seed_auto", seed_automatic_examples)
 app.router.add_get("/api/thumb", thumb)
 app.add_routes(api.search_routes)
 app.on_startup.append(seed)

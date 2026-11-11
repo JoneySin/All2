@@ -38,6 +38,7 @@ actors  = db["Actors"]  # 🎭 एक्टर प्रोफाइल के �
 posts   = db["Posts"]   # 📝 नया पोस्ट्स (CMS) कलेक्शन
 groups  = db["QualityGroups"]      # 🗂️ Quality/series groups; legacy collection name, separate from bot chats
 group_seq = db["QualityGroupSeq"]  # ग्रुप नंबर (1, 2, 3...) का counter
+group_search_cursors = db["GroupSearchCursors"]  # Expiring large grouped-search snapshots
 
 COLLECTIONS = {
     "primary": primary,
@@ -102,6 +103,13 @@ async def ensure_indexes():
     except Exception as e:
         if "already exists" not in str(e) and "IndexKeySpecsConflict" not in str(e):
             logger.warning(f"QualityGroups Index warning: {e}")
+
+    # Large grouped-search continuations are immutable and expire automatically.
+    try:
+        await group_search_cursors.create_index("expires_at", expireAfterSeconds=0,
+                                                name="group_search_cursor_ttl")
+    except Exception as e:
+        logger.warning(f"Group search cursor TTL index warning: {e}")
 
     # 3. Posts Specific Indexes (NEW)
     try:
@@ -484,7 +492,7 @@ def _build_regex(query: str):
 # ─────────────────────────────────────────────────────────
 FILE_PROJECTION = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1,
                    "file_ref": 1, "caption": 1, "thumb_url": 1, "thumb_revision": 1, "duration": 1,
-                   "meta": 1, "group_id": 1, "group_auto_excluded": 1}
+                   "duration_seconds": 1, "meta": 1, "group_id": 1, "group_auto_excluded": 1}
 FILE_PROJECTION_SCORED = {**FILE_PROJECTION, "score": {"$meta": "textScore"}}
 
 # ─────────────────────────────────────────────────────────
@@ -576,29 +584,37 @@ def _tag_docs(docs, col_name: str):
 # ─────────────────────────────────────────────────────────
 # 🚀 SMART SEARCH
 # ─────────────────────────────────────────────────────────
-async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None, bypass_count=False, exclude_grouped=False):
+async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None, bypass_count=False, exclude_grouped=False, grouped_only=False):
     flt, is_text = build_query_filter(raw_query, regex, lang)
     if not flt:
         return [], 0
     if exclude_grouped:
         flt = _not_grouped(flt)
+    elif grouped_only:
+        flt = {"$and": [flt, {"group_id": {"$exists": True}}]}
 
     col_name = col.name.lower()
 
     if is_text:
-        cursor = col.find(flt, FILE_PROJECTION_SCORED).sort([("score", {"$meta": "textScore"})])
+        cursor = col.find(flt, FILE_PROJECTION_SCORED).sort([("score", {"$meta": "textScore"}), ("_id", -1)])
         cursor.skip(offset).limit(limit)
         docs = await cursor.to_list(length=limit)
         if docs:
             _tag_docs(docs, col_name)
             count = 0 if bypass_count else await col.count_documents(flt)
             return docs, count
+        # An exhausted text page is not an empty text search. Falling back to a
+        # differently sorted regex stream midway would repeat or skip files.
+        if offset and await col.find(flt, {"_id": 1}).limit(1).to_list(length=1):
+            return [], 0
         # text-search खाली आया तो नीचे regex fallback चलता है
         flt, is_text = build_query_filter("", regex, lang)
         if not flt:
             return [], 0
         if exclude_grouped:
             flt = _not_grouped(flt)
+        elif grouped_only:
+            flt = {"$and": [flt, {"group_id": {"$exists": True}}]}
 
     cursor = col.find(flt, FILE_PROJECTION).sort('_id', -1)
     cursor.skip(offset).limit(limit)
@@ -631,6 +647,32 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
         flt = {"$and": [flt, {"group_id": {"$exists": True}}]}
 
     results, total, actual_src = [], 0, collection_type
+
+    if collection_type == "all" and bypass_count:
+        # A made-up count per collection makes offsets jump or repeat as soon as
+        # the primary collection has fewer than that many matches. Only count a
+        # collection when an offset has actually passed its end.
+        remaining, skip = max_results, max(0, offset)
+        projection = FILE_PROJECTION_SCORED if is_text else FILE_PROJECTION
+        sources = []
+        for col in (primary, cloud, archive):
+            if remaining <= 0:
+                break
+            cursor = col.find(flt, projection)
+            cursor = cursor.sort([("score", {"$meta": "textScore"}), ("_id", -1)]) if is_text else cursor.sort('_id', -1)
+            docs = await cursor.skip(skip).limit(remaining).to_list(length=remaining)
+            if docs:
+                _tag_docs(docs, col.name.lower())
+                results.extend(docs)
+                sources.append(col.name.capitalize())
+                remaining -= len(docs)
+                skip = 0
+            elif skip:
+                count = await col.count_documents(flt)
+                skip = max(0, skip - count)
+        next_offset = offset + max_results if len(results) == max_results else ""
+        actual_src = "All" if len(sources) > 1 else (sources[0] if sources else "None")
+        return results, next_offset, offset + len(results) + (1 if next_offset else 0), actual_src
 
     if collection_type == "all":
 
@@ -678,7 +720,7 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
                 continue
 
             cursor = col.find(flt, projection)
-            cursor = cursor.sort([("score", {"$meta": "textScore"})]) if is_text else cursor.sort('_id', -1)
+            cursor = cursor.sort([("score", {"$meta": "textScore"}), ("_id", -1)]) if is_text else cursor.sort('_id', -1)
             cursor.skip(curr_offset).limit(rem_limit)
             docs = await cursor.to_list(length=rem_limit)
 
@@ -689,7 +731,8 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
 
     else:
         col = COLLECTIONS.get(collection_type, primary)
-        results, total = await _search(col, raw_query, regex, offset, max_results, lang, bypass_count=bypass_count, exclude_grouped=exclude_grouped)
+        results, total = await _search(col, raw_query, regex, offset, max_results, lang, bypass_count=bypass_count,
+                                       exclude_grouped=exclude_grouped, grouped_only=grouped_only)
         actual_src = collection_type.capitalize()
         if not results: total = 0
         # ✅ FIX: single-collection टैब (primary/cloud/archive) के लिए भी counts_out भरो
@@ -998,22 +1041,52 @@ async def get_files_by_ids(ids):
         out.extend(docs)
     return out
 
+# MongoDB's default English text index omits these words. Do not pick one as
+# the sole indexed anchor when another title word is available.
+_MONGO_ENGLISH_STOP_WORDS = frozenset("""
+a about above after again against all am an and any are as at be because been
+before being below between both but by cannot could did do does doing down during
+each few for from further had has have having he her here hers herself him
+himself his how i if in into is it its itself me more most my myself no nor not
+of off on once only or other ought our ours ourselves out over own same she
+should so some such than that the their theirs them themselves then there these
+they this those through to too under until up very was we were what when where
+which while who whom why with would you your yours yourself yourselves
+""".split())
+
+
 async def find_phrase_files(phrase, limit=100):
-    """Naam me poora `phrase` rakhne wali files (text-index se), teeno collections me.
-    Auto-group ki "siblings" dhundhne ke liye — search query se bilkul independent."""
-    q = {"$text": {"$search": '"%s"' % str(phrase).replace('"', " ")}}
+    """Find bounded title candidates across collections for grouping.
+
+    A normalized title may have release tags between its words in the original
+    filename, so an exact Mongo text phrase misses valid siblings. Use one
+    indexed non-stop-word plus independent literal lookaheads for the title;
+    the caller applies the full normalized-title/episode checks afterwards.
+    All-stop-word titles use the bounded regex query instead.
+    """
+    words = str(phrase or "").split()[:12]
+    if not words:
+        return []
+    indexed = [word for word in words if word.casefold() not in _MONGO_ENGLISH_STOP_WORDS]
+    pattern = "^" + "".join("(?=.*" + re.escape(word) + ")" for word in words)
+    q = {"file_name": re.compile(pattern, re.I)}
+    if indexed:
+        longest = max(indexed, key=len).replace('"', " ")
+        q["$text"] = {"$search": f'"{longest}"'}
 
     async def one(col):
         try:
             docs = await col.find(q, FILE_PROJECTION).limit(limit).to_list(length=limit)
             _tag_docs(docs, col.name.lower())
             return docs
-        except Exception as e:
-            logger.warning(f"find_phrase_files error ({col.name}): {e}")
-            return []
+        except Exception as exc:
+            logger.warning(f"find_phrase_files error ({col.name}): {exc}")
+            return None
 
-    res = await asyncio.gather(one(primary), one(cloud), one(archive))
-    return [d for part in res for d in part]
+    results = await asyncio.gather(one(primary), one(cloud), one(archive))
+    if any(part is None for part in results):
+        raise RuntimeError("Could not search all file collections for group siblings")
+    return [doc for part in results for doc in part]
 
 def encode_file_id(s: bytes) -> str:
     r, n = b"", 0

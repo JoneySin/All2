@@ -20,6 +20,30 @@ const assert = require('node:assert/strict');
  }
  async function waitTarget(name){await page.locator('#mergePreview .target-name').filter({hasText:name}).waitFor({timeout:10000});}
  await page.goto(base+'/dashboard',{waitUntil:'domcontentloaded'});await page.locator('.grp-card').first().waitFor();
+ // Groups open from their names, not an extra action beneath them. Only quality
+ // groups show a common duration; VIDEO/type chips are absent from file cards.
+ const quality=page.locator('.grp-card').filter({hasText:'Aurora Rising'}).first();
+ const series=page.locator('.grp-card').filter({hasText:'The Long Way Home'}).first();
+ assert.equal(await page.locator('.grp-action').count(),0);
+ assert.equal(await page.locator('.file-card .type-chip, .file-card .tc-type').count(),0);
+ assert.equal(await quality.locator('.grp-master .poster-top .dur-chip').textContent(),'0:03');
+ assert.equal(await series.locator('.grp-master .poster-top .dur-chip').count(),0);
+ assert.ok((await quality.locator('.grp-master .poster-top .group-id-chip').textContent()).includes('#11'));
+ await quality.locator('.grp-title-button').focus();await page.keyboard.press('Enter');
+ assert.equal(await quality.evaluate(e=>e.classList.contains('open')),true);
+ assert.equal(await quality.locator('.grp-title-button').getAttribute('aria-expanded'),'true');
+ assert.equal(await quality.locator('.grp-openhead').evaluate(e=>document.activeElement===e),true);
+ await page.keyboard.press('Enter');assert.equal(await quality.evaluate(e=>e.classList.contains('open')),false);
+ assert.equal(await quality.locator('.grp-title-button').evaluate(e=>document.activeElement===e),true);
+ await series.locator('.grp-title-button').click();assert.equal(await series.locator('.grp-variants .file-card').count(),2);
+ await series.locator('.grp-openhead').click();
+ await page.evaluate(()=>localStorage.setItem('ff_dashboard_mode','none'));await page.reload();
+ await page.locator('.grp-card').first().waitFor();
+ assert.equal(await page.locator('.grp-card').filter({hasText:'Aurora Rising'}).first().locator('.grp-textinfo .dur-chip').textContent(),'0:03');
+ assert.equal(await page.locator('.grp-card').filter({hasText:'The Long Way Home'}).first().locator('.grp-textinfo .dur-chip').count(),0);
+ assert.equal(await page.locator('.file-card .type-chip, .file-card .tc-type').count(),0);
+ await page.evaluate(()=>localStorage.setItem('ff_dashboard_mode','tg'));await page.reload();await page.locator('.grp-card').first().waitFor();
+ console.log('Card UI: name/keyboard opening, IDs, quality duration, no series duration or type chip OK');
  let trigger=await openFile('f1');
  assert.equal(await page.evaluate(()=>document.activeElement.id),'mergeId');
  assert.equal(await page.locator('#mergeSubmit').isDisabled(),true);
@@ -69,7 +93,7 @@ const assert = require('node:assert/strict');
 
  // A whole-group move shows the source and protects against self-merge / duplicate clicks.
  const group=page.locator('.grp-card').filter({hasText:'Aurora Reviewed'}).first();await group.waitFor();
- await group.locator('.grp-action').click();await group.locator('.grp-oadmin button').filter({hasText:'Merge'}).click();
+ await group.locator('.grp-title-button').click();await group.locator('.grp-oadmin button').filter({hasText:'Merge'}).click();
  await page.locator('#mergeModal').waitFor();assert.ok((await page.locator('.merge-source').textContent()).includes('Group #11'));
  await page.locator('#mergeId').fill('11');await page.locator('#mergeStatus').filter({hasText:'source group'}).waitFor();
  assert.equal(await page.locator('#mergeSubmit').isDisabled(),true);
@@ -139,5 +163,46 @@ const assert = require('node:assert/strict');
  assert.equal(created.name,'Fresh Series');assert.equal(created.group_type,'series');assert.equal(created.count,2);
  assert.equal(created.members[0].label,'First episode');
  console.log('Group editor: new series creation and episode labels remain functional');
+
+ // Newly discovered automatic groups need three distinct files; runtimes are
+ // required for quality but may differ or be missing for marked episodes.
+ assert.equal((await page.request.post(base+'/fixture/seed_auto')).status(),200);
+ await page.reload();
+ const autoMovie=page.locator('.grp-card').filter({hasText:'Auto Movie'}).first();await autoMovie.waitFor();
+ const autoSeries=page.locator('.grp-card').filter({hasText:'Auto Mystery'}).first();await autoSeries.waitFor();
+ assert.ok((await autoMovie.locator('.grp-textinfo').textContent()).includes('3 VERSIONS'));
+ assert.equal(await autoMovie.locator('.grp-textinfo .dur-chip').textContent(),'1:05');
+ assert.ok((await autoSeries.locator('.grp-textinfo').textContent()).includes('3 FILES'));
+ assert.equal(await autoSeries.locator('.grp-textinfo .dur-chip').count(),0);
+ assert.equal(await page.locator('.grp-card').filter({hasText:'Duo Film'}).count(),0);
+ assert.equal(await page.locator('.file-card[data-fid^="two"]').count(),2);
+ assert.equal(await page.locator('.grp-card').filter({hasText:'Unknown Runtime'}).count(),0);
+ assert.equal(await page.locator('.file-card[data-fid^="no"]').count(),3);
+ await page.locator('#cddGfBtn').click();await page.locator('#cddGfMenu [data-val=quality]').click();
+ await autoSeries.waitFor({state:'detached'});await autoMovie.waitFor();
+ assert.equal(await page.locator('.file-card[data-fid^="two"]').count(),0);
+ await page.locator('#cddGfBtn').click();await page.locator('#cddGfMenu [data-val=series]').click();
+ await autoMovie.waitFor({state:'detached'});await autoSeries.waitFor();
+ console.log('Automatic cards: three-file threshold, runtimes, episode series and filters OK');
+
+ // A selective filter can produce an empty continuation page. Even its final
+ // page must retain Previous, and an edit must restart a stored cursor snapshot.
+ const offsets=[];
+ await page.route('**/api/search?*',r=>{
+   const off=new URL(r.request().url()).searchParams.get('offset');offsets.push(off);
+   return r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({
+     results:[],next_offset:off==='0'?'g2_'+('a'.repeat(32)):'',is_admin:true
+   })});
+ });
+ await page.evaluate(async()=>{document.querySelector('#q').value='Pagination Test';await doSearch(0,true);});
+ assert.equal(await page.locator('#nBtn').isEnabled(),true);await page.locator('#nBtn').click();
+ await page.locator('#pgInfo').filter({hasText:'Page 2'}).waitFor();
+ assert.equal(await page.locator('#pageBox').isVisible(),true);assert.equal(await page.locator('#pBtn').isEnabled(),true);
+ assert.equal(await page.locator('#nBtn').isDisabled(),true);await page.locator('#pBtn').click();
+ await page.locator('#pgInfo').filter({hasText:'Page 1'}).waitFor();assert.equal(await page.locator('#nBtn').isEnabled(),true);
+ await page.locator('#nBtn').click();await page.locator('#pgInfo').filter({hasText:'Page 2'}).waitFor();
+ await page.evaluate(async()=>await doSearch(curOff,true,true));
+ assert.equal(await page.locator('#pgInfo').textContent(),'Page 1');assert.equal(offsets[offsets.length-1],'0');
+ console.log('Pagination: empty-page Previous and fresh stored-cursor reset OK');
  console.log('Page errors:',JSON.stringify(errors));assert.deepEqual(errors,[]);await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});

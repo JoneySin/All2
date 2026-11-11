@@ -386,8 +386,8 @@ async function doSearch(off,allowEmpty){
       let tr=f.res?`<span class="tr">${esc(f.res)}</span>`:'';
       let gid=(f.group_num||f.gid)?`<span class="gid-chip">GROUP #${esc(f.group_num||f.gid)}</span>`:'';
       let ph=pMode!=='none'
-        ?`<div class="pb" id="pb-${f.file_id}"><img src="${f.tg_thumb}" data-col="${sc}" class="fp" loading="lazy" onload="this.classList.add('on')" onerror="thumbErr('${f.file_id}')"><div class="pt">${gid}<span class="tc">${esc(f.type||'VIDEO')}</span><span class="sc">${esc(f.size||'')}</span>${dc}${rc}<span class="sp ${sc}"><span class="sd"></span>${sc.toUpperCase()}</span></div></div>`
-        :`<div class="ti">${gid}<span class="tt">${esc(f.type||'VIDEO')}</span><span class="ts">${esc(f.size||'')}</span>${td}${tr}<span class="tp ${sc}"><span class="sd"></span>${sc.toUpperCase()}</span></div>`;
+        ?`<div class="pb" id="pb-${f.file_id}"><img src="${f.tg_thumb}" data-col="${sc}" class="fp" loading="lazy" onload="this.classList.add('on')" onerror="thumbErr('${f.file_id}')"><div class="pt">${gid}<span class="sc">${esc(f.size||'')}</span>${dc}${rc}<span class="sp ${sc}"><span class="sd"></span>${sc.toUpperCase()}</span></div></div>`
+        :`<div class="ti">${gid}<span class="ts">${esc(f.size||'')}</span>${td}${tr}<span class="tp ${sc}"><span class="sd"></span>${sc.toUpperCase()}</span></div>`;
       let nameArg=encodeURIComponent(f.name||'').replace(/'/g,'%27');
       h+=`<div class="fc ce" onclick="openStream('${f.file_id}',decodeURIComponent('${nameArg}'))">${ph}<div class="fb"><div class="fn">${esc(f.name)}</div></div></div>`;
     });
