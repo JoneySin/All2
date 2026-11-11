@@ -33,6 +33,9 @@ also checks that dashboard and actor thumbnails reveal admin editing controls,
 file names play, group names open groups, and text-mode controls start hidden and
 can be revealed by clicking the card or using the keyboard. It also checks
 outside-click dismissal, nested cards, selection mode and non-admin behavior.
+The file-editor test checks quality overrides, current membership, destination
+preview and confirmation, changed destinations, and moves from dashboard and
+actor cards.
 It uses a **test-only, always-admin, in-memory** server; never deploy that server.
 Install Node.js and Playwright separately, for example:
 
@@ -46,6 +49,9 @@ npm --prefix /tmp/all2-playwright install --no-save --no-package-lock playwright
 
 # Terminal 2, from the repository root:
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/group_ui_check.cjs
+
+# Restart the fixture, then test the shared file editor separately:
+NODE_PATH=/tmp/all2-playwright/node_modules node tests/file_editor_ui_check.cjs
 ```
 
 The fixture uses port 8765 by default. Set `ALL2_UI_PORT` on the fixture and

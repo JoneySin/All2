@@ -83,8 +83,9 @@ CSS = """
 .file-editor-section{min-width:0}.file-editor-section-head{display:flex;gap:10px;align-items:flex-start;margin-bottom:17px}.file-editor-number{display:grid;place-items:center;flex:none;width:29px;height:29px;border-radius:9px;background:rgba(229,9,20,.12);color:var(--accent);font-size:11px;font-weight:900}.file-editor-section-head h3{font-size:14px;line-height:1.3}.file-editor-section-head p{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4}
 .file-editor-field{display:block;margin-bottom:15px;font-size:12px;font-weight:700;color:var(--text)}.file-editor-field .em-input{margin:7px 0 0;border-radius:9px;font-family:inherit;line-height:1.4}.file-editor-field small{display:block;margin-top:6px;color:var(--muted);font-weight:400;line-height:1.45}.file-editor-field select{cursor:pointer}
 .file-editor-art{padding:16px;border:1px solid var(--border);border-radius:13px;background:var(--card)}.file-editor-art .thumb-preview-box,.file-editor-art .cropper-container-box{border-radius:9px;margin-bottom:12px}.file-editor-art .thumb-preview-box{color:var(--muted);font-size:12px;text-align:center}.file-editor-art .em-upload-btn{position:relative;overflow:hidden;margin:0;padding:11px;border-radius:9px;background:var(--bg3)}.file-editor-art .em-upload-btn:focus-within{outline:2px solid var(--accent);outline-offset:2px}.file-editor-art input[type=file]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.file-editor-art .file-editor-help{margin-top:9px;overflow-wrap:anywhere}
+.file-editor-group{border-top:1px solid var(--border);padding:20px 28px}.file-editor-group-row{display:flex;gap:8px;align-items:flex-end}.file-editor-group-row label{flex:1;min-width:0;margin:0}.file-editor-group button,.file-editor-retry{border:1px solid var(--border);border-radius:9px;background:var(--bg3);color:var(--text);padding:11px 14px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer}.file-editor-group button:disabled,.file-editor-retry:disabled{opacity:.5;cursor:not-allowed}.file-editor-group-status{font-size:12px;line-height:1.5;color:var(--muted);margin-top:9px;overflow-wrap:anywhere}.file-editor-group-status.error,.file-editor-load.error{color:#e75a64}.file-editor-group-preview{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:10px;font-size:12px;line-height:1.5;overflow-wrap:anywhere}.file-editor-group-preview strong,.file-editor-group-preview span{display:block}.file-editor-group-preview span{color:var(--muted)}.file-editor-group-confirm{display:flex;gap:8px;align-items:flex-start;font-size:12px;line-height:1.5;margin:10px 0}.file-editor-group-confirm input{margin-top:3px}.file-editor-group-preview[hidden],.file-editor-group-confirm[hidden],.file-editor-retry[hidden]{display:none}.file-editor-load{font-size:12px;color:var(--muted);margin-top:8px}.file-editor-retry{margin-top:8px}
 .file-editor-footer{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:16px 28px;border-top:1px solid var(--border)}.file-editor-footer button{font-family:inherit}.file-editor-cancel{background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:12px 18px;color:var(--text);font-size:13px;font-weight:700;cursor:pointer}.file-editor-footer .em-save-btn{width:auto;min-width:150px;border-radius:9px;padding:12px 20px;font-size:13px}
-@media(max-width:600px){#editCombinedModal .file-editor{max-height:calc(100dvh - 20px)}.file-editor-head{padding:21px 18px 17px}.file-editor-content{grid-template-columns:1fr;gap:8px;padding:20px 18px}.file-editor-footer{padding:14px 18px}.file-editor-footer .em-save-btn{flex:1;min-width:0}}
+@media(max-width:600px){#editCombinedModal .file-editor{max-height:calc(100dvh - 20px)}.file-editor-head{padding:21px 18px 17px}.file-editor-content{grid-template-columns:1fr;gap:8px;padding:20px 18px}.file-editor-group{padding:18px}.file-editor-footer{padding:14px 18px}.file-editor-footer .em-save-btn{flex:1;min-width:0}}
 
 /* --- Global Admin Edit Buttons --- */
 .poster-admin{position:absolute;bottom:0;left:0;right:0;display:flex;gap:6px;padding:7px 8px;opacity:0;visibility:hidden;transform:translateY(8px);transition:opacity .2s ease,transform .22s ease;pointer-events:none;z-index:4}
@@ -134,6 +135,7 @@ CSS = """
 .poster-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:5px;padding:8px;z-index:3}
 .type-chip{background:#500724;color:#f9a8d4;border:1px solid #ec4899;border-radius:5px;padding:3px 9px;font-size:10px;font-weight:800;letter-spacing:.8px;line-height:1.4}
 .size-chip{background:#2e1065;color:#c4b5fd;border:1px solid #8b5cf6;border-radius:5px;padding:3px 8px;font-size:10px;font-weight:800;line-height:1.4}.dur-chip{background:#042f2e;color:#5eead4;border:1px solid #14b8a6;border-radius:5px;padding:3px 8px;font-size:10px;font-weight:800;letter-spacing:.3px;line-height:1.4;font-variant-numeric:tabular-nums}.dur-chip::before{content:"\\23F1\\00a0";font-size:9px;opacity:.75}.tc-dur{background:#042f2e;color:#5eead4;border:1px solid #14b8a6;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:800;line-height:1.5;font-variant-numeric:tabular-nums}.tc-dur::before{content:"\\23F1\\00a0";font-size:10px}.res-chip{background:#082f49;color:#7dd3fc;border-radius:5px;padding:3px 8px;font-size:10px;font-weight:800;letter-spacing:.3px;border:1px solid #0ea5e9;line-height:1.4}.tc-res{background:#082f49;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:800;line-height:1.5}
+.res-chip,.tc-res{max-width:100%;min-width:0;overflow-wrap:anywhere}
 .source-pill{margin-left:auto;border-radius:20px;padding:3px 8px;font-size:9px;font-weight:700;letter-spacing:.4px;display:inline-flex;align-items:center;gap:4px;backdrop-filter:blur(8px)}
 .source-pill.primary{background:#14532d;color:#4ade80;border:1px solid #22c55e}
 .source-pill.cloud{background:#1e3a5f;color:#93c5fd;border:1px solid #60a5fa}
@@ -184,6 +186,7 @@ var pMode=localStorage.getItem('posterMode')||'__DEFAULT_MEDIA_MODE__';
 var LIMIT_VAL = __LIMIT_PLACEHOLDER__;
 
 var activeFid = '', activeCol = '', cropperInstance = null, fileSaveInProgress = false;
+var fileEditorSeq=0,fileEditorLoaded=false,fileGroupReady=false,fileEditorGroup='',fileEditorTarget=null,fileGroupSeq=0,fileGroupAbort=null;
 
 function handleThumbError(fileId) {
     var img = document.getElementById('img-poster-' + fileId);
@@ -274,12 +277,84 @@ function editFile(fid, col, encName, encCaption){
     if(document.getElementById('emAddCaption'))document.getElementById('emAddCaption').value=currentCaption;
     setFileEditPreview(fid,col);
     document.getElementById('editCombinedModal').classList.add('open');
+    document.getElementById('emQuality').value='';
+    document.getElementById('emGroupId').value='';
+    fileEditorGroup='';fileGroupChanged();loadFileEditorDetails();
 }
 
 function closeCombinedModal(){
     if(fileSaveInProgress){showToast('Please wait for the save to finish.');return;}
     document.getElementById('editCombinedModal').classList.remove('open');
+    ++fileEditorSeq;++fileGroupSeq;if(fileGroupAbort){fileGroupAbort.abort();fileGroupAbort=null;}
     if(cropperInstance){cropperInstance.destroy();cropperInstance=null;}
+}
+
+function fileEditorStatus(message,error){var el=document.getElementById('emEditorStatus');el.textContent=message;el.classList.toggle('error',!!error);}
+async function loadFileEditorDetails(){
+    var seq=++fileEditorSeq,fid=activeFid,col=activeCol;
+    fileEditorLoaded=false;fileGroupReady=false;document.getElementById('emSaveBtn').disabled=true;
+    document.getElementById('emGroupCheck').disabled=true;document.getElementById('emEditorRetry').hidden=true;
+    fileEditorStatus('Loading current quality and group…',false);
+    try{
+        var r=await fetch('/api/file/editor?file_id='+encodeURIComponent(fid)+'&collection='+encodeURIComponent(col),{cache:'no-store'});
+        var d=await r.json().catch(function(){return {};});if(!r.ok)throw new Error(d.error||'Could not load file details.');
+        if(seq!==fileEditorSeq)return;
+        fileEditorGroup=String(d.group_id||'');document.getElementById('emCurrentGroup').textContent=fileEditorGroup?'Current group: #'+fileEditorGroup:'Current group: None';
+        document.getElementById('emQuality').value=d.quality_override||'';
+        document.getElementById('emQualityHelp').textContent='Leave blank to use detected quality'+(d.detected_quality?' ('+d.detected_quality+')':'')+'.';
+        fileEditorLoaded=true;fileGroupReady=true;document.getElementById('emSaveBtn').disabled=false;document.getElementById('emGroupCheck').disabled=false;
+        fileEditorStatus('',false);
+    }catch(e){if(seq!==fileEditorSeq)return;fileEditorStatus(e.message||'Could not load file details.',true);document.getElementById('emEditorRetry').hidden=false;}
+}
+function fileGroupStatus(message,error){var el=document.getElementById('emGroupStatus');el.textContent=message;el.classList.toggle('error',!!error);}
+function fileGroupId(){return document.getElementById('emGroupId').value.trim().replace(/^#/,'').trim();}
+function fileGroupChanged(){
+    ++fileGroupSeq;if(fileGroupAbort){fileGroupAbort.abort();fileGroupAbort=null;}fileEditorTarget=null;
+    document.getElementById('emGroupPreview').hidden=true;document.getElementById('emGroupConfirmWrap').hidden=true;
+    document.getElementById('emGroupConfirm').checked=false;document.getElementById('emGroupMove').disabled=true;
+    fileGroupStatus('Enter a destination ID and check the group before moving.',false);
+}
+async function checkFileGroup(){
+    if(!fileEditorLoaded||!fileGroupReady||fileSaveInProgress)return;
+    fileGroupChanged();var id=fileGroupId(),seq=fileGroupSeq;
+    if(!/^[0-9]{1,64}$/.test(id)){fileGroupStatus('Enter a valid numeric group ID.',true);return;}
+    if(id===fileEditorGroup){fileGroupStatus('This file is already in group #'+id+'.',true);return;}
+    fileGroupStatus('Looking up group #'+id+'…',false);
+    var controller=new AbortController();fileGroupAbort=controller;
+    try{
+        var r=await fetch('/api/group/preview?id='+encodeURIComponent(id),{cache:'no-store',signal:controller.signal});
+        var response=await r.json().catch(function(){return {};});if(!r.ok)throw new Error(response.error||'Could not load group.');
+        var d=response.group;if(!d||!d.id||!d.signature)throw new Error('Invalid group preview.');
+        if(seq!==fileGroupSeq||fileGroupId()!==id)return;
+        fileEditorTarget=d;
+        var preview=document.getElementById('emGroupPreview');preview.replaceChildren();
+        var title=document.createElement('strong');title.textContent='Group #'+d.id+' · '+(d.name||'Untitled');preview.appendChild(title);
+        var info=document.createElement('span');info.textContent=(d.group_type==='series'?'Series':'Quality')+' · '+d.count+' files';preview.appendChild(info);
+        (d.members||[]).forEach(function(member){var item=document.createElement('span');item.textContent='• '+member.name+(member.label?' · '+member.label:'');preview.appendChild(item);});
+        preview.hidden=false;document.getElementById('emGroupConfirmWrap').hidden=false;
+        fileGroupStatus('Review the destination before moving. If the old group has fewer than two files left, it will be dissolved.',false);
+    }catch(e){if(e.name!=='AbortError'&&seq===fileGroupSeq)fileGroupStatus(e.message||'Could not load group.',true);}
+    finally{if(fileGroupAbort===controller)fileGroupAbort=null;}
+}
+function fileGroupConfirmChanged(){document.getElementById('emGroupMove').disabled=!(fileEditorTarget&&fileGroupId()===fileEditorTarget.id&&document.getElementById('emGroupConfirm').checked&&!fileSaveInProgress);}
+async function moveFileFromEditor(){
+    var target=fileEditorTarget;if(fileSaveInProgress||!fileEditorLoaded||!target||fileGroupId()!==target.id||!document.getElementById('emGroupConfirm').checked)return;
+    fileSaveInProgress=true;document.getElementById('emSaveBtn').disabled=true;document.getElementById('emGroupCheck').disabled=true;document.getElementById('emGroupMove').disabled=true;document.getElementById('emGroupId').disabled=true;document.getElementById('emGroupConfirm').disabled=true;
+    try{
+        var r=await fetch('/api/group/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:target.id,items:[{id:activeFid}],expected_target:target.signature})});
+        var d=await r.json().catch(function(){return {};});if(!r.ok||!d.success)throw new Error(d.code==='target_changed'?'Destination changed. Check the group again.':(d.error||'Move failed.'));
+        fileEditorGroup=String(d.group_id||target.id);document.getElementById('emCurrentGroup').textContent='Current group: #'+fileEditorGroup;
+        document.getElementById('emGroupId').value='';fileGroupChanged();fileGroupStatus('Moved to group #'+fileEditorGroup+'. Other edits still need to be saved.',false);refreshGridAfterEdit();
+    }catch(e){
+        fileGroupChanged();fileGroupReady=false;refreshGridAfterEdit();
+        try{
+            var state=await fetch('/api/file/editor?file_id='+encodeURIComponent(activeFid)+'&collection='+encodeURIComponent(activeCol),{cache:'no-store'});
+            var current=await state.json();if(!state.ok)throw new Error('Lookup failed');
+            fileEditorGroup=String(current.group_id||'');document.getElementById('emCurrentGroup').textContent=fileEditorGroup?'Current group: #'+fileEditorGroup:'Current group: None';fileGroupReady=true;
+            fileGroupStatus((e.message||'Move failed.')+' Check the latest group before retrying.',true);
+        }catch(syncError){fileGroupStatus((e.message||'Move failed.')+' Could not refresh membership; close and reopen this editor before trying another move.',true);}
+    }
+    finally{fileSaveInProgress=false;document.getElementById('emSaveBtn').disabled=false;document.getElementById('emGroupCheck').disabled=!fileGroupReady;document.getElementById('emGroupId').disabled=false;document.getElementById('emGroupConfirm').disabled=false;}
 }
 
 function handleLocalPreview(input){
@@ -304,7 +379,7 @@ function handleLocalPreview(input){
 }
 
 async function saveAllChanges(){
-    if(fileSaveInProgress)return;
+    if(fileSaveInProgress||!fileEditorLoaded)return;
     var fid=activeFid,col=activeCol,newName=document.getElementById('emName').value.trim();
     var caption=document.getElementById('emAddCaption').value.trim(),moveCol=document.getElementById('emMoveCol').value;
     if(!newName){showToast('File name cannot be empty!','error');return;}
@@ -331,7 +406,7 @@ async function saveAllChanges(){
             }
             if(!upRes.ok||!upData.success)throw new Error(upData.error||'Thumbnail upload failed.');
         }
-        var payload={file_id:fid,collection:col,new_name:newName,add_caption:caption,target_collection:moveCol};
+        var payload={file_id:fid,collection:col,new_name:newName,add_caption:caption,target_collection:moveCol,quality_override:document.getElementById('emQuality').value.trim()};
         writeAttempted=true;
         var r=await fetch('/api/edit_name',{method:'POST',body:JSON.stringify(payload),headers:{'Content-Type':'application/json'}});
         var res=await r.json().catch(function(){return {};});
@@ -440,6 +515,7 @@ _ADMIN_MODALS = """
                     <div class="file-editor-section-head"><span class="file-editor-number">01</span><div><h3 id="fileDetailsTitle">File details</h3><p>Make this file easier to find and organize.</p></div></div>
                     <label class="file-editor-field" for="emName">File name<input type="text" id="emName" class="em-input" autocomplete="off"></label>
                     <label class="file-editor-field" for="emAddCaption">Search tags <span style="color:var(--muted);font-weight:400">(optional)</span><input type="text" id="emAddCaption" class="em-input" placeholder="e.g. actor, 1080p, comedy"><small>Saved as the file caption and used for search.</small></label>
+                    <label class="file-editor-field" for="emQuality">Quality <span style="color:var(--muted);font-weight:400">(optional override)</span><input type="text" id="emQuality" class="em-input" maxlength="40" placeholder="e.g. 720p, 1080p, 4K"><small id="emQualityHelp">Leave blank to use detected quality.</small></label>
                     <label class="file-editor-field" for="emMoveCol">Collection<select id="emMoveCol" class="em-input"><option value="primary">🟢 Primary</option><option value="cloud">🔵 Cloud</option><option value="archive">🟠 Archive</option></select><small>Choose where this file belongs.</small></label>
                 </section>
                 <section class="file-editor-section" aria-labelledby="fileArtworkTitle">
@@ -448,7 +524,17 @@ _ADMIN_MODALS = """
                     <label class="em-upload-btn">Choose image<input type="file" id="emFile" accept="image/*" onchange="handleLocalPreview(this)"></label><p class="file-editor-help" id="emImageHelp">Optional · Choose a new image and adjust its crop.</p></div>
                 </section>
             </div>
-            <footer class="file-editor-footer"><button class="file-editor-cancel" type="button" onclick="closeCombinedModal()">Cancel</button><button class="em-save-btn" id="emSaveBtn" type="button" onclick="saveAllChanges()">Save Changes</button></footer>
+            <section class="file-editor-group" aria-labelledby="fileGroupTitle">
+                <div class="file-editor-section-head"><span class="file-editor-number">03</span><div><h3 id="fileGroupTitle">Group</h3><p id="emCurrentGroup">Current group: Loading…</p></div></div>
+                <div class="file-editor-group-row"><label class="file-editor-field" for="emGroupId">Destination group ID<input class="em-input" id="emGroupId" type="text" inputmode="numeric" maxlength="65" placeholder="e.g. 17" oninput="fileGroupChanged()"></label><button type="button" id="emGroupCheck" onclick="checkFileGroup()" disabled>Check</button></div>
+                <p class="file-editor-group-status" id="emGroupStatus" role="status" aria-live="polite"></p>
+                <div class="file-editor-group-preview" id="emGroupPreview" aria-label="Destination group details" hidden></div>
+                <label class="file-editor-group-confirm" id="emGroupConfirmWrap" hidden><input type="checkbox" id="emGroupConfirm" onchange="fileGroupConfirmChanged()"><span>I checked this destination and want to move the file.</span></label>
+                <button type="button" id="emGroupMove" onclick="moveFileFromEditor()" disabled>Move to this group</button>
+                <p class="file-editor-help">The move is saved separately. Save other file edits using Save Changes.</p>
+                <p class="file-editor-load" id="emEditorStatus" role="status" aria-live="polite"></p><button class="file-editor-retry" id="emEditorRetry" type="button" onclick="loadFileEditorDetails()" hidden>Retry loading file details</button>
+            </section>
+            <footer class="file-editor-footer"><button class="file-editor-cancel" type="button" onclick="closeCombinedModal()">Cancel</button><button class="em-save-btn" id="emSaveBtn" type="button" onclick="saveAllChanges()" disabled>Save Changes</button></footer>
         </div>
     </div>
     """

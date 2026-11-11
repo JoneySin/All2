@@ -204,6 +204,45 @@ class EditorPlayerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((doc['file_name'], doc['caption']), ('New', 'updated tags'))
         self.assertEqual((len(api._GH_CACHE), len(api._SIB_CACHE), len(api.TRENDING_CACHE)), (0, 0, 0))
 
+    async def test_file_editor_quality_and_authoritative_group(self):
+        await self.cols['primary'].insert_one({'_id': 'f1', 'file_name': 'Old 480p.mkv', 'caption': 'old',
+                                               'meta': {'w': 1280, 'h': 720}, 'group_id': 'stale'})
+        await self.groups.insert_one({'_id': '7', 'num': 7, 'members': ['f1', 'f2'], 'name': 'Group'})
+        response = await self.client.get('/api/file/editor?file_id=f1&collection=primary')
+        self.assertEqual(response.status, 200)
+        self.assertEqual(await response.json(), {'group_id': '7', 'quality_override': '', 'detected_quality': '1280×720'})
+        payload = {'file_id': 'f1', 'collection': 'primary', 'target_collection': 'cloud',
+                   'new_name': 'New 480p.mkv', 'add_caption': 'tags', 'quality_override': '1080p'}
+        r = await self.client.post('/api/edit_name', json=payload)
+        self.assertEqual(r.status, 200)
+        doc = await self.cols['cloud'].find_one({'_id': 'f1'})
+        self.assertEqual(doc['quality_override'], '1080p')
+        self.assertEqual(doc['meta'], {'w': 1280, 'h': 720})
+        self.assertIsNone(await self.cols['primary'].find_one({'_id': 'f1'}))
+        rows = await db.get_files_by_ids(['f1'])
+        self.assertEqual(api._build_results_list(rows, 'none')[0]['res'], '1080p')
+        self.assertEqual(api._build_results_list(rows, 'none')[0]['quality_override'], '1080p')
+        grouped = api.group_results([api._build_results_list(rows, 'none')[0],
+                                     {'file_id': 'f2', 'name': 'Other', 'res': '640×360'}],
+                                    manual={'f1': {'_id': '7', 'name': 'Group', 'members': ['f1', 'f2']},
+                                            'f2': {'_id': '7', 'name': 'Group', 'members': ['f1', 'f2']}})
+        self.assertEqual(next(v for v in grouped[0]['variants'] if v['file_id'] == 'f1')['ql'], '1080p')
+        preview = await self.client.get('/api/group/preview?id=7')
+        self.assertEqual((await preview.json())['group']['members'][0]['label'], '1080p')
+        before = await self.cols['cloud'].find_one({'_id': 'f1'})
+        payload.update(collection='cloud', target_collection='cloud', quality_override='x' * 41)
+        r = await self.client.post('/api/edit_name', json=payload)
+        self.assertEqual(r.status, 400)
+        self.assertEqual(await self.cols['cloud'].find_one({'_id': 'f1'}), before)
+        payload['quality_override'] = ''
+        r = await self.client.post('/api/edit_name', json=payload)
+        self.assertEqual(r.status, 200)
+        self.assertNotIn('quality_override', await self.cols['cloud'].find_one({'_id': 'f1'}))
+        self.assertEqual((await db.get_files_by_ids(['f1']))[0]['meta']['h'], 720)
+        with patch.object(api, 'get_user_role', AsyncMock(return_value=('user', 2))):
+            self.assertEqual((await self.client.get('/api/file/editor?file_id=f1&collection=cloud')).status, 403)
+            self.assertEqual((await self.client.post('/api/edit_name', json=payload)).status, 403)
+
     async def test_profile_forms_and_avatar_revision(self):
         aid = ObjectId()
         await self.actors.insert_one({'_id': aid, 'name': 'A "Name"', 'bio': 'Biography', 'category': 'actor',

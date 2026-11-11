@@ -104,9 +104,11 @@ async def dashboard(_req):
 
 async def actor_cards(_req):
     # Exercise the actual shared actor-card renderer without a Telegram account.
+    await cols['primary'].update_one({'_id': 'actor-file'}, {'$set': {'file_name': 'Actor file'}}, upsert=True)
     body = ACTOR_MEDIA_SCRIPT + '''<div id="fixture-actor" class="res-grid"></div>
     <script>
     var testActorFile={file_id:'actor-file',name:'Actor file',size:'1 MB',raw_collection:'primary',tg_thumb:'/api/thumb'};
+    function triggerActorSearchAjax(){}
     function showActorCard(mode,admin){var grid=document.getElementById('fixture-actor');grid.className='res-grid mode-'+mode;
         grid.innerHTML=renderActorMediaCard(testActorFile,mode,admin);staggerCards(grid);}
     showActorCard('tg',true);

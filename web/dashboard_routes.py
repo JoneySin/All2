@@ -92,7 +92,7 @@ CARD_CSS = """
 .episode-chip{background:#25104c;color:#e0c7ff;border:1px solid #a977ed;border-radius:6px;padding:3px 7px;font-size:10px;font-weight:800;line-height:1.4}
 .grp-badge{background:rgba(229,9,20,.92);color:#fff;border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;letter-spacing:.4px;border:1px solid rgba(255,255,255,.18);line-height:1.4;white-space:nowrap}
 .grp-bottom{position:absolute;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;gap:5px;padding:28px 8px 8px;background:linear-gradient(transparent,rgba(0,0,0,.88));z-index:3}
-.grp-chip{background:#082f49;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:5px;font-size:10px;font-weight:800;padding:2px 8px;line-height:1.5;text-shadow:none}
+.grp-chip{background:#082f49;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:5px;font-size:10px;font-weight:800;padding:2px 8px;line-height:1.5;text-shadow:none;max-width:100%;min-width:0;overflow-wrap:anywhere}
 .grp-chip i{font-style:normal;color:#e0f2fe;opacity:1;margin-left:2px}
 .grp-body{padding:12px 12px 13px}
 .grp-title{color:var(--text);font-size:12.5px;font-weight:600;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}

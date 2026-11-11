@@ -375,10 +375,10 @@ def _build_results_list(all_m, mode):
             # 0 hota hai, tab khali string jaati hai aur UI me chip ban hi nahi.
             "duration": get_duration_str(duration_seconds(d)),
             "duration_seconds": duration_seconds(d),
-            # ✅ NEW: resolution chip — asli resolution jaisa "1280×720"
-            # (koi "720p"/"1080p" guess nahi). meta.w/h se, warna file_name se
-            # (purani files) — kuch pata na chale to khali, chip ban hi nahi.
-            "res": doc_resolution_text(d),
+            # Prefer an admin's display-quality override; otherwise show the
+            # actual stored dimensions (without changing the underlying metadata).
+            "res": str(d.get("quality_override") or doc_resolution_text(d)),
+            "quality_override": str(d.get("quality_override") or ""),
             "type": d.get("file_type", "document").upper(),
             "source": source_collection_name.capitalize(),
             "raw_collection": source_collection_name,
@@ -649,8 +649,9 @@ def group_results(results, manual=None, blocked=None):
         gtype = group_type(mg) if mg else plan["kind"]
         variants = []
         for it in items:
-            lab, height = _quality_label(it.get("res"), it.get("name"))
-            variants.append((height, dict(it, ql=lab, gid=gid, group_num=num, group_type=gtype)))
+            override = str(it.get("quality_override") or "")
+            lab, height = _quality_label(it.get("res"), "" if override else it.get("name"))
+            variants.append((height, dict(it, ql=override or lab, gid=gid, group_num=num, group_type=gtype)))
         if gtype == "series":
             vlist = order_series([d for _, d in variants], mg)
         else:
@@ -1717,6 +1718,31 @@ async def api_delete(req):
         return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
 
 
+@search_routes.get("/api/file/editor")
+async def api_file_editor(req):
+    """Authoritative editor state, including legacy memberships without file marks."""
+    role, _ = await get_user_role(req)
+    if role != "admin":
+        return web.json_response({"error": "Core Admin Authorization Required!"}, status=403, dumps=fast_json)
+    fid = req.query.get("file_id", "").strip()
+    col = req.query.get("collection", "").lower()
+    if not fid or col not in FILE_COLLECTIONS:
+        return web.json_response({"error": "Invalid file or collection."}, status=400, dumps=fast_json)
+    try:
+        doc = await FILE_COLLECTIONS[col].find_one({"_id": fid})
+        if not doc:
+            return web.json_response({"error": "File not found. Refresh and try again."}, status=404, dumps=fast_json)
+        owner = await groups.find_one({"members": fid}, {"_id": 1, "num": 1})
+        detected = doc_resolution_text(doc) or _quality_label("", doc.get("file_name", ""))[0]
+        return web.json_response({"group_id": str(owner["_id"]) if owner else "",
+                                  "quality_override": str(doc.get("quality_override") or ""),
+                                  "detected_quality": detected}, dumps=fast_json,
+                                 headers={"Cache-Control": "no-store"})
+    except Exception as e:
+        logger.warning(f"file editor lookup failed: {e}")
+        return web.json_response({"error": "Could not load file details. Please retry."}, status=500, dumps=fast_json)
+
+
 @search_routes.post("/api/edit_name")
 @_serialize_group_writes
 async def api_edit_name(req):
@@ -1731,6 +1757,9 @@ async def api_edit_name(req):
         new_name = data.get("new_name", "").strip()
         add_caption = data.get("add_caption", "").strip()
         target_col = data.get("target_collection", col).lower()
+        quality = data.get("quality_override") if "quality_override" in data else None
+        if quality is not None and (not isinstance(quality, str) or len(quality.strip()) > 40 or any(ord(c) < 32 for c in quality)):
+            return web.json_response({"error": "Quality must be a single line of at most 40 characters."}, status=400, dumps=fast_json)
 
         if not fid or col not in COLLECTIONS or target_col not in COLLECTIONS:
             return web.json_response({"error": "Missing structural inputs!"}, status=400, dumps=fast_json)
@@ -1745,14 +1774,21 @@ async def api_edit_name(req):
 
         # ✅ यहाँ बदलाव किया गया है: अब नया टैग पुराने को पूरी तरह रिप्लेस करेगा
         update_fields["caption"] = add_caption
+        if quality is not None and quality.strip():
+            update_fields["quality_override"] = quality.strip()
+        clear_quality = quality is not None and not quality.strip()
 
         if col != target_col:
-            doc.update(update_fields)  
+            doc.update(update_fields)
+            if clear_quality:
+                doc.pop("quality_override", None)
             await COLLECTIONS[target_col].insert_one(doc)
             await COLLECTIONS[col].delete_one({"_id": fid})
         else:
-            if update_fields:
-                await COLLECTIONS[col].update_one({"_id": fid}, {"$set": update_fields})
+            update = {"$set": update_fields}
+            if clear_quality:
+                update["$unset"] = {"quality_override": ""}
+            await COLLECTIONS[col].update_one({"_id": fid}, update)
         
         if new_name:
             # Keep group-first search in sync with an edited member filename.
@@ -2222,7 +2258,7 @@ async def api_group_preview(req):
             if not remaining:
                 break
             found = await col.find({"_id": {"$in": list(remaining)}},
-                                   {"file_name": 1, "meta": 1, "thumb_url": 1, "thumb_revision": 1}).to_list(length=len(remaining))
+                                   {"file_name": 1, "meta": 1, "quality_override": 1, "thumb_url": 1, "thumb_revision": 1}).to_list(length=len(remaining))
             for doc in found:
                 docs[doc["_id"]] = (doc, source)
                 remaining.discard(doc["_id"])
@@ -2233,7 +2269,7 @@ async def api_group_preview(req):
         for fid in sample:
             doc, source = docs.get(fid, ({}, ""))
             name = str(doc.get("file_name") or "")
-            label = labels.get(fid, "") if group_type(g) == "series" else _quality_label(doc_resolution_text(doc), name)[0]
+            label = labels.get(fid, "") if group_type(g) == "series" else (str(doc.get("quality_override") or "") or _quality_label(doc_resolution_text(doc), name)[0])
             preview_members.append({"name": name or "File unavailable", "label": label,
                                     "source": source, "available": bool(doc)})
 

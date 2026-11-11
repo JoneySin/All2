@@ -26,12 +26,14 @@ const assert = require('node:assert/strict');
       const dims=await page.evaluate(()=>({view:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}));
       assert.ok(dims.scroll<=dims.view+1,JSON.stringify({width,theme,...dims}));
       assert.equal(await page.locator('.actor-identity h1').isVisible(),true);
+      const photo=await page.locator('.avatar-box-master').boundingBox();assert.ok(photo.width>=230,JSON.stringify({width,photo}));
     }
   }
   await page.setViewportSize({width:320,height:720});
   await page.evaluate(()=>document.body.classList.remove('light'));
   // File editor remains usable at mobile widths, including image selection and saving.
   let savedFile=null,uploadCount=0;
+  await page.route('**/api/file/editor?*',route=>route.fulfill({json:{group_id:'',quality_override:'',detected_quality:'720p'}}));
   await page.route('**/api/upload_thumb',route=>{uploadCount++;return route.fulfill({json:{success:true}})});
   await page.route('**/api/edit_name',route=>{savedFile=route.request().postDataJSON();return route.fulfill({json:{success:true}})});
   await page.evaluate(()=>editFile('fixture-file','primary',encodeURIComponent('Original name'),encodeURIComponent('Original tags')));
@@ -47,7 +49,7 @@ const assert = require('node:assert/strict');
   await fileEditor.getByRole('button',{name:'Save Changes'}).click();
   await page.waitForFunction(()=>!document.querySelector('#editCombinedModal').classList.contains('open'));
   assert.equal(uploadCount,1);
-  assert.deepEqual(savedFile,{file_id:'fixture-file',collection:'primary',new_name:'Updated name',add_caption:'fresh tags',target_collection:'cloud'});
+  assert.deepEqual(savedFile,{file_id:'fixture-file',collection:'primary',new_name:'Updated name',add_caption:'fresh tags',target_collection:'cloud',quality_override:''});
   await page.evaluate(()=>editFile('fixture-file','primary',encodeURIComponent('Original name'),''));
   assert.ok((await fileEditor.locator('#emImageHelp').textContent()).includes('Optional'));
   await fileEditor.getByRole('button',{name:'Cancel'}).click();

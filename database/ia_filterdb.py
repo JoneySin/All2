@@ -492,7 +492,7 @@ def _build_regex(query: str):
 # ─────────────────────────────────────────────────────────
 FILE_PROJECTION = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1,
                    "file_ref": 1, "caption": 1, "thumb_url": 1, "thumb_revision": 1, "duration": 1,
-                   "duration_seconds": 1, "meta": 1, "group_id": 1, "group_auto_excluded": 1}
+                   "duration_seconds": 1, "meta": 1, "quality_override": 1, "group_id": 1, "group_auto_excluded": 1}
 FILE_PROJECTION_SCORED = {**FILE_PROJECTION, "score": {"$meta": "textScore"}}
 
 # ─────────────────────────────────────────────────────────
