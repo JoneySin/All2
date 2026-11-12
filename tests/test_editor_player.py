@@ -524,13 +524,13 @@ class EditorPlayerTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(render_template, 'get_media_info', AsyncMock(return_value=info)):
             watch = await render_template.media_watch(123)
         self.assertIn('brand-mark', watch)
-        self.assertIn('brand-word', watch)
+        self.assertIn('<span class="brand-mark" aria-hidden="true">F</span><span class="brand-word">FAST FINDER</span>', watch)
         self.assertNotIn('__BRAND_', watch)
         self.assertIn('Video.mp4', watch)
         with patch.object(stream, 'get_auth', AsyncMock(return_value=(None, None))):
             response = await self.client.get('/')
             landing = await response.text()
-        self.assertIn('brand-mark', landing)
+        self.assertIn('<span class="brand-mark" aria-hidden="true">F</span><span class="brand-word">FAST FINDER</span>', landing)
         self.assertNotIn('__BRAND_', landing)
 
     def test_navigation_icons_keep_admin_permissions_and_labels(self):
