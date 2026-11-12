@@ -67,6 +67,26 @@ class GroupStatsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('id="saved-group-total"><span data-count="3"', body)
         self.assertIn('id="saved-quality-count"><span data-count="2"', body)
 
+    async def test_dashboard_keeps_existing_stats_and_real_distribution(self):
+        files = {'total': 100, 'primary': 50, 'cloud': 30, 'archive': 20,
+                 'primary_thumb': 40, 'cloud_thumb': 25, 'archive_thumb': 10, 'total_thumb': 75}
+        with patch.object(stats, 'db_count_documents', AsyncMock(return_value=files)), \
+             patch.object(stats, '_get_total_plays', AsyncMock(return_value=73)), \
+             patch.object(stats, 'get_directory_counts', AsyncMock(return_value=(10, 6, 3, 1))), \
+             patch.object(stats, 'get_post_category_counts', AsyncMock(return_value=(9, 3, 2, 1, 1))), \
+             patch.object(stats.user_db, 'total_users_count', AsyncMock(return_value=33)), \
+             patch.object(stats.user_db, 'get_today_logged_in_users_count', AsyncMock(return_value=7)), \
+             patch.object(stats.user_db, 'get_premium_users_count', AsyncMock(return_value=8)):
+            body = await (await self.client.get('/stats')).text()
+        for text in ('Database overview', '50% of files', '30% of files', '20% of files',
+                     'Thumbnail records', 'Video stream plays', '73', 'Logged in today', 'Premium users',
+                     'Directory profiles', 'Content posts', 'Other / Uncategorized', 'Clear RAM cache'):
+            self.assertIn(text, body)
+        self.assertIn('class="dist-primary" style="width:50%"', body)
+        self.assertIn('class="dist-cloud" style="width:30%"', body)
+        self.assertIn('class="dist-archive" style="width:20%"', body)
+        self.assertNotIn('0 errors', body)  # Do not claim unmeasured server health.
+
     async def test_failure_is_not_falsely_displayed_as_zero(self):
         with patch.object(stats, 'get_saved_group_counts', AsyncMock(side_effect=RuntimeError('offline'))):
             response = await self.client.get('/stats')
