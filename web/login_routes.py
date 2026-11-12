@@ -1,5 +1,3 @@
-import uuid
-import random
 import secrets
 import time
 from aiohttp import web

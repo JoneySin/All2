@@ -1,7 +1,6 @@
 import logging
 import hashlib
 import hmac
-import random
 import secrets
 import time
 from datetime import datetime, timedelta, timezone

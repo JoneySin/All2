@@ -3,6 +3,7 @@ import re
 import base64
 import asyncio
 import time
+import uuid
 from struct import pack
 from bson.objectid import ObjectId
 import motor.motor_asyncio
@@ -35,8 +36,9 @@ cloud   = db["Cloud"]
 archive = db["Archive"]
 actors  = db["Actors"]  # 🎭 एक्टर प्रोफाइल के लिए डेटाबेस कलेक्शन
 posts   = db["Posts"]   # 📝 नया पोस्ट्स (CMS) कलेक्शन
-groups  = db["QualityGroups"]      # 🗂️ एडमिन के क्वालिटी-ग्रुप (नाम, थंबनेल, members) — बॉट के "Groups" (chats) से अलग
+groups  = db["QualityGroups"]      # 🗂️ Quality/series groups; legacy collection name, separate from bot chats
 group_seq = db["QualityGroupSeq"]  # ग्रुप नंबर (1, 2, 3...) का counter
+group_search_cursors = db["GroupSearchCursors"]  # Expiring large grouped-search snapshots
 
 COLLECTIONS = {
     "primary": primary,
@@ -102,6 +104,13 @@ async def ensure_indexes():
         if "already exists" not in str(e) and "IndexKeySpecsConflict" not in str(e):
             logger.warning(f"QualityGroups Index warning: {e}")
 
+    # Large grouped-search continuations are immutable and expire automatically.
+    try:
+        await group_search_cursors.create_index("expires_at", expireAfterSeconds=0,
+                                                name="group_search_cursor_ttl")
+    except Exception as e:
+        logger.warning(f"Group search cursor TTL index warning: {e}")
+
     # 3. Posts Specific Indexes (NEW)
     try:
         await posts.create_index([("title", "text"), ("tags", "text")], name="posts_search_idx")
@@ -140,6 +149,27 @@ async def db_count_documents():
     except Exception as e:
         logger.error(f"Count Breakdown error: {e}")
         return {"primary": 0, "cloud": 0, "archive": 0, "total": 0, "primary_thumb": 0, "cloud_thumb": 0, "archive_thumb": 0, "total_thumb": 0}
+
+
+async def get_saved_group_counts():
+    """Count saved QualityGroups records; old/unknown types are quality groups.
+
+    Records are counted as stored, including legacy singletons retained for repair.
+    Telegram chat records in the separate Groups collection are not included.
+    Errors propagate so the stats page can distinguish an outage from zero groups.
+    """
+    pipeline = [{"$group": {
+        "_id": {"$cond": [{"$eq": [{"$ifNull": ["$group_type", "quality"]}, "series"]}, "series", "quality"]},
+        "count": {"$sum": 1},
+    }}]
+    counts = {"quality": 0, "series": 0}
+    try:
+        async for row in groups.aggregate(pipeline):
+            counts[row["_id"]] = row["count"]
+    except Exception:
+        logger.exception("Could not count saved groups")
+        raise
+    return {"total": counts["quality"] + counts["series"], **counts}
 
 
 # ─────────────────────────────────────────────────────────
@@ -482,8 +512,8 @@ def _build_regex(query: str):
 # chahiye hoti hai (filter/dropdown ke liye), aur yeh sirf ~40 bytes/doc ka hai.
 # ─────────────────────────────────────────────────────────
 FILE_PROJECTION = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1,
-                   "file_ref": 1, "caption": 1, "thumb_url": 1, "duration": 1,
-                   "meta": 1, "group_id": 1}
+                   "file_ref": 1, "caption": 1, "thumb_url": 1, "thumb_revision": 1, "duration": 1,
+                   "duration_seconds": 1, "meta": 1, "quality_override": 1, "group_id": 1, "group_auto_excluded": 1}
 FILE_PROJECTION_SCORED = {**FILE_PROJECTION, "score": {"$meta": "textScore"}}
 
 # ─────────────────────────────────────────────────────────
@@ -560,9 +590,13 @@ def build_query_filter(raw_query: str, regex, lang=None):
 
     return None, False
 
-def _not_grouped(flt):
-    """Filter me jodo: file kisi Quality-group me nahi hai (group_id field nahi)."""
-    return {"$and": [flt, {"group_id": {"$exists": False}}]}
+def _apply_group_filter(flt, exclude_grouped=False, grouped_only=False):
+    """Apply group membership filtering, with exclusion taking precedence."""
+    if exclude_grouped:
+        return {"$and": [flt, {"group_id": {"$exists": False}}]}
+    if grouped_only:
+        return {"$and": [flt, {"group_id": {"$exists": True}}]}
+    return flt
 
 
 def _tag_docs(docs, col_name: str):
@@ -575,29 +609,31 @@ def _tag_docs(docs, col_name: str):
 # ─────────────────────────────────────────────────────────
 # 🚀 SMART SEARCH
 # ─────────────────────────────────────────────────────────
-async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None, bypass_count=False, exclude_grouped=False):
+async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None, bypass_count=False, exclude_grouped=False, grouped_only=False):
     flt, is_text = build_query_filter(raw_query, regex, lang)
     if not flt:
         return [], 0
-    if exclude_grouped:
-        flt = _not_grouped(flt)
+    flt = _apply_group_filter(flt, exclude_grouped, grouped_only)
 
     col_name = col.name.lower()
 
     if is_text:
-        cursor = col.find(flt, FILE_PROJECTION_SCORED).sort([("score", {"$meta": "textScore"})])
+        cursor = col.find(flt, FILE_PROJECTION_SCORED).sort([("score", {"$meta": "textScore"}), ("_id", -1)])
         cursor.skip(offset).limit(limit)
         docs = await cursor.to_list(length=limit)
         if docs:
             _tag_docs(docs, col_name)
             count = 0 if bypass_count else await col.count_documents(flt)
             return docs, count
+        # An exhausted text page is not an empty text search. Falling back to a
+        # differently sorted regex stream midway would repeat or skip files.
+        if offset and await col.find(flt, {"_id": 1}).limit(1).to_list(length=1):
+            return [], 0
         # text-search खाली आया तो नीचे regex fallback चलता है
         flt, is_text = build_query_filter("", regex, lang)
         if not flt:
             return [], 0
-        if exclude_grouped:
-            flt = _not_grouped(flt)
+        flt = _apply_group_filter(flt, exclude_grouped, grouped_only)
 
     cursor = col.find(flt, FILE_PROJECTION).sort('_id', -1)
     cursor.skip(offset).limit(limit)
@@ -624,12 +660,35 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
     flt, is_text = build_query_filter(raw_query, regex, lang)
     if not flt:
         return [], "", 0, collection_type
-    if exclude_grouped:
-        flt = _not_grouped(flt)
-    elif grouped_only:                       # sirf wo files jo kisi group me hain (group dhundhne ke liye)
-        flt = {"$and": [flt, {"group_id": {"$exists": True}}]}
+    flt = _apply_group_filter(flt, exclude_grouped, grouped_only)
 
     results, total, actual_src = [], 0, collection_type
+
+    if collection_type == "all" and bypass_count:
+        # A made-up count per collection makes offsets jump or repeat as soon as
+        # the primary collection has fewer than that many matches. Only count a
+        # collection when an offset has actually passed its end.
+        remaining, skip = max_results, max(0, offset)
+        projection = FILE_PROJECTION_SCORED if is_text else FILE_PROJECTION
+        sources = []
+        for col in (primary, cloud, archive):
+            if remaining <= 0:
+                break
+            cursor = col.find(flt, projection)
+            cursor = cursor.sort([("score", {"$meta": "textScore"}), ("_id", -1)]) if is_text else cursor.sort('_id', -1)
+            docs = await cursor.skip(skip).limit(remaining).to_list(length=remaining)
+            if docs:
+                _tag_docs(docs, col.name.lower())
+                results.extend(docs)
+                sources.append(col.name.capitalize())
+                remaining -= len(docs)
+                skip = 0
+            elif skip:
+                count = await col.count_documents(flt)
+                skip = max(0, skip - count)
+        next_offset = offset + max_results if len(results) == max_results else ""
+        actual_src = "All" if len(sources) > 1 else (sources[0] if sources else "None")
+        return results, next_offset, offset + len(results) + (1 if next_offset else 0), actual_src
 
     if collection_type == "all":
 
@@ -677,7 +736,7 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
                 continue
 
             cursor = col.find(flt, projection)
-            cursor = cursor.sort([("score", {"$meta": "textScore"})]) if is_text else cursor.sort('_id', -1)
+            cursor = cursor.sort([("score", {"$meta": "textScore"}), ("_id", -1)]) if is_text else cursor.sort('_id', -1)
             cursor.skip(curr_offset).limit(rem_limit)
             docs = await cursor.to_list(length=rem_limit)
 
@@ -688,7 +747,8 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
 
     else:
         col = COLLECTIONS.get(collection_type, primary)
-        results, total = await _search(col, raw_query, regex, offset, max_results, lang, bypass_count=bypass_count, exclude_grouped=exclude_grouped)
+        results, total = await _search(col, raw_query, regex, offset, max_results, lang, bypass_count=bypass_count,
+                                       exclude_grouped=exclude_grouped, grouped_only=grouped_only)
         actual_src = collection_type.capitalize()
         if not results: total = 0
         # ✅ FIX: single-collection टैब (primary/cloud/archive) के लिए भी counts_out भरो
@@ -936,7 +996,9 @@ async def get_file_details(file_id):
         return None
 
 GROUP_PROJECTION = {"name": 1, "num": 1, "members": 1, "auto_keys": 1, "excluded": 1,
-                    "thumb_fid": 1, "thumb_col": 1, "thumb_url": 1, "updated_at": 1}
+                    "group_type": 1, "episode_order": 1, "episode_labels": 1,
+                    "thumb_fid": 1, "thumb_col": 1, "thumb_url": 1, "thumb_revision": 1, "updated_at": 1,
+                    "scanned_at": 1}
 
 
 async def search_groups(query, limit=600):
@@ -995,22 +1057,52 @@ async def get_files_by_ids(ids):
         out.extend(docs)
     return out
 
+# MongoDB's default English text index omits these words. Do not pick one as
+# the sole indexed anchor when another title word is available.
+_MONGO_ENGLISH_STOP_WORDS = frozenset("""
+a about above after again against all am an and any are as at be because been
+before being below between both but by cannot could did do does doing down during
+each few for from further had has have having he her here hers herself him
+himself his how i if in into is it its itself me more most my myself no nor not
+of off on once only or other ought our ours ourselves out over own same she
+should so some such than that the their theirs them themselves then there these
+they this those through to too under until up very was we were what when where
+which while who whom why with would you your yours yourself yourselves
+""".split())
+
+
 async def find_phrase_files(phrase, limit=100):
-    """Naam me poora `phrase` rakhne wali files (text-index se), teeno collections me.
-    Auto-group ki "siblings" dhundhne ke liye — search query se bilkul independent."""
-    q = {"$text": {"$search": '"%s"' % str(phrase).replace('"', " ")}}
+    """Find bounded title candidates across collections for grouping.
+
+    A normalized title may have release tags between its words in the original
+    filename, so an exact Mongo text phrase misses valid siblings. Use one
+    indexed non-stop-word plus independent literal lookaheads for the title;
+    the caller applies the full normalized-title/episode checks afterwards.
+    All-stop-word titles use the bounded regex query instead.
+    """
+    words = str(phrase or "").split()[:12]
+    if not words:
+        return []
+    indexed = [word for word in words if word.casefold() not in _MONGO_ENGLISH_STOP_WORDS]
+    pattern = "^" + "".join("(?=.*" + re.escape(word) + ")" for word in words)
+    q = {"file_name": re.compile(pattern, re.I)}
+    if indexed:
+        longest = max(indexed, key=len).replace('"', " ")
+        q["$text"] = {"$search": f'"{longest}"'}
 
     async def one(col):
         try:
             docs = await col.find(q, FILE_PROJECTION).limit(limit).to_list(length=limit)
             _tag_docs(docs, col.name.lower())
             return docs
-        except Exception as e:
-            logger.warning(f"find_phrase_files error ({col.name}): {e}")
-            return []
+        except Exception as exc:
+            logger.warning(f"find_phrase_files error ({col.name}): {exc}")
+            return None
 
-    res = await asyncio.gather(one(primary), one(cloud), one(archive))
-    return [d for part in res for d in part]
+    results = await asyncio.gather(one(primary), one(cloud), one(archive))
+    if any(part is None for part in results):
+        raise RuntimeError("Could not search all file collections for group siblings")
+    return [doc for part in results for doc in part]
 
 def encode_file_id(s: bytes) -> str:
     r, n = b"", 0
@@ -1089,31 +1181,24 @@ async def delete_actor_profile(actor_id):
         return False
 
 async def delete_gallery_image_by_index(actor_id, index: int):
-    """गैलरी एरे में से स्पेसिफिक इंडेक्स वाली इमेज हटाता है।
+    """Remove exactly one gallery position and atomically change its URL revision.
 
-    ✅ FIX: पहले यह index से value निकालकर `$pull: {gallery: value}` करता था —
-    Telegram identical photos को एक ही file_id देता है, इसलिए duplicate होने पर
-    एक delete में सारी copies उड़ जाती थीं (या semantics गलत हो जाते थे)।
-    अब index-based delete का सही atomic तरीका: पहले उस position को `$unset`
-    (null बन जाता है), फिर null entries को `$pull` — सिर्फ़ वही एक element हटता है।
-
-    साथ ही `gallery_updated_at` bump होता है ताकि frontend की versioned image
-    URLs (&v=) बदल जाएँ और browser का 1-साल वाला immutable cache bust हो जाए।
+    Duplicate Telegram IDs must stay distinct. Compare the observed array when
+    writing so a concurrent upload/delete cannot silently remove the wrong item.
     """
     try:
         oid = ObjectId(actor_id)
-        doc = await actors.find_one({"_id": oid})
-        if not doc or "gallery" not in doc: return False
-        gallery = doc["gallery"]
-        if index < 0 or index >= len(gallery): return False
+        doc = await actors.find_one({"_id": oid}, {"gallery": 1})
+        gallery = (doc or {}).get("gallery")
+        if not isinstance(gallery, list) or index < 0 or index >= len(gallery):
+            return False
+        remaining = gallery[:index] + gallery[index + 1:]
         res = await actors.update_one(
-            {"_id": oid},
-            {"$unset": {f"gallery.{index}": 1}, "$set": {"gallery_updated_at": int(time.time())}},
+            {"_id": oid, "gallery": gallery},
+            {"$set": {"gallery": remaining, "gallery_updated_at": int(time.time()),
+                      "gallery_revision": uuid.uuid4().hex}},
         )
-        if not res.modified_count: return False
-        # $unset array element को null छोड़ता है — उसे निकालना ज़रूरी है
-        await actors.update_one({"_id": oid}, {"$pull": {"gallery": None}})
-        return True
+        return bool(res.matched_count)
     except Exception as e:
         logger.error(f"delete_gallery_image error: {e}")
         return False

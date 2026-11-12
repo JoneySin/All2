@@ -587,6 +587,18 @@ def _sane_dur(dur):
     return None
 
 
+def _probe_mp4_with_tail(head, tail):
+    """Reuse the same bounded tail fallback for both magic and extension hints."""
+    w, h, duration = parse_mp4(head)
+    if (w <= 0 or h <= 0) and tail and len(tail) >= 64:
+        w2, h2, duration2 = parse_mp4_tail(tail)
+        if w2 > 0 and h2 > 0:
+            w, h = w2, h2
+        if duration is None:
+            duration = duration2
+    return w, h, duration
+
+
 def probe_bytes(head, tail=None, file_name=""):
     """Head (+optional tail) bytes se {w, h, duration} — sirf sane findings.
 
@@ -603,24 +615,12 @@ def probe_bytes(head, tail=None, file_name=""):
         elif bytes(head[0:4]) == b"\x1a\x45\xdf\xa3":
             w, h, dur = parse_mkv(head)
         elif bytes(head[4:8]) == b"ftyp":
-            w, h, dur = parse_mp4(head)
-            if (w <= 0 or h <= 0) and tail and len(tail) >= 64:
-                w2, h2, dur2 = parse_mp4_tail(tail)
-                if w2 > 0 and h2 > 0:
-                    w, h = w2, h2
-                if dur is None:
-                    dur = dur2
+            w, h, dur = _probe_mp4_with_tail(head, tail)
         else:
             # magic anjaana — extension hint par ek koshish (bharosa magic par hi)
             ext = _name_ext(file_name)
             if ext in ("mp4", "m4v", "mov"):
-                w, h, dur = parse_mp4(head)
-                if (w <= 0 or h <= 0) and tail and len(tail) >= 64:
-                    w2, h2, dur2 = parse_mp4_tail(tail)
-                    if w2 > 0 and h2 > 0:
-                        w, h = w2, h2
-                    if dur is None:
-                        dur = dur2
+                w, h, dur = _probe_mp4_with_tail(head, tail)
             elif ext in ("mkv", "webm"):
                 w, h, dur = parse_mkv(head)
             elif ext == "avi":

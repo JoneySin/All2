@@ -1,7 +1,6 @@
 import logging
 import re
 import time
-import gc
 import pytz
 from datetime import datetime
 from hydrogram import enums

@@ -1,0 +1,2 @@
+# Additional dependency for the in-memory MongoDB integration tests.
+mongomock-motor>=0.0.36

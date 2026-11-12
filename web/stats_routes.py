@@ -1,113 +1,163 @@
+"""Admin database overview: counts, storage and cache controls."""
 import asyncio
 from aiohttp import web
 from web.web_assets import build_page, get_auth
-# ✅ DRY: directory + post-category counts अब ia_filterdb के shared helpers से आते
-# हैं। पहले यहाँ actors.count_documents × 4 और posts aggregation खुद लिखी थी, और
-# वही ब्लॉक plugins/commands.py में भी (दो बार) कॉपी था — यानी 3 copies।
-from database.ia_filterdb import db_count_documents, get_directory_counts, get_post_category_counts
+from database.ia_filterdb import (
+    db_count_documents, get_directory_counts, get_post_category_counts,
+    get_saved_group_counts,
+)
 from database.users_chats_db import db as user_db
-from info import PORT
 
 stats_routes = web.RouteTableDef()
 
 _STATS_CSS = """<style>
-@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
-@keyframes growBar{from{width:0!important}}
-@keyframes pulse{0%,100%{box-shadow:0 0 0 0 currentColor}50%{box-shadow:0 0 0 5px transparent}}
-.anim-card{animation:fadeUp .5s ease both}
-.hero-stat{background:linear-gradient(135deg,var(--card) 0%,var(--bg3) 100%);border:1px solid var(--border);border-radius:16px;padding:28px 32px;margin-bottom:24px;display:flex;align-items:center;gap:28px;position:relative;overflow:hidden;transition:background .35s,border-color .35s;}
-.hero-stat::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#3399ff,#9933ff,#e50914);}
-.hero-num{font-size:52px;font-weight:900;letter-spacing:-2px;line-height:1;flex-shrink:0;color:var(--text);}
-.hero-right{flex:1;min-width:0;} .hero-badges{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;} .hero-badge{font-size:11px;font-weight:600;padding:4px 12px;border-radius:99px;}
-.hero-thumb{text-align:right;flex-shrink:0;} .hero-thumb-val{font-size:22px;font-weight:800;color:#e50914;}
-.multi-bar{display:flex;height:6px;border-radius:99px;overflow:hidden;background:var(--bg4);margin-bottom:6px;transition:background .35s;}
-.multi-bar-seg{height:100%;animation:growBar .8s cubic-bezier(.4,0,.2,1) both;} .multi-bar-legend{display:flex;gap:14px;font-size:11px;color:var(--muted);} .mbl-dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle;}
-.stats-grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;} .stats-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px;}
-.st-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;position:relative;overflow:hidden;transition:background .35s,border-color .35s,transform .2s,box-shadow .2s;}
-.st-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.25);} .st-card-bar{position:absolute;top:0;left:0;right:0;height:3px;}
-.st-label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;margin-top:6px;transition:color .35s;}
-.st-val{font-size:32px;font-weight:900;letter-spacing:-1px;margin-bottom:12px;line-height:1;} .st-sub{font-size:12px;color:var(--muted);transition:color .35s;}
-.prog-wrap{background:var(--bg4);border-radius:99px;height:5px;margin-bottom:10px;overflow:hidden;transition:background .35s;} .prog-bar{height:100%;border-radius:99px;animation:growBar .8s cubic-bezier(.4,0,.2,1) both;}
-.thumb-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--muted);transition:background .35s,border-color .35s;} .pct-label{font-size:13px;font-weight:700;}
-.user-sub-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;} .user-sub-cell{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 12px;transition:background .35s,border-color .35s;} .user-sub-cell-lbl{font-size:10px;color:var(--muted);margin-bottom:2px;} .user-sub-cell-val{font-size:15px;font-weight:700;}
-.flush-btn{margin-top:12px;width:100%;background:transparent;border:1px solid var(--border);border-radius:7px;padding:8px 12px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;font-family:inherit;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px;}
-.flush-btn:hover{background:var(--bg3);color:var(--text);border-color:var(--accent);} .flush-btn:active{transform:scale(.97);}
-.telemetry-title{font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:14px;display:flex;align-items:center;gap:8px;} .telemetry-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
-.t-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px 18px;display:flex;align-items:flex-start;gap:12px;transition:background .35s,border-color .35s;}
-.t-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:4px;} .t-dot-pulse{animation:pulse 1.8s ease-in-out infinite;color:#28a745;}
-.t-lbl{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;transition:color .35s;} .t-val{font-size:14px;font-weight:700;} .t-sub{font-size:11px;color:var(--muted);margin-top:2px;transition:color .35s;}
-@media(max-width:800px){.stats-grid-3,.telemetry-grid{grid-template-columns:1fr 1fr;}.stats-grid-2{grid-template-columns:1fr;}.hero-stat{flex-direction:column;align-items:flex-start;}.hero-num{font-size:36px;}}
+.stats-page{max-width:1320px;margin:0 auto;padding:36px 4% 64px;--stat-surface:var(--card);--stat-soft:var(--bg3);--stat-border:var(--border);--stat-text:var(--text);--stat-muted:var(--muted)}
+.stats-page *{box-sizing:border-box}.stats-page button,.stats-page a{font-family:inherit}
+.stats-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:28px}
+.stats-eyebrow,.section-kicker{display:flex;align-items:center;gap:8px;color:var(--accent);font-size:10px;font-weight:900;letter-spacing:1.6px;text-transform:uppercase}
+.stats-eyebrow:before{content:'';width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.stats-head h1{font-size:clamp(27px,3.4vw,38px);letter-spacing:-1.4px;line-height:1.08;margin:10px 0 8px;color:var(--stat-text)}
+.stats-head p{color:var(--stat-muted);font-size:13px;line-height:1.55}.stats-refresh{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--stat-border);border-radius:9px;padding:10px 14px;background:var(--stat-surface);color:var(--stat-text);text-decoration:none;font-size:12px;font-weight:800;white-space:nowrap;transition:border-color .2s,background .2s}
+.stats-refresh:hover{border-color:var(--accent);background:var(--stat-soft)}.stats-refresh svg,.stat-icon svg,.section-icon svg,.cache-btn svg{width:16px;height:16px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.stats-page a:focus-visible,.stats-page button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.overview-panel{position:relative;overflow:hidden;display:grid;grid-template-columns:1.1fr 1fr;gap:32px;border:1px solid var(--stat-border);border-radius:18px;background:linear-gradient(125deg,var(--stat-surface),var(--bg2));padding:29px 32px;margin-bottom:30px}
+.overview-panel:before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent)}
+.overview-main{min-width:0}.overview-label{color:var(--stat-muted);font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase}
+.overview-value{font-size:clamp(44px,5vw,64px);font-weight:900;letter-spacing:-2.5px;line-height:1.05;margin:13px 0 8px;color:var(--stat-text);font-variant-numeric:tabular-nums}
+.overview-note{font-size:12px;line-height:1.5;color:var(--stat-muted)}.overview-side{border-left:1px solid var(--stat-border);padding-left:32px;display:flex;flex-direction:column;justify-content:center;min-width:0}
+.overview-side-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}.overview-side-head strong{font-size:13px;color:var(--stat-text)}.overview-side-head span{font-size:11px;color:var(--stat-muted)}
+.distribution-bar,.meter{display:flex;width:100%;height:8px;overflow:hidden;border-radius:99px;background:var(--bg4)}.distribution-bar span{height:100%}.dist-primary{background:#e62c3c}.dist-cloud{background:#4b9cf6}.dist-archive{background:#a77af1}
+.distribution-legend{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:15px}.legend-item{min-width:0}.legend-label{display:flex;align-items:center;gap:6px;color:var(--stat-muted);font-size:11px}.legend-dot{width:7px;height:7px;border-radius:50%;flex:none}.legend-value{font-size:14px;font-weight:800;color:var(--stat-text);margin-top:5px;font-variant-numeric:tabular-nums}
+.section-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin:0 0 15px}.section-heading h2{font-size:19px;letter-spacing:-.45px;margin:6px 0 0;color:var(--stat-text)}.section-heading p{font-size:12px;color:var(--stat-muted);line-height:1.5}
+.collection-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:31px}.stats-card{background:var(--stat-surface);border:1px solid var(--stat-border);border-radius:14px;padding:20px;min-width:0;transition:border-color .2s,transform .2s}
+.stats-card:hover{border-color:var(--muted);transform:translateY(-2px)}.card-top{display:flex;align-items:center;justify-content:space-between;gap:12px}.card-title{display:flex;align-items:center;gap:10px;min-width:0}.stat-icon,.section-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;flex:none;background:var(--stat-soft);color:var(--stat-text);border:1px solid var(--stat-border)}
+.card-title h3{font-size:13px;font-weight:800;color:var(--stat-text);line-height:1.3}.card-top .card-badge{font-size:10px;font-weight:800;color:var(--stat-muted);background:var(--stat-soft);border:1px solid var(--stat-border);border-radius:99px;padding:5px 9px;white-space:nowrap}
+.collection-number{font-size:30px;font-weight:900;letter-spacing:-1px;margin:22px 0 4px;line-height:1;font-variant-numeric:tabular-nums;color:var(--stat-text)}.card-caption{font-size:11px;color:var(--stat-muted);line-height:1.5}.collection-card .meter{height:5px;margin:17px 0 12px}.collection-meta{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--stat-muted)}.collection-meta strong{color:var(--stat-text);font-weight:700}
+.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:31px}.detail-card{padding:22px}.detail-card .card-top{align-items:flex-start}.detail-card .section-icon{width:38px;height:38px}.detail-card .section-icon svg{width:18px;height:18px}
+.detail-number{font-size:32px;font-weight:900;letter-spacing:-1px;line-height:1.1;margin:21px 0 5px;color:var(--stat-text);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.detail-description{font-size:11px;color:var(--stat-muted);line-height:1.5}
+.breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:18px}.breakdown-item{background:var(--stat-soft);border:1px solid var(--stat-border);border-radius:9px;padding:10px 12px;min-width:0}.breakdown-label{font-size:11px;color:var(--stat-muted);line-height:1.3}.breakdown-value{font-size:16px;font-weight:800;color:var(--stat-text);margin-top:5px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.breakdown-wide{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px}.breakdown-wide .breakdown-value{margin:0}
+.operations-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.operation-card{display:flex;flex-direction:column;gap:14px}.operation-card .detail-number{margin:4px 0 0;font-size:26px}.operation-line{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:11px;color:var(--stat-muted)}.operation-line strong{color:var(--stat-text);font-size:12px}.meter-fill{height:100%;width:0;background:var(--accent);border-radius:99px;transition:width .35s}.storage-warning{color:var(--accent)!important}.storage-retry{display:none;align-self:flex-start;border:0;padding:0;background:none;color:var(--accent);font-size:12px;font-weight:800;cursor:pointer}.storage-retry.visible{display:block}
+.cache-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;align-self:flex-start;border:1px solid var(--stat-border);border-radius:9px;background:var(--stat-soft);color:var(--stat-text);padding:10px 13px;cursor:pointer;font-size:12px;font-weight:800;transition:border-color .2s,opacity .2s}.cache-btn:hover{border-color:var(--accent)}.cache-btn:disabled{opacity:.6;cursor:wait}.cache-status{min-height:18px;font-size:11px;color:var(--stat-muted)}.group-scan{border-top:1px solid var(--stat-border);margin-top:18px;padding-top:16px;display:flex;flex-direction:column;align-items:flex-start;gap:9px}.group-scan h4{font-size:12px;color:var(--stat-text);margin:0}.group-scan .cache-status{line-height:1.5;overflow-wrap:anywhere}.group-scan .cache-status.error{color:var(--accent)}
+.stats-footnote{margin-top:21px;color:var(--stat-muted);font-size:11px;line-height:1.6}
+@media(max-width:800px){.stats-head{align-items:flex-start}.overview-panel{grid-template-columns:1fr;gap:23px}.overview-side{border-left:0;border-top:1px solid var(--stat-border);padding:22px 0 0}.collection-grid{grid-template-columns:1fr 1fr}.collection-card:last-child{grid-column:1/-1}}
+@media(max-width:560px){.stats-page{padding:26px 16px 48px}.stats-head{gap:12px}.stats-head h1{font-size:27px}.stats-head p{font-size:12px}.stats-refresh{padding:9px 10px}.overview-panel{padding:24px 22px;border-radius:15px}.overview-value{font-size:48px}.collection-grid{grid-template-columns:1fr}.collection-card:last-child{grid-column:auto}.collection-number{margin-top:18px}.detail-grid,.operations-grid{grid-template-columns:1fr}.section-heading{align-items:flex-start;flex-direction:column;gap:5px}.section-heading p{font-size:11px}.stats-card{padding:18px}.detail-card{padding:19px}}
+@media(prefers-reduced-motion:reduce){.stats-page *{transition:none!important}}
 </style>"""
 
 _STATS_JS = """<script>
 (function(){
-  function countUp(el, target, duration) {
-    var start = performance.now();
-    var fmt = function(n){ return Math.floor(n).toLocaleString('en-IN'); };
-    requestAnimationFrame(function step(now) {
-      var p = Math.min((now - start) / duration, 1);
-      el.textContent = fmt((1 - Math.pow(1 - p, 3)) * target);
-      if (p < 1) requestAnimationFrame(step);
-    });
+  var retry = document.getElementById('storage-retry');
+  var value = document.getElementById('db-used-val');
+  var bar = document.getElementById('db-prog-bar');
+  var pct = document.getElementById('db-pct-val');
+  var limit = document.getElementById('db-limit-val');
+  var pending = false;
+  async function loadDbStats(){
+    if(pending)return;
+    pending=true;retry.classList.remove('visible');value.textContent='Loading…';
+    try{
+      var r=await fetch('/api/db_stats');
+      var d=await r.json();
+      if(!r.ok || !d.used || typeof d.percent !== 'number' || !Number.isFinite(d.percent))throw new Error('Storage unavailable');
+      var n=Math.max(0,Math.min(100,Number(d.percent)));
+      value.textContent=d.used;limit.textContent=d.total || '512.0 MB';
+      pct.textContent=n+'%';bar.style.width=n+'%';
+      value.classList.toggle('storage-warning',n>85);pct.classList.toggle('storage-warning',n>85);
+    }catch(e){value.textContent='Unavailable';pct.textContent='—';bar.style.width='0%';retry.classList.add('visible');}
+    finally{pending=false;}
   }
-  document.querySelectorAll('[data-count]').forEach(function(el) {
-    setTimeout(function(){ countUp(el, parseFloat(el.dataset.count), 900); }, parseFloat(el.dataset.delay || '0'));
-  });
-  document.querySelectorAll('.anim-card').forEach(function(el, i) { el.style.animationDelay = (i * 0.07) + 's'; });
-
-  // ✅ ADDED: Database Storage Stats Fetcher
-  async function loadDbStats() {
-      try {
-          let r = await fetch('/api/db_stats');
-          let d = await r.json();
-          if(d.used) {
-              document.getElementById('db-used-val').innerText = d.used;
-              document.getElementById('db-prog-bar').style.width = d.percent + '%';
-              document.getElementById('db-pct-val').innerText = d.percent + '%';
-              
-              // Warning if storage is above 85%
-              if(d.percent > 85) {
-                  document.getElementById('db-used-val').style.color = '#e50914';
-                  document.getElementById('db-prog-bar').style.background = 'linear-gradient(90deg,#e50914,#ff4d4d)';
-                  document.getElementById('db-pct-val').style.color = '#e50914';
-              }
-          }
-      } catch(e) {
-          document.getElementById('db-used-val').innerText = 'Error';
-      }
-  }
-  setTimeout(loadDbStats, 300); // Start after UI loads
+  retry.addEventListener('click',loadDbStats);
+  loadDbStats();
 })();
-
-// Flush RAM Cache functionality
-// ✅ FIX: पहले यह सिर्फ़ setTimeout से "cleared" दिखा देता था, कोई असली API call नहीं थी
-async function triggerCacheFlush() {
-    var btn = document.getElementById('flushBtn');
-    var originalText = btn.innerHTML;
-    btn.innerHTML = '⏳ Flushing...';
-    btn.disabled = true;
-    try {
-        let r = await fetch('/api/flush_cache', {method:'POST'});
-        let d = await r.json().catch(() => ({}));
-        if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
-        btn.style.color = '#28a745';
-        btn.style.borderColor = '#28a745';
-        btn.innerHTML = '✅ Cache Cleared!';
-    } catch(e) {
-        btn.style.color = '#e50914';
-        btn.style.borderColor = '#e50914';
-        btn.innerHTML = '❌ Error';
-    } setTimeout(() => {
-        btn.innerHTML = originalText;
-        btn.style.color = '';
-        btn.style.borderColor = '';
-        btn.disabled = false;
-    }, 2500);
+(function(){
+  var button=document.getElementById('group-rescan'),status=document.getElementById('group-scan-status');
+  var timer=null, generation=0;
+  function message(text,error){status.textContent=text;status.classList.toggle('error',!!error);}
+  function schedule(id,delay){timer=setTimeout(function(){poll(id);},delay);}
+  async function poll(id){
+    try{
+      var r=await fetch('/api/group/scan_status',{cache:'no-store'});
+      var s=await r.json();
+      if(!r.ok||!s||typeof s.running!=='boolean')throw new Error('Status unavailable');
+      if(id!==generation)return;
+      if(s.running){
+        button.disabled=true;button.textContent='Scanning…';
+        message('Scan in progress: '+(s.phase||'starting')+' ('+(s.scanned||0)+' / '+(s.total||0)+' files).',false);
+        schedule(id,2000);
+      }else{
+        button.disabled=false;button.textContent='Rescan auto groups';
+        if(s.error)message('Scan failed or stopped: '+s.error+'. You can retry.',true);
+        else if(s.finished)message('Scan complete: '+(s.created||0)+' groups created, '+(s.added||0)+' files added'+(s.skipped_big?' · '+s.skipped_big+' oversized groups skipped':'')+'. Refresh this page to update counts.',false);
+        else message('Ready to scan.',false);
+      }
+    }catch(e){
+      if(id!==generation)return;
+      button.disabled=false;button.textContent='Rescan auto groups';
+      message('Could not check scan status. Retrying; a running scan will not be started twice.',true);
+      schedule(id,5000);
+    }
+  }
+  button.addEventListener('click',async function(){
+    if(button.disabled||!confirm('Rescan all file collections for automatic groups? This may take several minutes.'))return;
+    var id=++generation;clearTimeout(timer);button.disabled=true;button.textContent='Starting…';message('Starting scan…',false);
+    try{
+      var r=await fetch('/api/group/scan_all',{method:'POST'}),d=await r.json().catch(function(){return {};});
+      if(!r.ok||d.error||(!d.started&&!d.running))throw new Error(d.error||'Could not start scan');
+      if(id!==generation)return;
+      message(d.started?'Scan started.':'A scan is already running.',false);
+      poll(id);
+    }catch(e){
+      if(id!==generation)return;
+      button.disabled=false;button.textContent='Rescan auto groups';
+      message('Could not start scan: '+(e.message||'Please try again')+'. Checking status again shortly.',true);
+      schedule(id,5000);
+    }
+  });
+  poll(generation);
+})();
+async function triggerCacheFlush(){
+  var btn=document.getElementById('flushBtn'),status=document.getElementById('flush-status');
+  if(btn.disabled)return;
+  btn.disabled=true;status.textContent='Clearing cache…';
+  try{
+    var r=await fetch('/api/flush_cache',{method:'POST'}),d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.success||d.error)throw new Error('Cache clear failed');
+    status.textContent='Cache cleared successfully.';
+  }catch(e){status.textContent='Could not clear cache. Please try again.';}
+  finally{btn.disabled=false;}
 }
 </script>"""
 
+_ICON = {
+    'refresh': '<path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M5.5 9a7 7 0 0 1 12-2L20 12M4 12l2.5 5a7 7 0 0 0 12-2"/>',
+    'database': '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/>',
+    'groups': '<rect x="3" y="4" width="8" height="7" rx="1"/><rect x="13" y="4" width="8" height="7" rx="1"/><rect x="3" y="13" width="8" height="7" rx="1"/><rect x="13" y="13" width="8" height="7" rx="1"/>',
+    'people': '<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2"/><path d="M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5v1"/>',
+    'directory': '<rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="9" r="2.5"/><path d="M7.5 17c.8-2.7 8.2-2.7 9 0"/>',
+    'posts': '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+    'storage': '<path d="M5 4h14l2 7v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8z"/><path d="M3 11h18M7 16h.01M11 16h.01"/>',
+    'image': '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
+}
+
+
+def _icon(name):
+    return f'<svg viewBox="0 0 24 24" aria-hidden="true">{_ICON[name]}</svg>'
+
+
+def _collection_card(name, count, thumbs, pct, colour):
+    return f'''<article class="stats-card collection-card">
+      <div class="card-top"><div class="card-title"><span class="stat-icon">{_icon('database')}</span><h3>{name}</h3></div><span class="card-badge">{pct}% of files</span></div>
+      <div class="collection-number">{count:,}</div><div class="card-caption">Files in this collection</div>
+      <div class="meter" aria-hidden="true"><span class="{colour}" style="width:{pct}%"></span></div>
+      <div class="collection-meta"><span>Thumbnail records</span><strong>{thumbs:,}</strong></div>
+    </article>'''
+
+
+def _breakdown(label, count, wide=False):
+    return f'''<div class="breakdown-item{' breakdown-wide' if wide else ''}"><div class="breakdown-label">{label}</div><div class="breakdown-value">{count:,}</div></div>'''
+
+
 async def _get_total_plays():
-    """🎥 वेबसाइट/मिनी-ऐप पर कुल stream plays"""
     stats_doc = await user_db.settings.find_one({"id": "global_stream_stats"}, {"total_web_plays": 1})
     return stats_doc.get("total_web_plays", 0) if stats_doc else 0
 
@@ -115,176 +165,96 @@ async def _get_total_plays():
 @stats_routes.get('/stats')
 async def stats(req):
     role, _ = await get_auth(req)
-    if role != 'admin': return web.HTTPFound('/dashboard')
+    if role != 'admin':
+        return web.HTTPFound('/dashboard')
 
-    default_s = {'total': 0, 'primary': 0, 'cloud': 0, 'archive': 0, 'primary_thumb': 0, 'cloud_thumb': 0, 'archive_thumb': 0, 'total_thumb': 0}
+    default_s = {'total': 0, 'primary': 0, 'cloud': 0, 'archive': 0,
+                 'primary_thumb': 0, 'cloud_thumb': 0, 'archive_thumb': 0, 'total_thumb': 0}
 
     async def _safe(coro, default):
-        """हर counter अलग-अलग fail-safe है — एक DB error पूरा /stats पेज नहीं गिराएगा"""
         try:
             return await coro
         except Exception:
             return default
 
-    # ⚡ FAST: ये सब counts एक-दूसरे से independent हैं, इसलिए पहले 10+ sequential
-    # round-trips की जगह अब सब parallel चलते हैं (stats पेज का मुख्य delay यही था)।
-    (s, u, total_plays, logged_in_today, premium_users,
-     (tot_dir, act_dir, app_dir, web_dir), post_stats) = await asyncio.gather(
+    (s, users, total_plays, logged_in_today, premium_users,
+     (tot_dir, act_dir, app_dir, web_dir), post_stats, group_stats) = await asyncio.gather(
         _safe(db_count_documents(), default_s),
         _safe(user_db.total_users_count(), 0),
         _safe(_get_total_plays(), 0),
         _safe(user_db.get_today_logged_in_users_count(), 0),
         _safe(user_db.get_premium_users_count(), 0),
-        get_directory_counts(),
-        get_post_category_counts(),
+        get_directory_counts(), get_post_category_counts(),
+        _safe(get_saved_group_counts(), None),
     )
     if not isinstance(s, dict):
         s = default_s
-
     post_total, post_movies, post_webseries, post_appvid, post_porn = post_stats
-    # कोई पुराना/कस्टम category value जो ऊपर के 4 fixed buckets में फिट नहीं होता
     post_other = post_total - post_movies - post_webseries - post_appvid - post_porn
-
     p_tot, c_tot, a_tot = s.get('primary', 0), s.get('cloud', 0), s.get('archive', 0)
-    grand_total = s.get('total', 1) or 1
-    p_pct, c_pct, a_pct = int((p_tot / grand_total) * 100), int((c_tot / grand_total) * 100), int((a_tot / grand_total) * 100)
+    grand_total = s.get('total', 0)
+    divisor = grand_total or 1
+    p_pct, c_pct, a_pct = (int(n / divisor * 100) for n in (p_tot, c_tot, a_tot))
 
-    body = f'''{_STATS_CSS}<div class="main" style="padding-top:40px;">
-  <div class="hero-stat anim-card">
-    <div>
-      <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">Total Cloud Archive Matrix</div>
-      <div class="hero-num" data-count="{s.get('total', 0)}" data-delay="0">{s.get('total', 0):,}</div>
-    </div>
-    <div class="hero-right">
-      <div class="hero-badges">
-        <span class="hero-badge" style="background:#3399ff22;color:#3399ff;border:1px solid #3399ff44;">🎬 {p_tot:,} Movies</span>
-        <span class="hero-badge" style="background:#ff993322;color:#ff9933;border:1px solid #ff993344;">📺 {c_tot:,} Series</span>
-        <span class="hero-badge" style="background:#9933ff22;color:#9933ff;border:1px solid #9933ff44;">🗄️ {a_tot:,} Archive</span>
-      </div>
-      <div class="multi-bar">
-        <div class="multi-bar-seg" style="width:{p_pct}%;background:#3399ff;animation-delay:.3s;"></div>
-        <div class="multi-bar-seg" style="width:{c_pct}%;background:#ff9933;animation-delay:.45s;"></div>
-        <div class="multi-bar-seg" style="width:{a_pct}%;background:#9933ff;animation-delay:.6s;"></div>
-      </div>
-      <div class="multi-bar-legend">
-        <span><span class="mbl-dot" style="background:#3399ff;"></span>Movies {p_pct}%</span>
-        <span><span class="mbl-dot" style="background:#ff9933;"></span>Series {c_pct}%</span>
-        <span><span class="mbl-dot" style="background:#9933ff;"></span>Archive {a_pct}%</span>
-      </div>
-    </div>
-    <div class="hero-thumb">
-      <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Total Thumbnails</div>
-      <div class="hero-thumb-val" data-count="{s.get('total_thumb', 0)}" data-delay="100">{s.get('total_thumb', 0):,}</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:2px;">cached assets</div>
-    </div>
-  </div>
-  <div class="stats-grid-3">
-    <div class="st-card anim-card"><div class="st-card-bar" style="background:#3399ff;"></div><div class="st-label">Primary Cloud — Movies</div><div class="st-val" style="color:#3399ff;" data-count="{p_tot}" data-delay="120">{p_tot:,}</div><div class="prog-wrap"><div class="prog-bar" style="width:{p_pct}%;background:linear-gradient(90deg,#3399ff,#66bbff);animation-delay:.4s;"></div></div><div style="display:flex;justify-content:space-between;align-items:center;"><span class="thumb-badge">🖼️ {s.get('primary_thumb', 0):,} cached</span><span class="pct-label" style="color:#3399ff;">{p_pct}%</span></div></div>
-    <div class="st-card anim-card"><div class="st-card-bar" style="background:#ff9933;"></div><div class="st-label">Cloud Library — Series</div><div class="st-val" style="color:#ff9933;" data-count="{c_tot}" data-delay="180">{c_tot:,}</div><div class="prog-wrap"><div class="prog-bar" style="width:{c_pct}%;background:linear-gradient(90deg,#ff9933,#ffcc77);animation-delay:.45s;"></div></div><div style="display:flex;justify-content:space-between;align-items:center;"><span class="thumb-badge">🖼️ {s.get('cloud_thumb', 0):,} cached</span><span class="pct-label" style="color:#ff9933;">{c_pct}%</span></div></div>
-    <div class="st-card anim-card"><div class="st-card-bar" style="background:#9933ff;"></div><div class="st-label">Backup Warehouse — Archive</div><div class="st-val" style="color:#9933ff;" data-count="{a_tot}" data-delay="240">{a_tot:,}</div><div class="prog-wrap"><div class="prog-bar" style="width:{a_pct}%;background:linear-gradient(90deg,#9933ff,#cc77ff);animation-delay:.5s;"></div></div><div style="display:flex;justify-content:space-between;align-items:center;"><span class="thumb-badge">🖼️ {s.get('archive_thumb', 0):,} cached</span><span class="pct-label" style="color:#9933ff;">{a_pct}%</span></div></div>
-  </div>
-  
-  <div class="stats-grid-3">
-    <div class="st-card anim-card"><div class="st-card-bar" style="background:#e50914;"></div><div class="st-label">Global Image Assets</div><div class="st-val" style="color:#e50914;" data-count="{s.get('total_thumb', 0)}" data-delay="300">{s.get('total_thumb', 0):,}</div><div class="st-sub" style="margin-bottom:12px;">Verified blob identifiers across all DBs</div><button class="flush-btn" id="flushBtn" onclick="triggerCacheFlush()">🧹 Flush RAM Cache</button></div>
-    
-    <div class="st-card anim-card">
-        <div class="st-card-bar" style="background:#00d2c4;"></div>
-        <div class="st-label">Global Video Stream Plays</div>
-        <div class="st-val" style="color:#00d2c4;" data-count="{total_plays}" data-delay="320">{total_plays:,}</div>
-        <div class="st-sub">Total video play counter requests filtered</div>
-        <div class="user-sub-row">
-            <div class="user-sub-cell" style="grid-column: span 2; text-align: center; background: rgba(0, 210, 196, 0.05);">
-                <div class="user-sub-cell-lbl">Platform Traffic Status</div>
-                <div class="user-sub-cell-val" style="color:#00d2c4; font-size: 13px;">📊 Streaming Live Counters Active</div>
-            </div>
-        </div>
-    </div>
+    def group_count_markup(key, delay):
+        if group_stats is None:
+            return '—' if key != 'total' else 'Unavailable'
+        count = group_stats[key]
+        return f'<span data-count="{count}" data-delay="{delay}">{count:,}</span>'
 
-    <div class="st-card anim-card">
-        <div class="st-card-bar" style="background:#28a745;"></div>
-        <div class="st-label">MongoDB Storage Limit</div>
-        <div class="st-val" id="db-used-val" style="color:#28a745;">Loading..</div>
-        <div class="st-sub">Free Tier Maximum: 512.0 MB</div>
-        <div class="prog-wrap" style="margin-top:10px;">
-            <div class="prog-bar" id="db-prog-bar" style="width:0%; background:linear-gradient(90deg,#28a745,#5cd675); transition: width 1s ease;"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span class="thumb-badge">💾 Used Space</span>
-            <span class="pct-label" id="db-pct-val" style="color:#28a745;">0%</span>
-        </div>
-    </div>
-  </div>
-  
-  <div class="stats-grid-2">
-    <div class="st-card anim-card">
-        <div class="st-card-bar" style="background:var(--muted);"></div>
-        <div class="st-label">Total System Subscribers</div>
-        <div class="st-val" data-count="{u}" data-delay="350">{u:,}</div>
-        <div class="st-sub">Active database records</div>
-        <div class="user-sub-row">
-            <div class="user-sub-cell">
-                <div class="user-sub-cell-lbl">Logged In Today</div>
-                <div class="user-sub-cell-val" style="color:#00d2c4;" data-count="{logged_in_today}" data-delay="380">{logged_in_today}</div>
-            </div>
-            <div class="user-sub-cell">
-                <div class="user-sub-cell-lbl">Premium Users</div>
-                <div class="user-sub-cell-val" style="color:#ff9933;" data-count="{premium_users}" data-delay="400">{premium_users}</div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="st-card anim-card">
-        <div class="st-card-bar" style="background:#e50914;"></div>
-        <div class="st-label">Universal Directory Profiles</div>
-        <div class="st-val" style="color:#e50914;" data-count="{tot_dir}" data-delay="360">{tot_dir:,}</div>
-        <div class="st-sub">Total profiles created across all categories</div>
-        <div class="user-sub-row">
-            <div class="user-sub-cell">
-                <div class="user-sub-cell-lbl">🎭 Actors</div>
-                <div class="user-sub-cell-val" style="color:#3399ff;" data-count="{act_dir}" data-delay="380">{act_dir:,}</div>
-            </div>
-            <div class="user-sub-cell">
-                <div class="user-sub-cell-lbl">📱 Apps</div>
-                <div class="user-sub-cell-val" style="color:#28a745;" data-count="{app_dir}" data-delay="400">{app_dir:,}</div>
-            </div>
-            <div class="user-sub-cell" style="grid-column: span 2; display: flex; justify-content: space-between; align-items: center;">
-                <div class="user-sub-cell-lbl" style="margin:0;">🌐 Websites</div>
-                <div class="user-sub-cell-val" style="color:#9933ff;" data-count="{web_dir}" data-delay="420">{web_dir:,}</div>
-            </div>
-        </div>
-    </div>
+    post_other_markup = _breakdown('Other / Uncategorized', post_other, True) if post_other > 0 else ''
+    body = f'''{_STATS_CSS}<main class="stats-page">
+  <header class="stats-head">
+    <div><div class="stats-eyebrow">Admin workspace</div><h1>Database overview</h1><p>Your library, content and account activity, all in one place.</p></div>
+    <a href="/stats" class="stats-refresh">{_icon('refresh')} Refresh</a>
+  </header>
 
-    <div class="st-card anim-card">
-        <div class="st-card-bar" style="background:#00d2c4;"></div>
-        <div class="st-label">Content Posts Created</div>
-        <div class="st-val" style="color:#00d2c4;" data-count="{post_total}" data-delay="380">{post_total:,}</div>
-        <div class="st-sub">Total posts published across all categories</div>
-        <div class="user-sub-row">
-            <div class="user-sub-cell">
-                <div class="user-sub-cell-lbl">🎬 Movies</div>
-                <div class="user-sub-cell-val" style="color:#3399ff;" data-count="{post_movies}" data-delay="400">{post_movies:,}</div>
-            </div>
-            <div class="user-sub-cell">
-                <div class="user-sub-cell-lbl">📺 Web Series</div>
-                <div class="user-sub-cell-val" style="color:#ff9933;" data-count="{post_webseries}" data-delay="420">{post_webseries:,}</div>
-            </div>
-            <div class="user-sub-cell">
-                <div class="user-sub-cell-lbl">📱 App Video</div>
-                <div class="user-sub-cell-val" style="color:#28a745;" data-count="{post_appvid}" data-delay="440">{post_appvid:,}</div>
-            </div>
-            <div class="user-sub-cell">
-                <div class="user-sub-cell-lbl">🔞 Porn</div>
-                <div class="user-sub-cell-val" style="color:#e50914;" data-count="{post_porn}" data-delay="460">{post_porn:,}</div>
-            </div>
-            {f'<div class="user-sub-cell" style="grid-column: span 2; display: flex; justify-content: space-between; align-items: center;"><div class="user-sub-cell-lbl" style="margin:0;">🗂️ Other/Uncategorized</div><div class="user-sub-cell-val" style="color:var(--muted);" data-count="{post_other}" data-delay="480">{post_other:,}</div></div>' if post_other > 0 else ''}
+  <section class="overview-panel" aria-label="File overview">
+    <div class="overview-main"><div class="overview-label">Total Files</div><div class="overview-value">{grand_total:,}</div><div class="overview-note">Across Primary, Cloud and Archive collections</div></div>
+    <div class="overview-side"><div class="overview-side-head"><strong>Collection breakdown</strong><span>Share of total files</span></div>
+      <div class="distribution-bar" aria-hidden="true"><span class="dist-primary" style="width:{p_pct}%"></span><span class="dist-cloud" style="width:{c_pct}%"></span><span class="dist-archive" style="width:{a_pct}%"></span></div>
+      <div class="distribution-legend"><div class="legend-item"><div class="legend-label"><span class="legend-dot dist-primary"></span>Primary</div><div class="legend-value">{p_pct}%</div></div><div class="legend-item"><div class="legend-label"><span class="legend-dot dist-cloud"></span>Cloud</div><div class="legend-value">{c_pct}%</div></div><div class="legend-item"><div class="legend-label"><span class="legend-dot dist-archive"></span>Archive</div><div class="legend-value">{a_pct}%</div></div></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="collections-title"><div class="section-heading"><div><div class="section-kicker">01 / Library</div><h2 id="collections-title">File collections</h2></div><p>File and thumbnail records by source</p></div>
+    <div class="collection-grid">{_collection_card('Primary', p_tot, s.get('primary_thumb', 0), p_pct, 'dist-primary')}{_collection_card('Cloud', c_tot, s.get('cloud_thumb', 0), c_pct, 'dist-cloud')}{_collection_card('Archive', a_tot, s.get('archive_thumb', 0), a_pct, 'dist-archive')}</div>
+  </section>
+
+  <section aria-labelledby="content-title"><div class="section-heading"><div><div class="section-kicker">02 / Content &amp; community</div><h2 id="content-title">At a glance</h2></div><p>A closer look at what you have saved</p></div>
+    <div class="detail-grid">
+      <article class="stats-card detail-card" id="saved-group-stats"><div class="card-top"><div class="card-title"><span class="section-icon">{_icon('groups')}</span><h3>Saved Groups · Total</h3></div><span class="card-badge">GROUPS</span></div>
+        <div class="detail-number" id="saved-group-total">{group_count_markup('total', 0)}</div><div class="detail-description">Saved group records, including legacy records</div>
+        <div class="breakdown"><div class="breakdown-item"><div class="breakdown-label">Quality Groups</div><div class="breakdown-value" id="saved-quality-count">{group_count_markup('quality', 0)}</div></div><div class="breakdown-item"><div class="breakdown-label">Series Groups</div><div class="breakdown-value" id="saved-series-count">{group_count_markup('series', 0)}</div></div></div>
+        <div class="group-scan"><h4>Automatic grouping</h4><div class="detail-description">Scan Primary, Cloud and Archive for compatible files. Large libraries may take several minutes.</div>
+          <button class="cache-btn" id="group-rescan" type="button" disabled>Checking scan…</button><div class="cache-status" id="group-scan-status" role="status" aria-live="polite">Checking scan status…</div>
         </div>
+      </article>
+      <article class="stats-card detail-card"><div class="card-top"><div class="card-title"><span class="section-icon">{_icon('people')}</span><h3>System subscribers</h3></div><span class="card-badge">USERS</span></div>
+        <div class="detail-number">{users:,}</div><div class="detail-description">Total user records</div><div class="breakdown">{_breakdown('Logged in today', logged_in_today)}{_breakdown('Premium users', premium_users)}</div>
+      </article>
+      <article class="stats-card detail-card"><div class="card-top"><div class="card-title"><span class="section-icon">{_icon('directory')}</span><h3>Directory profiles</h3></div><span class="card-badge">DIRECTORY</span></div>
+        <div class="detail-number">{tot_dir:,}</div><div class="detail-description">Profiles across all categories</div><div class="breakdown">{_breakdown('Actors', act_dir)}{_breakdown('Apps', app_dir)}{_breakdown('Websites', web_dir, True)}</div>
+      </article>
+      <article class="stats-card detail-card"><div class="card-top"><div class="card-title"><span class="section-icon">{_icon('posts')}</span><h3>Content posts</h3></div><span class="card-badge">POSTS</span></div>
+        <div class="detail-number">{post_total:,}</div><div class="detail-description">Posts across all categories</div><div class="breakdown">{_breakdown('Movies', post_movies)}{_breakdown('Web Series', post_webseries)}{_breakdown('App Video', post_appvid)}{_breakdown('Porn', post_porn)}{post_other_markup}</div>
+      </article>
     </div>
+  </section>
+
+  <section aria-labelledby="tools-title"><div class="section-heading"><div><div class="section-kicker">03 / Database tools</div><h2 id="tools-title">Storage &amp; maintenance</h2></div><p>Monitor usage and manage cached data</p></div>
+    <div class="operations-grid">
+      <article class="stats-card operation-card"><div class="card-top"><div class="card-title"><span class="section-icon">{_icon('storage')}</span><h3>Database storage</h3></div><span class="card-badge">MONGODB</span></div>
+        <div class="detail-number" id="db-used-val" aria-live="polite">Loading…</div><div class="operation-line"><span>Used storage</span><strong id="db-pct-val">—</strong></div>
+        <div class="meter" aria-hidden="true"><div class="meter-fill" id="db-prog-bar"></div></div><div class="operation-line"><span>Free tier reference</span><strong id="db-limit-val">512.0 MB</strong></div><button type="button" class="storage-retry" id="storage-retry">Retry storage check</button>
+      </article>
+      <article class="stats-card operation-card"><div class="card-top"><div class="card-title"><span class="section-icon">{_icon('image')}</span><h3>Cache &amp; activity</h3></div><span class="card-badge">MAINTENANCE</span></div>
+        <div class="breakdown"><div class="breakdown-item"><div class="breakdown-label">Thumbnail records</div><div class="breakdown-value">{s.get('total_thumb', 0):,}</div></div><div class="breakdown-item"><div class="breakdown-label">Video stream plays</div><div class="breakdown-value">{total_plays:,}</div></div></div>
+        <div class="detail-description">Clear in-memory thumbnail and search caches when you need a fresh read.</div>
+        <button class="cache-btn" id="flushBtn" type="button" onclick="triggerCacheFlush()">{_icon('refresh')} Clear RAM cache</button><div class="cache-status" id="flush-status" aria-live="polite"></div>
+      </article>
     </div>
-  <div class="telemetry-title anim-card">💻 Server Core Telemetry Diagnostics</div>
-  <div class="telemetry-grid">
-    <div class="t-card anim-card"><div class="t-dot t-dot-pulse" style="background:#28a745;"></div><div><div class="t-lbl">Koyeb Worker Pod</div><div class="t-val" style="color:#28a745;">🟢 Operational</div><div class="t-sub">Port {PORT} · 0 errors</div></div></div>
-    <div class="t-card anim-card"><div class="t-dot" style="background:#3399ff;"></div><div><div class="t-lbl">Database I/O Pool</div><div class="t-val" style="color:#3399ff;">15 Connections Max</div><div class="t-sub">Active pool · healthy</div></div></div>
-    <div class="t-card anim-card"><div class="t-dot" style="background:#ff9933;"></div><div><div class="t-lbl">RAM Protection Guard</div><div class="t-val" style="color:#ff9933;">Strictly Bounded</div><div class="t-sub">Enforced memory limit</div></div></div>
-  </div>
-</div>{_STATS_JS}'''
+  </section>
+  <p class="stats-footnote">File and thumbnail counts may be cached for up to a minute. Group counts are read from saved records; legacy records are included.</p>
+</main>{_STATS_JS}'''
     return build_page("Stats - Fast Finder", body, "", "stats", role)
