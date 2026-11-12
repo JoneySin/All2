@@ -1,6 +1,7 @@
 """Standalone mock dashboard for group_ui_check.cjs. Never deploy this fixture."""
 
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -43,6 +44,17 @@ async def no_siblings(_key):
 
 api.get_user_role = admin_role
 api._siblings = no_siblings
+
+# mongomock has no Mongo $text; use equivalent fixture-only regex searches.
+def fixture_filter(raw, regex, lang=None):
+    return ({'$or': [{'file_name': regex}, {'caption': regex}]}, False) if regex else (None, False)
+
+async def fixture_groups(query):
+    regex = re.compile(re.escape(query), re.I)
+    return await store.QualityGroups.find({'$or': [{'name': regex}, {'files.name': regex}]}, db.GROUP_PROJECTION).to_list(length=600)
+
+db.build_query_filter = fixture_filter
+api.search_groups = fixture_groups
 
 
 async def seed(_app):
@@ -107,7 +119,7 @@ async def actor_cards(_req):
     await cols['primary'].update_one({'_id': 'actor-file'}, {'$set': {'file_name': 'Actor file'}}, upsert=True)
     body = ACTOR_MEDIA_SCRIPT + '''<div id="fixture-actor" class="res-grid"></div>
     <script>
-    var testActorFile={file_id:'actor-file',name:'Actor file',size:'1 MB',raw_collection:'primary',tg_thumb:'/api/thumb'};
+    var testActorFile={file_id:'actor-file',name:'Actor file',size:'1 MB',raw_collection:'primary',tg_thumb:'/api/thumb',gid:'11',group_num:11};
     function triggerActorSearchAjax(){}
     function showActorCard(mode,admin){var grid=document.getElementById('fixture-actor');grid.className='res-grid mode-'+mode;
         grid.innerHTML=renderActorMediaCard(testActorFile,mode,admin);staggerCards(grid);}

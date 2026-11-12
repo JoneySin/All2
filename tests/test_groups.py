@@ -6,6 +6,7 @@ import os
 import re
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 # info.py validates configuration at import time; these are test-only values.
@@ -32,6 +33,11 @@ def doc(fid, name, source="primary", **extra):
 
 
 class GroupingUnitTests(unittest.TestCase):
+    def test_miniapp_file_cards_do_not_render_group_ids(self):
+        miniapp = (Path(__file__).resolve().parents[1] / 'web' / 'miniapp.html').read_text()
+        self.assertNotIn('gid-chip', miniapp)
+        self.assertNotIn('GROUP #${', miniapp)
+
     def test_quality_key_handles_dimensions_but_keeps_episode_identity(self):
         self.assertEqual(api._group_key("Film 720p.mkv"), api._group_key("Film 1920x1080.mp4"))
         self.assertNotEqual(api._group_key("Show S01E01 720p.mkv"),
@@ -796,6 +802,54 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         data = await response.json()
         self.assertEqual({r["file_id"]: r["gid"] for r in data["results"]},
                          {"a": "11", "b": "11", "c": "12", "d": "12"})
+
+    async def test_ungrouped_view_contains_all_members_of_matching_groups(self):
+        members = [f'm{i:02d}' for i in range(26)]
+        for i, fid in enumerate(members):
+            name = 'Festival matching member' if i == 0 else f'Unrelated member {i}'
+            extra = {'group_id': '11'} if i % 2 else {}  # include legacy unmarked members
+            await self.insert_files(doc(fid, name, ('primary', 'cloud', 'archive')[i % 3], **extra))
+        await self.insert_files(*(doc(f's{i}', f'Festival single {i}', 'cloud') for i in range(4)))
+        group = {'_id': '11', 'num': 11, 'name': 'Festival collection', 'members': members,
+                 'files': [{'id': f, 'name': f} for f in members], 'group_type': 'series'}
+        await self.groups.insert_one(group)
+
+        def regex_filter(raw, _regex, lang=None):
+            return {'file_name': re.compile(re.escape(raw), re.I)}, False
+
+        async def collect(params):
+            result, offset = [], 0
+            for _ in range(50):
+                response = await self.client.get('/api/search', params={**params, 'offset': offset})
+                data = await response.json()
+                self.assertEqual(response.status, 200, data)
+                self.assertTrue(all(not row.get('group') for row in data['results']))
+                result.extend(row['file_id'] for row in data['results'])
+                if not data['next_offset']:
+                    return result
+                offset = data['next_offset']
+            self.fail('ungrouped pagination did not terminate')
+
+        with patch.object(api, '_group_hits', AsyncMock(return_value=[group])), \
+             patch.object(db, 'COLLECTIONS', self.cols), \
+             patch.object(db, 'build_query_filter', regex_filter), patch.object(api, 'MAX_WEB_RESULTS', 5):
+            params = {'q': 'Festival', 'group': '1', 'gf': 'single', 'mode': 'none'}
+            actual = await collect(params)
+            self.assertEqual(set(actual), set(members) | {f's{i}' for i in range(4)})
+            self.assertEqual(len(actual), 30)  # member also matching the raw query appears only once
+            cloud = await collect({**params, 'col': 'cloud'})
+            self.assertEqual(set(cloud), {members[i] for i in range(26) if i % 3 == 1} | {f's{i}' for i in range(4)})
+            # Recent view shows both grouped and standalone records without changing membership.
+            recent = await collect({'group': '1', 'gf': 'ungroup', 'mode': 'none'})
+            self.assertEqual(set(recent), set(actual))
+            # A legacy unmarked member can match a caption/name even when the
+            # group lookup did not find the group. Its siblings must still show.
+            with patch.object(api, '_group_hits', AsyncMock(return_value=[])):
+                discovered = await collect(params)
+                self.assertEqual(set(discovered), set(actual))
+                self.assertEqual(len(discovered), len(actual))
+        self.assertEqual((await self.groups.find_one({'_id': '11'}))['members'], members)
+        self.assertNotIn('group_id', await self.cols['primary'].find_one({'_id': 'm00'}))
 
     async def test_search_partitions_durations_and_series_and_is_idempotent(self):
         docs = [

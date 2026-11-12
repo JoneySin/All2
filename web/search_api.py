@@ -1320,7 +1320,8 @@ def _validate_group_cursor(state, context):
             or not isinstance(state.get("seen"), list) or len(state["seen"]) > _GROUP_CURSOR_SEEN_LIMIT
             or any(not isinstance(item, str) or len(item) > 256 for item in state["groups"] + state["seen"])
             or not isinstance(state.get("gp"), int) or not 0 <= state["gp"] <= len(state["groups"])
-            or not isinstance(state.get("fp"), int) or not 0 <= state["fp"] <= 100000000):
+            or not isinstance(state.get("fp"), int) or not 0 <= state["fp"] <= 100000000
+            or not isinstance(state.get("mp", 0), int) or not 0 <= state.get("mp", 0) <= 100000000):
         raise ValueError("Invalid cursor data")
 
 
@@ -1501,6 +1502,113 @@ async def _grouped_cursor_page(q, col, offset, lim, mode, gf):
     return cards, ""
 
 
+async def _flat_group_search_page(q, col, offset, lim, mode):
+    """Show group-name/member matches as individual files, plus ordinary matches.
+
+    Unlike grouped search this does not create or modify groups. Keep separate
+    member and raw-stream positions, and deduplicate across both, so even a
+    large series can be paged without losing its remaining members.
+    """
+    context = _cursor_context(q, col, "single")
+    value = str(offset or "0")
+    if value.startswith((_GROUP_CURSOR_PREFIX, _GROUP_CURSOR_STORED_PREFIX)):
+        state = await _decode_group_cursor(value, context)
+    else:
+        try:
+            legacy_offset = max(0, int(value))
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Invalid file pagination offset.") from exc
+        hits = await _group_hits(q) or []
+        ids = list(dict.fromkeys(str(g["_id"]) for g in hits if g.get("_id")))
+        # Legacy numeric offsets still address the ordinary raw stream.
+        state = {"v": 1, "ctx": context, "groups": ids,
+                 "gp": len(ids) if legacy_offset else 0, "mp": 0,
+                 "fp": legacy_offset, "seen": []}
+
+    seen, rows = set(state["seen"]), []
+    group_hops = 0
+
+    while state["gp"] < len(state["groups"]) and len(rows) < lim and group_hops < 64:
+        group_hops += 1
+        found = await get_groups_by_ids([state["groups"][state["gp"]]])
+        members = list(dict.fromkeys(found[0].get("members") or [])) if found else []
+        # Bound each lookup even for a large series. Advance by the IDs inspected,
+        # not the number of available files, so missing records cannot stall paging.
+        chunk = members[state["mp"]:state["mp"] + max(lim - len(rows), 1)]
+        if not chunk:
+            state["gp"] += 1
+            state["mp"] = 0
+            continue
+        docs = await get_files_by_ids(chunk)
+        by_id = {doc["_id"]: doc for doc in docs}
+        for fid in chunk:
+            state["mp"] += 1
+            doc = by_id.get(fid)
+            if not doc or (col != "all" and doc.get("source_col") != col):
+                continue
+            row = _build_results_list([doc], mode)[0]
+            token = _card_cursor_token(row)
+            if token not in seen:
+                seen.add(token)
+                rows.append(row)
+        if state["mp"] >= len(members):
+            state["gp"] += 1
+            state["mp"] = 0
+
+    if state["gp"] < len(state["groups"]):
+        state["seen"] = sorted(seen)
+        return await _annotate_raw_groups(rows), await _encode_group_cursor(state)
+
+    # Ordinary file results can overlap group members, including on later pages.
+    # Limit hops to keep highly duplicated searches responsive; an empty page may
+    # still have a continuation, just as in grouped search.
+    more = False
+    for _ in range(12):
+        if len(rows) >= lim:
+            more = True
+            break
+        docs, nxt = await _fetch_page(q, col, state["fp"], max(lim, 1), False)
+        if not docs:
+            more = False
+            break
+        # Legacy members can lack group_id marks, and a caption-only match may
+        # not appear in the group-name index. Discover their saved groups from
+        # authoritative membership, then expand those groups on the next page.
+        known = set(state["groups"])
+        discovered = False
+        try:
+            ids = [doc["_id"] for doc in docs if doc.get("_id")]
+            async for group in groups.find({"members": {"$in": ids}}, {"members": 1}):
+                gid = str(group["_id"])
+                if gid not in known and len(set(group.get("members") or [])) >= 2:
+                    state["groups"].append(gid)
+                    known.add(gid)
+                    discovered = True
+        except Exception as exc:
+            logger.warning(f"ungrouped membership lookup failed: {exc}")
+            raise _GroupCursorStorageError from exc
+        for index, doc in enumerate(docs):
+            row = _build_results_list([doc], mode)[0]
+            token = _card_cursor_token(row)
+            if token not in seen:
+                if len(rows) >= lim:
+                    state["fp"] += index
+                    more = True
+                    break
+                seen.add(token)
+                rows.append(row)
+        else:
+            state["fp"] += len(docs)
+            more = bool(nxt) or discovered
+            if discovered:
+                break
+            if more:
+                continue
+        break
+    state["seen"] = sorted(seen)
+    return await _annotate_raw_groups(rows), (await _encode_group_cursor(state) if more else "")
+
+
 @search_routes.get("/api/search")
 async def api_search(req):
     role, tg_id = await get_user_role(req)
@@ -1518,13 +1626,18 @@ async def api_search(req):
     gf = req.query.get("gf", "all").lower()
     gf = {"ungroup": "single", "single": "single", "group": "group",
           "quality": "quality", "series": "series"}.get(gf, "all") if want_group else "all"
-    if want_group and gf == "single":
-        want_group, gf = False, "all"      # UNGROUP = ग्रुप फीचर से पहले वाला साधारण सर्च (सारी फाइलें, कोई ग्रुपिंग नहीं)
+    # The ungrouped view is a presentation choice, not a filter that removes
+    # grouped members. For searches, include files from matching group titles as
+    # well as individual file matches. Recent files already include everything.
+    flat_view = want_group and gf == "single" and bool(q)
+    if want_group and gf == "single" and not q:
+        want_group, gf = False, "all"
     gflag = ("g1" + gf) if want_group else "g0"
 
     if want_group:
         try:
-            cards, nxt = await _grouped_cursor_page(q, col, off, MAX_WEB_RESULTS, mode, gf)
+            cards, nxt = (await _flat_group_search_page(q, col, off, MAX_WEB_RESULTS, mode)
+                          if flat_view else await _grouped_cursor_page(q, col, off, MAX_WEB_RESULTS, mode, gf))
         except ValueError:
             return web.json_response({"error": "Invalid or expired pagination cursor. Start the search again."}, status=400, dumps=fast_json)
         except _GroupCursorLimitError:

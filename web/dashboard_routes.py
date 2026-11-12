@@ -307,7 +307,6 @@ function cardHtml(f,nested){
                jaisa hi null-tolerant: data na ho to chip banta hi nahi. */
             var resChip  = f.res ? '<span class="res-chip">'+esc(f.res)+'</span>' : '';
             var resText  = f.res ? '<span class="tc-res">'+esc(f.res)+'</span>' : '';
-            var idChip = groupIdChip(f.group_num||f.gid);
             var epLabel = f.group_type==='series' ? (f.episode_label||(f.episode_position?'File '+f.episode_position:'')) : '';
             var epChip = epLabel ? '<span class="episode-chip">'+esc(epLabel)+'</span>' : '';
             var posterTrigger=isAdminView?'<button type="button" class="file-poster-trigger" aria-label="Show file editing options" aria-expanded="false" onclick="toggleAdminBtns(this.closest(\\'.file-card\\'),event)"></button>':'';
@@ -317,7 +316,7 @@ function cardHtml(f,nested){
                 posterHtml='<div class="poster-box" id="poster-box-'+f.file_id+'">'+
                     '<img src="'+f.tg_thumb+'" id="img-poster-'+f.file_id+'" class="fc-poster" onload="this.classList.add(\\'loaded\\')" onerror="handleThumbError(\\''+f.file_id+'\\')" loading="lazy" decoding="async">'+
                     '<div class="poster-top">'+
-                        idChip+epChip+'<span class="size-chip">'+f.size+'</span>'+
+                        epChip+'<span class="size-chip">'+f.size+'</span>'+
                         durChip+resChip+
                         '<span class="source-pill '+sc+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+
                     '</div>'+posterTrigger+
@@ -328,7 +327,7 @@ function cardHtml(f,nested){
             var textInfo='';
             if(pMode==='none'){
                 textInfo='<div class="fc-text-info">'+
-                    idChip+epChip+'<span class="tc-size">'+f.size+'</span>'+
+                    epChip+'<span class="tc-size">'+f.size+'</span>'+
                     durText+resText+
                     '<span class="source-pill '+sc+'" style="margin-left:auto"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+
                 '</div>';
@@ -1101,15 +1100,15 @@ SEARCH_ZONE = (
             '</div>'
             '<div class="cdd-wrap gf-wrap" id="cddGfWrap">'
                 '<div class="cdd-btn gf-btn" id="cddGfBtn" onclick="toggleCdd(\'gf\')">'
-                    '<span id="cddGfLabel">All</span>'
+                    '<span id="cddGfLabel">Grouped</span>'
                 '</div>'
                 '<span class="cdd-arrow">&#9660;</span>'
                 '<div class="cdd-menu" id="cddGfMenu" style="display:none">'
-                    '<div class="cdd-item selected" data-val="all" onclick="pickGF(\'all\',\'All\',this)">All<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item" data-val="group" onclick="pickGF(\'group\',\'Groups\',this)">All groups<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<div class="cdd-item selected" data-val="all" onclick="pickGF(\'all\',\'Grouped\',this)">Grouped view (all files)<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<div class="cdd-item" data-val="group" onclick="pickGF(\'group\',\'Groups only\',this)">Groups only<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
                     '<div class="cdd-item" data-val="quality" onclick="pickGF(\'quality\',\'Quality\',this)">Quality groups<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
                     '<div class="cdd-item" data-val="series" onclick="pickGF(\'series\',\'Series\',this)">Series groups<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item" data-val="single" onclick="pickGF(\'single\',\'Files\',this)">All files (no grouping)<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<div class="cdd-item" data-val="single" onclick="pickGF(\'single\',\'Ungrouped\',this)">Ungrouped view (all files)<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
                 '</div>'
             '</div>'
         '</div>'
