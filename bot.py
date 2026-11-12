@@ -3,7 +3,6 @@ import asyncio
 import signal
 import os
 import time
-import gc
 from typing import Union, AsyncGenerator
 from datetime import datetime, timezone
 import pytz
@@ -62,7 +61,6 @@ async def auto_delete_worker(bot):
     while True:
         try:
             cursor = await db.get_expired_delete_tasks()
-            deleted_any = False
             
             async for task in cursor:
                 chat_id = task["chat_id"]
@@ -70,7 +68,6 @@ async def auto_delete_worker(bot):
                 
                 try:
                     await bot.delete_messages(chat_id, message_id)
-                    deleted_any = True
                 except FloodWait as fw:
                     # entry queue me hi rehne do — agle cycle me dobara try hoga
                     logger.warning(f"auto_delete FloodWait {fw.value}s")

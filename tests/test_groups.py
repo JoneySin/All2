@@ -674,20 +674,22 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.groups.find_one({"_id": "11"}))
         self.assertEqual((await self.cols["cloud"].find_one({"_id": "c"}))["group_id"], "10")
 
-    async def test_group_first_search_shows_new_member_without_refresh(self):
+    async def test_all_search_does_not_auto_join_unsaved_matching_file(self):
         docs = [doc("a", "Film 720p.mkv", group_id="7"), doc("b", "Film 1080p.mkv", group_id="7"),
                 doc("c", "Film 480p.mkv", "cloud")]
         await self.insert_files(*docs)
         group = {"_id": "7", "num": 7, "name": "Film", "members": ["a", "b"],
-                 "files": [{"id": "a", "name": docs[0]["file_name"]}, {"id": "b", "name": docs[1]["file_name"]}],
                  "auto_keys": ["film"], "excluded": [], "group_type": "quality"}
         await self.groups.insert_one(group)
-        with patch.object(api, "_fetch_page", AsyncMock(return_value=([docs[2]], ""))):
-            cards, _ = await api._grouped_first_page("Film", 0, 21, "none", "all", [group])
-        self.assertEqual(len(cards), 1)
-        self.assertEqual(cards[0]["gid"], "7")
-        self.assertEqual({v["file_id"] for v in cards[0]["variants"]}, {"a", "b", "c"})
-        self.assertEqual((await self.cols["cloud"].find_one({"_id": "c"}))["group_id"], "7")
+        with patch.object(api, 'build_query_filter', lambda raw, regex, lang=None: ({'file_name':regex}, False)):
+            response = await self.client.get('/api/search', params={'q':'Film', 'group':'1', 'gf':'all', 'mode':'none'})
+        data = await response.json()
+        self.assertEqual(response.status, 200, data)
+        self.assertEqual(data['results'][0]['gid'], '7')
+        self.assertEqual({v['file_id'] for v in data['results'][0]['variants']}, {'a','b'})
+        self.assertEqual([r['file_id'] for r in data['results'][1:]], ['c'])
+        self.assertNotIn('group_id', await self.cols['cloud'].find_one({'_id':'c'}))
+        self.assertEqual((await self.groups.find_one({'_id':'7'}))['members'], ['a','b'])
 
     async def test_scan_counts_unique_files_across_collections(self):
         await self.insert_files(doc("same", "Film 720p.mkv"), doc("same", "Film 720p.mkv", "cloud"))

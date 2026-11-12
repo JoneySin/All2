@@ -1263,37 +1263,6 @@ async def _group_cards(page_groups, mode):
     return cards
 
 
-async def _grouped_first_page(q, off, lim, mode, gf, gs):
-    """(cards, next_offset)"""
-    G = len(gs) if gf != "single" else 0
-    cards = []
-    if off < G:
-        page = gs[off: off + lim]
-        cards = await _group_cards(page, mode)
-        taken = len(page)
-        if off + taken < G:
-            return cards, off + taken
-        rem = lim - taken
-        if rem <= 0:                            # groups ne page bhar diya; aage files bachi hain?
-            peek, _ = await _fetch_page(q, "all", 0, 1, True, gf, True)
-            return cards, (G if peek else "")
-        fo = 0
-    else:
-        rem, fo = lim, off - G
-
-    docs, nf = await _fetch_page(q, "all", fo, rem, True, gf, True)
-    file_cards = await _finalize(_build_results_list(docs, mode), True, gf, mode, siblings=False)
-    seen = {c.get("gid") for c in cards if c.get("group") and c.get("manual")}
-    # A same-name file can join a group after its first card was assembled.
-    # Use the expanded card from this response instead of hiding the new member
-    # until the next refresh.
-    refreshed = {c.get("gid"): c for c in file_cards
-                 if c.get("group") and c.get("manual") and c.get("gid") in seen}
-    cards = [refreshed.get(c.get("gid"), c) for c in cards]
-    file_cards = [c for c in file_cards if not (c.get("group") and c.get("manual") and c.get("gid") in seen)]
-    return cards + file_cards, ((G + nf) if nf != "" else "")
-
-
 _GROUP_CURSOR_PREFIX = "g1_"
 _GROUP_CURSOR_STORED_PREFIX = "g2_"
 _GROUP_CURSOR_INLINE_LIMIT = 3200  # Leave room for the URL, query and proxy limits.

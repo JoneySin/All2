@@ -1,6 +1,6 @@
 import time
 from aiohttp import web
-from web.web_assets import build_page, get_auth, form_wrapper, MAX_WEB_RESULTS, require_active_plan, DEFAULT_MEDIA_MODE
+from web.web_assets import build_page, get_auth, form_wrapper, require_active_plan, DEFAULT_MEDIA_MODE
 from utils import temp
 from database.users_chats_db import web_db
 
@@ -42,14 +42,6 @@ CARD_CSS = """
   border-radius:999px;
   transition:background-color 9999s ease-in-out 0s;
 }
-.search-btn{position:relative;overflow:hidden;flex-shrink:0;background:var(--accent);color:#fff;border:none;border-radius:12px;padding:0 20px;height:38px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;transition:transform .15s,box-shadow .15s,background .15s;letter-spacing:.3px}
-.search-btn:hover{background:var(--accent-hover);transform:scale(1.03);box-shadow:0 6px 22px rgba(229,9,20,0.50)}
-.search-btn:active{transform:scale(.96)}
-/* ripple */
-.search-btn::after{content:'';position:absolute;inset:0;background:rgba(255,255,255,0);border-radius:inherit;pointer-events:none}
-.search-btn.ripple-go::after{animation:btnRipple .45s ease-out forwards}
-@keyframes btnRipple{0%{background:rgba(255,255,255,0.28);transform:scale(.6)}100%{background:rgba(255,255,255,0);transform:scale(1.6)}}
-
 /* ── Custom dropdown ── */
 .cdd-wrap{flex:0 1 auto;min-width:0;position:relative;user-select:none}
 .cdd-btn{width:170px;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:999px;padding:8px 28px 8px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:flex-start;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:border-color .15s,box-shadow .15s}
@@ -208,11 +200,10 @@ CARD_CSS = """
 # 🎬 JS ENGINE — Smart Double Pre-fetching Engine Live Live
 # ─────────────────────────────────────────────────────────────────────────────
 JS_ENGINE = """
-var curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
+var curOff=0,nextOff='',curCol='all',curPage=1;
 var searchReqId=0, nextPagePrefetch=null;
 // Shared preference keeps media and catalogue views in sync.
 var pMode=MediaView.media('__DEFAULT_MEDIA_MODE__');
-var LIMIT_VAL = __LIMIT_PLACEHOLDER__;
 
 var CDDS={col:['cddColMenu','cddColBtn'],mode:['cddModeMenu','cddModeBtn'],gf:['cddGfMenu','cddGfBtn']};
 function closeCdds(){
@@ -266,7 +257,6 @@ document.addEventListener('click',function(e){
 document.querySelectorAll('.cdd-menu').forEach(function(m){
     m.addEventListener('click',function(e){e.stopPropagation();});
 });
-function changeCol(val){curCol=val;doSearch(0,true);}
 
 /* ✅ DUPLICATE REMOVED: handleThumbError() यहाँ दोबारा defined था, जबकि
    web_assets.py के global JS में यह पहले से है (और वहाँ वाला version बेहतर है —
@@ -275,7 +265,6 @@ function changeCol(val){curCol=val;doSearch(0,true);}
    copy global वाली को shadow कर रही थी — यानी dashboard पर thumbnail-fail हमेशा
    घटिया दिखता था। अब सिर्फ़ global version चलता है। */
 
-function triggerRipple(btn){btn.classList.remove('ripple-go');void btn.offsetWidth;btn.classList.add('ripple-go');setTimeout(function(){btn.classList.remove('ripple-go');},460);}
 
 var isAdminView=false;
 var openGroups={};
@@ -922,7 +911,7 @@ async function doSearch(o,allowEmpty,fresh){
     if(fresh&&typeof o==='string'&&/^g[12]_/.test(o))o=0;
     var q=document.getElementById('q').value.trim();
     if(!q && !allowEmpty){showToast('Please enter a movie name','error');return;}
-    curQ=q;curOff=o;if(o===0){curPage=1;offHist=[];pageGroups={};}
+    curOff=o;if(o===0){curPage=1;offHist=[];pageGroups={};}
     if(q){sessionStorage.setItem('ff_dash_q',q);}else{sessionStorage.removeItem('ff_dash_q');}
 
     var myReq=++searchReqId;
@@ -1007,7 +996,6 @@ document.addEventListener('DOMContentLoaded',function(){
             var val=q.value.trim();
             if(val.length<2){
                 searchReqId++;
-                curQ='';
                 var qw=document.getElementById('qWrap');if(qw)qw.classList.remove('loading');
                 var ri=document.getElementById('resInfo');if(ri)ri.style.display='none';
                 var pb=document.getElementById('pageBox');if(pb)pb.style.display='none';
@@ -1031,7 +1019,7 @@ document.addEventListener('DOMContentLoaded',function(){
     var savedQ=sessionStorage.getItem('ff_dash_q');
     if(savedQ && q){q.value=savedQ;doSearch(0);}else{doSearch(0,true);}
 });
-""".replace("__LIMIT_PLACEHOLDER__", str(MAX_WEB_RESULTS)).replace("__DEFAULT_MEDIA_MODE__", DEFAULT_MEDIA_MODE)
+""".replace("__DEFAULT_MEDIA_MODE__", DEFAULT_MEDIA_MODE)
 
 # 🎛️ Default mode dropdown state (centralized via DEFAULT_MEDIA_MODE in web_assets.py)
 _MODE_TG_LBL = '\U0001f5bc\ufe0f Poster Mode'

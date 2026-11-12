@@ -4,7 +4,7 @@ import time
 import html
 import orjson
 from aiohttp import web
-from info import ADMINS, MAX_WEB_RESULTS
+from info import ADMINS
 from utils import temp
 from database.users_chats_db import db as user_db, web_db
 from web.player_assets import PLAYER_UI
@@ -179,10 +179,6 @@ JS = """
 function toggleThemeFixed(){var l=document.documentElement.classList.toggle('light');localStorage.setItem('theme',l?'light':'dark');}
 function openSidebar(){document.getElementById('sidebar').classList.add('open');document.getElementById('sbOverlay').classList.add('open');document.getElementById('hamBtn').classList.add('open');}
 function closeSidebar(){document.getElementById('sidebar').classList.remove('open');document.getElementById('sbOverlay').classList.remove('open');document.getElementById('hamBtn').classList.remove('open');}
-var curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
-var pMode=MediaView.media('__DEFAULT_MEDIA_MODE__');
-var LIMIT_VAL = __LIMIT_PLACEHOLDER__;
-
 var activeFid = '', activeCol = '', cropperInstance = null, fileSaveInProgress = false;
 var fileEditorSeq=0,fileEditorLoaded=false,fileGroupReady=false,fileEditorGroup='',fileEditorTarget=null,fileGroupSeq=0,fileGroupAbort=null;
 
@@ -444,7 +440,7 @@ function staggerCards(container){
     },{threshold:0.08});
     cards.forEach(function(c){ obs.observe(c); });
 }
-""".replace("__LIMIT_PLACEHOLDER__", str(MAX_WEB_RESULTS)).replace("__DEFAULT_MEDIA_MODE__", DEFAULT_MEDIA_MODE)
+"""
 
 def _h(html): return web.Response(text=html.encode('utf-8','replace').decode('utf-8'), content_type='text/html', charset='utf-8')
 

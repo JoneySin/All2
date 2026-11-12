@@ -2,7 +2,6 @@ import io
 import qrcode
 import asyncio
 import logging
-import gc
 from datetime import timedelta
 
 # ─────────────────────────────────────────────────────────

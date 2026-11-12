@@ -11,6 +11,8 @@ if fewer than two files remain; the surviving files are not deleted. Untouched
 legacy singleton records are preserved for repair but displayed as individual
 files, not groups. Actual media playback still depends on Telegram access and
 browser-supported codecs. MongoDB text-index behavior still requires a real-service test.
+MP4 probe tests cover the shared header/tail fallback for both magic bytes and
+filename hints, including error and short-tail cases.
 
 For grouped `/api/search` requests, treat `next_offset` as an opaque continuation
 value and send it back unchanged, including when a selective filter returns an

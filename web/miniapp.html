@@ -238,7 +238,7 @@ const ID=tg.initData||'';
 const H={'X-Telegram-Init-Data':ID};
 
 // state
-let curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
+let curOff=0,nextOff='',curCol='all',curPage=1;
 let searchReqId=0;
 let pMode=MediaView.media('__DEFAULT_MEDIA_MODE__'); /* 🎛️ default injected from web_assets.DEFAULT_MEDIA_MODE */
 let plyr=null,streamUrl='',playerReq=0,playerAbort=null,miniMediaFiles={};
@@ -357,7 +357,7 @@ async function doSearch(off,allowEmpty){
   let q=Q1('#q').value.trim();
   if(!q && !allowEmpty)return toast('Kuch likho pehle!');
   if(!ID)return showErr('init');
-  curQ=q;curOff=off;if(!off)curPage=1;
+  curOff=off;if(!off)curPage=1;
   if(q){sessionStorage.setItem('ff_ma_q',q);}else{sessionStorage.removeItem('ff_ma_q');}
 
   let myReq=++searchReqId;
