@@ -66,7 +66,7 @@ __BRAND_CSS__
 <body>
 <div class="hero-bg"></div>
 <header class="navbar">
-    <a href="/" class="logo" aria-label="FastFinder home">__BRAND_MARKUP__</a>
+    <a href="/" class="logo landing-brand" aria-label="FastFinder home">__BRAND_MARKUP__</a>
     <div class="header-actions">
         <button class="theme-btn" id="theme-btn">Theme</button>
         <a href="/login" class="admin-btn">Sign In</a>

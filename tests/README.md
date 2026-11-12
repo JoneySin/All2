@@ -52,8 +52,9 @@ The catalog search check covers error handling, same-query retry and stale-respo
 The prefetch check verifies navigation retries when a speculative request fails.
 The home search-panel check compares its shared style with posts/profiles and tests
 responsive layout, themes, dropdowns and search on 320px through desktop widths.
-The branding check covers the original red F logo and navigation emoji across roles, themes,
-the mini-app and landing page at mobile and desktop sizes.
+The branding check covers the original red F logo and its original font sizes
+on the dashboard, sidebar, guest page, mini-app, landing and watch page at
+mobile and desktop sizes, as well as navigation emoji and both themes.
 It uses a **test-only, always-admin, in-memory** server; never deploy that server.
 Install Node.js and Playwright separately, for example:
 

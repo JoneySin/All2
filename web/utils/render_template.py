@@ -63,7 +63,7 @@ __BRAND_CSS__
 </head>
 <body>
 <div class="navbar">
-    <a href="/" class="logo" aria-label="FastFinder home">__BRAND_MARKUP__</a>
+    <a href="/" class="logo watch-brand" aria-label="FastFinder home">__BRAND_MARKUP__</a>
     <button class="theme-btn" id="theme-btn">Theme</button>
 </div>
 <div class="hero-container">

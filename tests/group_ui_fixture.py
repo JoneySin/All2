@@ -5,6 +5,8 @@ import re
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 for key, value in {
     "API_ID": "1", "API_HASH": "test", "BOT_TOKEN": "1:test", "ADMINS": "1",
@@ -157,6 +159,17 @@ async def dashboard(_req):
     return build_page("Mock Dashboard", DASHBOARD_BODY, "", "dash", "admin")
 
 
+async def guest_page(_req):
+    return build_page("Mock Guest", "", "login-bg")
+
+
+async def watch_page(_req):
+    from web.utils import render_template
+    info = SimpleNamespace(mime_type='video/mp4', file_name='Example.mp4')
+    with patch.object(render_template, 'get_media_info', AsyncMock(return_value=info)):
+        return web.Response(text=await render_template.media_watch(123), content_type='text/html')
+
+
 async def user_dashboard(_req):
     return build_page("Mock Dashboard", DASHBOARD_BODY, "", "dash", "user")
 
@@ -191,6 +204,8 @@ async def thumb(_req):
 app = web.Application()
 app.router.add_get("/dashboard", dashboard)
 app.router.add_get("/fixture/user-dashboard", user_dashboard)
+app.router.add_get("/fixture/guest", guest_page)
+app.router.add_get("/fixture/watch", watch_page)
 app.router.add_get("/fixture/landing", stream.root_route_handler)
 app.router.add_get("/fixture/actor-cards", actor_cards)
 app.router.add_post("/fixture/seed_auto", seed_automatic_examples)

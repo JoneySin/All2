@@ -545,7 +545,7 @@ _NAV_SHELL = ('<div class="sidebar-overlay" id="sbOverlay" onclick="closeSidebar
     '<div class="topbar-right"><button class="theme-btn" onclick="toggleThemeFixed()"><span aria-hidden="true">🌗</span> Theme</button></div></div>')
 
 _NAV_GUEST = ('<div class="topbar" style="position:absolute; width:100%; box-shadow:none; background:transparent;">'
-    '<a class="logo" href="/" aria-label="FastFinder home">' + BRAND_MARKUP + '</a>'
+    '<a class="logo guest-brand" href="/" aria-label="FastFinder home">' + BRAND_MARKUP + '</a>'
     '<div class="topbar-right"><button class="theme-btn" onclick="toggleThemeFixed()"><span aria-hidden="true">🌗</span> Theme</button></div></div>')
 
 
