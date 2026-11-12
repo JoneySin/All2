@@ -282,6 +282,22 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cards[0]["gid"], "")
         self.assertEqual(await self.groups.count_documents({}), 0)
 
+    async def test_saved_group_stats_follow_create_type_change_and_removal(self):
+        await self.insert_files(doc('a', 'Episode 1'), doc('b', 'Episode 2', 'cloud'))
+        status, result = await self.post('/api/group/save', {
+            'name': 'Series', 'group_type': 'series', 'items': [{'id': 'a'}, {'id': 'b'}]})
+        self.assertEqual(status, 200, result)
+        gid = result['group_id']
+        self.assertEqual(await db.get_saved_group_counts(), {'total': 1, 'quality': 0, 'series': 1})
+        status, result = await self.post('/api/group/update', {'group_id': gid, 'group_type': 'quality'})
+        self.assertEqual(status, 200, result)
+        self.assertEqual(await db.get_saved_group_counts(), {'total': 1, 'quality': 1, 'series': 0})
+        status, result = await self.post('/api/group/remove_file', {'group_id': gid, 'file_id': 'a'})
+        self.assertEqual(status, 200, result)
+        self.assertEqual(await db.get_saved_group_counts(), {'total': 0, 'quality': 0, 'series': 0})
+        self.assertIsNotNone(await self.cols['primary'].find_one({'_id': 'a'}))
+        self.assertIsNotNone(await self.cols['cloud'].find_one({'_id': 'b'}))
+
     async def test_series_create_edit_order_labels_and_auto_join(self):
         docs = [doc("a", "Same Name Episode 1.mkv", duration=1500),
                 doc("b", "Same Name Episode 2.mkv", "cloud", duration=2500)]

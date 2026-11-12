@@ -14,6 +14,9 @@ browser-supported codecs. MongoDB text-index behavior still requires a real-serv
 Catalogue tests cover stable timestamp ties and page boundaries, filters, access,
 invalid offsets and database failures. MP4 probe tests cover the shared header/tail fallback for both magic bytes and
 filename hints, including error and short-tail cases.
+Saved-group stats tests cover quality/series counts, legacy records, lifecycle
+changes, admin access and database failures. Counts represent stored records,
+including preserved legacy singletons, not the number of visible search cards.
 
 For grouped `/api/search` requests, treat `next_offset` as an opaque continuation
 value and send it back unchanged, including when a selective filter returns an
@@ -78,6 +81,7 @@ NODE_PATH=/tmp/all2-playwright/node_modules node tests/catalog_search_ui_check.c
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/prefetch_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/search_panel_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/brand_ui_check.cjs
+NODE_PATH=/tmp/all2-playwright/node_modules node tests/group_stats_ui_check.cjs
 ```
 
 The fixture uses port 8765 by default. Set `ALL2_UI_PORT` on the fixture and

@@ -4,7 +4,7 @@ from web.web_assets import build_page, get_auth
 # ✅ DRY: directory + post-category counts अब ia_filterdb के shared helpers से आते
 # हैं। पहले यहाँ actors.count_documents × 4 और posts aggregation खुद लिखी थी, और
 # वही ब्लॉक plugins/commands.py में भी (दो बार) कॉपी था — यानी 3 copies।
-from database.ia_filterdb import db_count_documents, get_directory_counts, get_post_category_counts
+from database.ia_filterdb import db_count_documents, get_directory_counts, get_post_category_counts, get_saved_group_counts
 from database.users_chats_db import db as user_db
 from info import PORT
 
@@ -37,6 +37,7 @@ _STATS_CSS = """<style>
 .t-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:4px;} .t-dot-pulse{animation:pulse 1.8s ease-in-out infinite;color:#28a745;}
 .t-lbl{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;transition:color .35s;} .t-val{font-size:14px;font-weight:700;} .t-sub{font-size:11px;color:var(--muted);margin-top:2px;transition:color .35s;}
 @media(max-width:800px){.stats-grid-3,.telemetry-grid{grid-template-columns:1fr 1fr;}.stats-grid-2{grid-template-columns:1fr;}.hero-stat{flex-direction:column;align-items:flex-start;}.hero-num{font-size:36px;}}
+@media(max-width:480px){.stats-grid-3,.telemetry-grid{grid-template-columns:1fr;}}
 </style>"""
 
 _STATS_JS = """<script>
@@ -129,7 +130,7 @@ async def stats(req):
     # ⚡ FAST: ये सब counts एक-दूसरे से independent हैं, इसलिए पहले 10+ sequential
     # round-trips की जगह अब सब parallel चलते हैं (stats पेज का मुख्य delay यही था)।
     (s, u, total_plays, logged_in_today, premium_users,
-     (tot_dir, act_dir, app_dir, web_dir), post_stats) = await asyncio.gather(
+     (tot_dir, act_dir, app_dir, web_dir), post_stats, group_stats) = await asyncio.gather(
         _safe(db_count_documents(), default_s),
         _safe(user_db.total_users_count(), 0),
         _safe(_get_total_plays(), 0),
@@ -137,6 +138,7 @@ async def stats(req):
         _safe(user_db.get_premium_users_count(), 0),
         get_directory_counts(),
         get_post_category_counts(),
+        _safe(get_saved_group_counts(), None),
     )
     if not isinstance(s, dict):
         s = default_s
@@ -149,16 +151,22 @@ async def stats(req):
     grand_total = s.get('total', 1) or 1
     p_pct, c_pct, a_pct = int((p_tot / grand_total) * 100), int((c_tot / grand_total) * 100), int((a_tot / grand_total) * 100)
 
+    def group_count_markup(key, delay):
+        if group_stats is None:
+            return '—' if key != 'total' else 'Unavailable'
+        count = group_stats[key]
+        return f'<span data-count="{count}" data-delay="{delay}">{count:,}</span>'
+
     body = f'''{_STATS_CSS}<div class="main" style="padding-top:40px;">
   <div class="hero-stat anim-card">
     <div>
-      <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">Total Cloud Archive Matrix</div>
+      <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">Total Files</div>
       <div class="hero-num" data-count="{s.get('total', 0)}" data-delay="0">{s.get('total', 0):,}</div>
     </div>
     <div class="hero-right">
       <div class="hero-badges">
-        <span class="hero-badge" style="background:#3399ff22;color:#3399ff;border:1px solid #3399ff44;">🎬 {p_tot:,} Movies</span>
-        <span class="hero-badge" style="background:#ff993322;color:#ff9933;border:1px solid #ff993344;">📺 {c_tot:,} Series</span>
+        <span class="hero-badge" style="background:#3399ff22;color:#3399ff;border:1px solid #3399ff44;">🟢 {p_tot:,} Primary</span>
+        <span class="hero-badge" style="background:#ff993322;color:#ff9933;border:1px solid #ff993344;">🔵 {c_tot:,} Cloud</span>
         <span class="hero-badge" style="background:#9933ff22;color:#9933ff;border:1px solid #9933ff44;">🗄️ {a_tot:,} Archive</span>
       </div>
       <div class="multi-bar">
@@ -167,8 +175,8 @@ async def stats(req):
         <div class="multi-bar-seg" style="width:{a_pct}%;background:#9933ff;animation-delay:.6s;"></div>
       </div>
       <div class="multi-bar-legend">
-        <span><span class="mbl-dot" style="background:#3399ff;"></span>Movies {p_pct}%</span>
-        <span><span class="mbl-dot" style="background:#ff9933;"></span>Series {c_pct}%</span>
+        <span><span class="mbl-dot" style="background:#3399ff;"></span>Primary {p_pct}%</span>
+        <span><span class="mbl-dot" style="background:#ff9933;"></span>Cloud {c_pct}%</span>
         <span><span class="mbl-dot" style="background:#9933ff;"></span>Archive {a_pct}%</span>
       </div>
     </div>
@@ -179,9 +187,9 @@ async def stats(req):
     </div>
   </div>
   <div class="stats-grid-3">
-    <div class="st-card anim-card"><div class="st-card-bar" style="background:#3399ff;"></div><div class="st-label">Primary Cloud — Movies</div><div class="st-val" style="color:#3399ff;" data-count="{p_tot}" data-delay="120">{p_tot:,}</div><div class="prog-wrap"><div class="prog-bar" style="width:{p_pct}%;background:linear-gradient(90deg,#3399ff,#66bbff);animation-delay:.4s;"></div></div><div style="display:flex;justify-content:space-between;align-items:center;"><span class="thumb-badge">🖼️ {s.get('primary_thumb', 0):,} cached</span><span class="pct-label" style="color:#3399ff;">{p_pct}%</span></div></div>
-    <div class="st-card anim-card"><div class="st-card-bar" style="background:#ff9933;"></div><div class="st-label">Cloud Library — Series</div><div class="st-val" style="color:#ff9933;" data-count="{c_tot}" data-delay="180">{c_tot:,}</div><div class="prog-wrap"><div class="prog-bar" style="width:{c_pct}%;background:linear-gradient(90deg,#ff9933,#ffcc77);animation-delay:.45s;"></div></div><div style="display:flex;justify-content:space-between;align-items:center;"><span class="thumb-badge">🖼️ {s.get('cloud_thumb', 0):,} cached</span><span class="pct-label" style="color:#ff9933;">{c_pct}%</span></div></div>
-    <div class="st-card anim-card"><div class="st-card-bar" style="background:#9933ff;"></div><div class="st-label">Backup Warehouse — Archive</div><div class="st-val" style="color:#9933ff;" data-count="{a_tot}" data-delay="240">{a_tot:,}</div><div class="prog-wrap"><div class="prog-bar" style="width:{a_pct}%;background:linear-gradient(90deg,#9933ff,#cc77ff);animation-delay:.5s;"></div></div><div style="display:flex;justify-content:space-between;align-items:center;"><span class="thumb-badge">🖼️ {s.get('archive_thumb', 0):,} cached</span><span class="pct-label" style="color:#9933ff;">{a_pct}%</span></div></div>
+    <div class="st-card anim-card"><div class="st-card-bar" style="background:#3399ff;"></div><div class="st-label">Primary Collection</div><div class="st-val" style="color:#3399ff;" data-count="{p_tot}" data-delay="120">{p_tot:,}</div><div class="prog-wrap"><div class="prog-bar" style="width:{p_pct}%;background:linear-gradient(90deg,#3399ff,#66bbff);animation-delay:.4s;"></div></div><div style="display:flex;justify-content:space-between;align-items:center;"><span class="thumb-badge">🖼️ {s.get('primary_thumb', 0):,} cached</span><span class="pct-label" style="color:#3399ff;">{p_pct}%</span></div></div>
+    <div class="st-card anim-card"><div class="st-card-bar" style="background:#ff9933;"></div><div class="st-label">Cloud Collection</div><div class="st-val" style="color:#ff9933;" data-count="{c_tot}" data-delay="180">{c_tot:,}</div><div class="prog-wrap"><div class="prog-bar" style="width:{c_pct}%;background:linear-gradient(90deg,#ff9933,#ffcc77);animation-delay:.45s;"></div></div><div style="display:flex;justify-content:space-between;align-items:center;"><span class="thumb-badge">🖼️ {s.get('cloud_thumb', 0):,} cached</span><span class="pct-label" style="color:#ff9933;">{c_pct}%</span></div></div>
+    <div class="st-card anim-card"><div class="st-card-bar" style="background:#9933ff;"></div><div class="st-label">Archive Collection</div><div class="st-val" style="color:#9933ff;" data-count="{a_tot}" data-delay="240">{a_tot:,}</div><div class="prog-wrap"><div class="prog-bar" style="width:{a_pct}%;background:linear-gradient(90deg,#9933ff,#cc77ff);animation-delay:.5s;"></div></div><div style="display:flex;justify-content:space-between;align-items:center;"><span class="thumb-badge">🖼️ {s.get('archive_thumb', 0):,} cached</span><span class="pct-label" style="color:#9933ff;">{a_pct}%</span></div></div>
   </div>
   
   <div class="stats-grid-3">
@@ -250,6 +258,23 @@ async def stats(req):
             <div class="user-sub-cell" style="grid-column: span 2; display: flex; justify-content: space-between; align-items: center;">
                 <div class="user-sub-cell-lbl" style="margin:0;">🌐 Websites</div>
                 <div class="user-sub-cell-val" style="color:#9933ff;" data-count="{web_dir}" data-delay="420">{web_dir:,}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="st-card anim-card" id="saved-group-stats">
+        <div class="st-card-bar" style="background:#9933ff;"></div>
+        <div class="st-label">Saved Groups · Total</div>
+        <div class="st-val" style="color:#9933ff;" id="saved-group-total">{group_count_markup('total', 380)}</div>
+        <div class="st-sub">Saved group records, including legacy records</div>
+        <div class="user-sub-row">
+            <div class="user-sub-cell">
+                <div class="user-sub-cell-lbl">🗂️ Quality Groups</div>
+                <div class="user-sub-cell-val" style="color:#3399ff;" id="saved-quality-count">{group_count_markup('quality', 400)}</div>
+            </div>
+            <div class="user-sub-cell">
+                <div class="user-sub-cell-lbl">📺 Series Groups</div>
+                <div class="user-sub-cell-val" style="color:#ff9933;" id="saved-series-count">{group_count_markup('series', 420)}</div>
             </div>
         </div>
     </div>

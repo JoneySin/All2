@@ -22,7 +22,7 @@ from database import ia_filterdb as db
 from web import search_api as api
 from web.dashboard_routes import DASHBOARD_BODY
 from web.actor_routes import ACTOR_MEDIA_SCRIPT
-from web import actor_routes as actor, post_routes as post, stream_routes as stream
+from web import actor_routes as actor, post_routes as post, stream_routes as stream, stats_routes as stats
 from bson import ObjectId
 from web.web_assets import build_page
 
@@ -52,7 +52,16 @@ async def active(_role, _tg_id):
     return True
 
 
-actor.get_auth = post.get_auth = admin_role
+actor.get_auth = post.get_auth = stats.get_auth = admin_role
+stats.db_count_documents = AsyncMock(return_value={})
+stats.get_directory_counts = AsyncMock(return_value=(0, 0, 0, 0))
+stats.get_post_category_counts = AsyncMock(return_value=(0, 0, 0, 0, 0))
+stats.user_db = SimpleNamespace(
+    total_users_count=AsyncMock(return_value=0),
+    get_today_logged_in_users_count=AsyncMock(return_value=0),
+    get_premium_users_count=AsyncMock(return_value=0),
+    settings=SimpleNamespace(find_one=AsyncMock(return_value=None)),
+)
 actor.require_active_plan = post.require_active_plan = active
 api.get_user_role = admin_role
 api._siblings = no_siblings
@@ -214,5 +223,6 @@ app.router.add_get("/api/thumb", thumb)
 app.add_routes(api.search_routes)
 app.add_routes(actor.actor_routes)
 app.add_routes(post.post_routes)
+app.add_routes(stats.stats_routes)
 app.on_startup.append(seed)
 web.run_app(app, host="0.0.0.0", port=int(os.environ.get("ALL2_UI_PORT", "8765")), print=None)

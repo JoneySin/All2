@@ -151,6 +151,27 @@ async def db_count_documents():
         return {"primary": 0, "cloud": 0, "archive": 0, "total": 0, "primary_thumb": 0, "cloud_thumb": 0, "archive_thumb": 0, "total_thumb": 0}
 
 
+async def get_saved_group_counts():
+    """Count saved QualityGroups records; old/unknown types are quality groups.
+
+    Records are counted as stored, including legacy singletons retained for repair.
+    Telegram chat records in the separate Groups collection are not included.
+    Errors propagate so the stats page can distinguish an outage from zero groups.
+    """
+    pipeline = [{"$group": {
+        "_id": {"$cond": [{"$eq": [{"$ifNull": ["$group_type", "quality"]}, "series"]}, "series", "quality"]},
+        "count": {"$sum": 1},
+    }}]
+    counts = {"quality": 0, "series": 0}
+    try:
+        async for row in groups.aggregate(pipeline):
+            counts[row["_id"]] = row["count"]
+    except Exception:
+        logger.exception("Could not count saved groups")
+        raise
+    return {"total": counts["quality"] + counts["series"], **counts}
+
+
 # ─────────────────────────────────────────────────────────
 # 🗂️ UNIVERSAL DIRECTORY COUNTS (actors / apps / websites)
 # ✅ DRY + FAST: यह 4-लाइन वाला ब्लॉक 3 जगह कॉपी था (commands./stats,
