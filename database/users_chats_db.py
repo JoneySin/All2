@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pymongo import ReturnDocument
 import pytz
-from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import AsyncMongoClient
 from info import (DATABASE_URL, DATABASE_NAME, FILE_CAPTION, 
                   SPELL_CHECK, PROTECT_CONTENT, AUTO_DELETE, TIME_ZONE)
 
@@ -159,8 +159,8 @@ class WebAuthDB:
 # =========================================
 class Database:
     def __init__(self):
-        # ✅ MOTOR ENGINE: कोएब आइडल थ्रॉटलिंग और कनेक्शन DROP से सुरक्षित ट्यूनिंग
-        self.client = AsyncIOMotorClient(
+        # ✅ PYMONGO ASYNC ENGINE: कोएब आइडल थ्रॉटलिंग और कनेक्शन DROP से सुरक्षित ट्यूनिंग
+        self.client = AsyncMongoClient(
             DATABASE_URL, 
             minPoolSize=0,            # आइडल टाइम पर 0 कनेक्शन (RAM 100% सेफ)
             maxPoolSize=15,           # हैवी ट्रैफिक के लिए 15 कनेक्शंस पूल

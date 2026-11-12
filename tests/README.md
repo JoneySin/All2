@@ -3,7 +3,9 @@
 The grouping, editor, cache-invalidation and streaming tests use an in-memory
 MongoDB mock and test-only configuration. They check signed inline/range headers,
 thumbnail revisions, partial failures, and preservation of post/profile data;
-they do not connect to Telegram or require a running MongoDB server. Grouping
+they do not connect to Telegram or require a running MongoDB server. The dependency
+upgrade checks also exercise the real PyMongo async driver against a mock MongoDB
+wire-protocol server; that is not a substitute for testing a live MongoDB deployment. Grouping
 checks cover the two-distinct-file group threshold, runtime/episode matching,
 legacy/manual groups, exclusions, live joins, full scans and pagination across
 collections. Bot startup schedules the full scan in the background after database
@@ -39,6 +41,14 @@ python -m venv .venv
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
+## Dependency compatibility
+
+Production dependencies are pinned in `requirements.txt`; the MongoDB driver is
+PyMongo Async, not Motor. PyMongo 4.19 requires MongoDB 4.4 or newer, so check the
+server version before deployment. The container remains on Python 3.11 until a
+newer Python image and its native dependencies can be validated. Plyr 3.8.5 is
+maintenance-only; a future player replacement should be tested separately.
+
 ## Optional group-move browser test
 
 The browser test exercises group-card keyboard/name opening, duration and ID chips,
@@ -71,7 +81,7 @@ Install Node.js and Playwright separately, for example:
 
 ```sh
 mkdir -p /tmp/all2-playwright
-npm --prefix /tmp/all2-playwright install --no-save --no-package-lock playwright
+npm --prefix /tmp/all2-playwright install --no-save --no-package-lock playwright cropperjs@2.3.1 plyr@3.8.5
 /tmp/all2-playwright/node_modules/.bin/playwright install chromium
 
 # Terminal 1, from the repository root (restart for each test run):
@@ -82,6 +92,8 @@ NODE_PATH=/tmp/all2-playwright/node_modules node tests/group_ui_check.cjs
 
 # Restart the fixture before each of these additional tests:
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/file_editor_ui_check.cjs
+NODE_PATH=/tmp/all2-playwright/node_modules node tests/cropper_ui_check.cjs
+NODE_PATH=/tmp/all2-playwright/node_modules node tests/plyr_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/ungrouped_view_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/ungrouped_recent_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/shared_view_ui_check.cjs
@@ -92,6 +104,11 @@ NODE_PATH=/tmp/all2-playwright/node_modules node tests/brand_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/group_stats_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/stats_ui_check.cjs
 ```
+
+The cropper check loads the installed Cropper.js locally, checks portrait, landscape
+and square selections, bounds, exact JPEG output, both uploads and the CDN fallback.
+The Plyr check loads the installed player locally and uses a browser-generated video
+to test watch and mini-app controls; it does not test real Telegram streams.
 
 The group and file editor browser checks also verify matching destination previews,
 thumbnail fallbacks, absence of member lists, and move confirmation and stale-target safety.

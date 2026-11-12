@@ -30,7 +30,7 @@
 
 import asyncio
 import time
-import motor.motor_asyncio
+from pymongo import AsyncMongoClient
 from pymongo.errors import BulkWriteError
 from hydrogram import Client, filters
 from hydrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -77,11 +77,14 @@ async def check_db_cmd(bot, message):
     SOURCE[message.from_user.id] = {"url": check_url, "db_name": check_db_name}
     status = await message.reply("🔎 Checking DB info...")
 
+    old_client = None
     try:
-        old_client = motor.motor_asyncio.AsyncIOMotorClient(check_url)
+        old_client = AsyncMongoClient(check_url)
         old_db = old_client[check_db_name]
         await old_client.admin.command("ping")
     except Exception as e:
+        if old_client is not None:
+            await old_client.close()
         return await status.edit(f"❌ Could not connect (Auth/Network Error):\n{e}")
 
     try:
@@ -93,8 +96,6 @@ async def check_db_cmd(bot, message):
         )
         db_stats = await old_db.command("dbStats")
         storage_used = _size_fmt(db_stats.get("storageSize", 0))
-        old_client.close()
-
         col_lines = [f"📁 {c}\n    Docs : {n:,}" for c, n in zip(collections, counts)]
 
         text = (
@@ -116,6 +117,8 @@ async def check_db_cmd(bot, message):
         await status.edit(text, reply_markup=buttons)
     except Exception as e:
         await status.edit(f"❌ Failed to fetch DB info:\n{e}")
+    finally:
+        await old_client.close()
 
 
 @Client.on_callback_query(filters.user(ADMINS) & filters.regex(r"^dbop:"))
@@ -129,13 +132,16 @@ async def dbop_callback(bot, cq):
 
     if action == "copy_collection":
         src = SOURCE.get(cq.from_user.id, {"url": DATABASE_URL, "db_name": DATABASE_NAME})
+        old_client = None
         try:
-            old_client = motor.motor_asyncio.AsyncIOMotorClient(src["url"])
+            old_client = AsyncMongoClient(src["url"])
             old_db = old_client[src["db_name"]]
             collections = await old_db.list_collection_names()
-            old_client.close()
         except Exception as e:
             return await cq.message.edit(f"❌ Could not load collections:\n{e}")
+        finally:
+            if old_client is not None:
+                await old_client.close()
 
         if not collections:
             return await cq.message.edit("❌ No collections found.")
@@ -256,146 +262,148 @@ async def receive_new_url(bot, message):
     status = await message.reply(f"🚚 Starting {label}...\n\nConnecting to the new DB...")
 
     src = SOURCE.get(message.from_user.id, {"url": DATABASE_URL, "db_name": DATABASE_NAME})
+    old_client = new_client = None
     try:
-        old_client = motor.motor_asyncio.AsyncIOMotorClient(src["url"])
-        new_client = motor.motor_asyncio.AsyncIOMotorClient(new_url)
-        old_db = old_client[src["db_name"]]
-        new_db = new_client[db_name]
-        await new_client.admin.command("ping")
-    except Exception as e:
-        return await status.edit(
-            f"❌ Could not connect to the new DB (Auth/Network Error):\n{e}\n\n"
-            f"👉 Make sure 0.0.0.0/0 is whitelisted in Atlas Network Access."
-        )
-
-    all_collections = await old_db.list_collection_names()
-    if not all_collections:
-        return await status.edit("❌ No collections found in the source DB.")
-
-    if action == "copy_collection":
-        if target_collection not in all_collections:
-            return await status.edit(f"❌ Collection '{target_collection}' no longer exists.")
-        collections_to_copy = [target_collection]
-    else:
-        collections_to_copy = all_collections
-
-    grand_total = 0
-    grand_failed = 0
-    last_edit = time.time()
-
-    for col_name in collections_to_copy:
-        old_col = old_db[col_name]
-        new_col = new_db[col_name]
-
-        # --- existing-collection check ---
-        query = {}
-        dest_count = await new_col.count_documents({})
-        if dest_count > 0:
-            decision = await _ask_existing_collection_decision(
-                bot, message.chat.id, message.from_user.id, col_name, dest_count
+        try:
+            old_client = AsyncMongoClient(src["url"])
+            new_client = AsyncMongoClient(new_url)
+            old_db = old_client[src["db_name"]]
+            new_db = new_client[db_name]
+            await new_client.admin.command("ping")
+        except Exception as e:
+            return await status.edit(
+                f"❌ Could not connect to the new DB (Auth/Network Error):\n{e}\n\n"
+                f"👉 Make sure 0.0.0.0/0 is whitelisted in Atlas Network Access."
             )
-            if decision == "cancel":
-                old_client.close()
-                new_client.close()
-                return await status.edit("❌ Operation cancelled.")
-            elif decision == "skip":
-                continue
-            elif decision == "replace":
-                await new_col.drop()
-                query = {}
-            else:  # resume
-                last_doc = await new_col.find_one({}, sort=[("_id", -1)])
-                if last_doc:
-                    query = {"_id": {"$gt": last_doc["_id"]}}
 
-        total = await old_col.count_documents(query)
-        if total == 0:
-            continue  # nothing left to copy for this collection
+        all_collections = await old_db.list_collection_names()
+        if not all_collections:
+            return await status.edit("❌ No collections found in the source DB.")
 
-        copied, failed, batch = 0, 0, []
+        if action == "copy_collection":
+            if target_collection not in all_collections:
+                return await status.edit(f"❌ Collection '{target_collection}' no longer exists.")
+            collections_to_copy = [target_collection]
+        else:
+            collections_to_copy = all_collections
 
-        # sort by _id so resume (query on _id) always picks up where it left off
-        cursor = old_col.find(query, batch_size=BATCH_SIZE).sort("_id", 1)
-        async for doc in cursor:
-            batch.append(doc)
-            if len(batch) >= BATCH_SIZE:
+        grand_total = 0
+        grand_failed = 0
+        last_edit = time.time()
+
+        for col_name in collections_to_copy:
+            old_col = old_db[col_name]
+            new_col = new_db[col_name]
+
+            # --- existing-collection check ---
+            query = {}
+            dest_count = await new_col.count_documents({})
+            if dest_count > 0:
+                decision = await _ask_existing_collection_decision(
+                    bot, message.chat.id, message.from_user.id, col_name, dest_count
+                )
+                if decision == "cancel":
+                    return await status.edit("❌ Operation cancelled.")
+                elif decision == "skip":
+                    continue
+                elif decision == "replace":
+                    await new_col.drop()
+                    query = {}
+                else:  # resume
+                    last_doc = await new_col.find_one({}, sort=[("_id", -1)])
+                    if last_doc:
+                        query = {"_id": {"$gt": last_doc["_id"]}}
+
+            total = await old_col.count_documents(query)
+            if total == 0:
+                continue  # nothing left to copy for this collection
+
+            copied, failed, batch = 0, 0, []
+
+            # sort by _id so resume (query on _id) always picks up where it left off
+            cursor = old_col.find(query, batch_size=BATCH_SIZE).sort("_id", 1)
+            async for doc in cursor:
+                batch.append(doc)
+                if len(batch) >= BATCH_SIZE:
+                    ins, err = await _insert_batch(new_col, batch)
+                    copied += ins
+                    failed += err
+                    batch = []
+                    if time.time() - last_edit > STATUS_EDIT_INTERVAL:
+                        last_edit = time.time()
+                        try:
+                            await status.edit(
+                                f"🚚 {label} in progress...\n\n"
+                                f"📁 {col_name}: {copied}/{total}\n"
+                                f"{_progress_bar(copied, total)}"
+                            )
+                        except Exception:
+                            pass
+
+            if batch:
                 ins, err = await _insert_batch(new_col, batch)
                 copied += ins
                 failed += err
-                batch = []
-                if time.time() - last_edit > STATUS_EDIT_INTERVAL:
-                    last_edit = time.time()
-                    try:
-                        await status.edit(
-                            f"🚚 {label} in progress...\n\n"
-                            f"📁 {col_name}: {copied}/{total}\n"
-                            f"{_progress_bar(copied, total)}"
-                        )
-                    except Exception:
-                        pass
 
-        if batch:
-            ins, err = await _insert_batch(new_col, batch)
-            copied += ins
-            failed += err
+            # copy non-default indexes so the new collection performs the same
+            try:
+                existing_indexes = await new_col.index_information()
+                async for index in await old_col.list_indexes():
+                    if index["name"] == "_id_" or index["name"] in existing_indexes:
+                        continue
+                    keys = list(index["key"].items())
+                    opts = {k: v for k, v in index.items() if k not in ("key", "v", "ns")}
+                    await new_col.create_index(keys, **opts)
+            except Exception:
+                pass  # index copy is best-effort, never block the data copy
 
-        # copy non-default indexes so the new collection performs the same
-        try:
-            existing_indexes = await new_col.index_information()
-            async for index in old_col.list_indexes():
-                if index["name"] == "_id_" or index["name"] in existing_indexes:
-                    continue
-                keys = list(index["key"].items())
-                opts = {k: v for k, v in index.items() if k not in ("key", "v", "ns")}
-                await new_col.create_index(keys, **opts)
-        except Exception:
-            pass  # index copy is best-effort, never block the data copy
+            grand_total += copied
+            grand_failed += failed
+            try:
+                await status.edit(
+                    f"✅ {col_name} done: {copied}/{total}\n{_progress_bar(copied, total)}\n\n"
+                    f"⏳ Moving to next collection..."
+                )
+            except Exception:
+                pass
 
-        grand_total += copied
-        grand_failed += failed
-        try:
-            await status.edit(
-                f"✅ {col_name} done: {copied}/{total}\n{_progress_bar(copied, total)}\n\n"
-                f"⏳ Moving to next collection..."
+        failed_note = f"\n⚠️ {grand_failed} documents failed to copy (real errors, not just duplicates).\n" if grand_failed else ""
+
+        if action == "migrate":
+            final_text = (
+                f"🎉 Migration complete!\n\n"
+                f"📦 Collections: {len(collections_to_copy)}\n"
+                f"📄 Documents copied: {grand_total}\n"
+                f"{failed_note}\n"
+                f"👉 Now update DATABASE_URL in Koyeb to the new URI and restart the bot.\n"
+                f"⚠️ Then delete this message and remove this file from plugins."
             )
-        except Exception:
-            pass
+        elif action == "copy_collection":
+            final_text = (
+                f"🎉 Collection copy complete!\n\n"
+                f"📁 Collection: {target_collection}\n"
+                f"📄 Documents copied: {grand_total}\n"
+                f"{failed_note}\n"
+                f"ℹ️ The original DB is untouched, nothing else to change.\n"
+                f"⚠️ Delete this message (it contains a password)."
+            )
+        else:
+            final_text = (
+                f"🎉 Database copy complete!\n\n"
+                f"📦 Collections: {len(collections_to_copy)}\n"
+                f"📄 Documents copied: {grand_total}\n"
+                f"{failed_note}\n"
+                f"ℹ️ The original DB is untouched, nothing else to change.\n"
+                f"The new DB is just a ready backup/copy.\n"
+                f"⚠️ Delete this message (it contains a password)."
+            )
 
-    old_client.close()
-    new_client.close()
-
-    failed_note = f"\n⚠️ {grand_failed} documents failed to copy (real errors, not just duplicates).\n" if grand_failed else ""
-
-    if action == "migrate":
-        final_text = (
-            f"🎉 Migration complete!\n\n"
-            f"📦 Collections: {len(collections_to_copy)}\n"
-            f"📄 Documents copied: {grand_total}\n"
-            f"{failed_note}\n"
-            f"👉 Now update DATABASE_URL in Koyeb to the new URI and restart the bot.\n"
-            f"⚠️ Then delete this message and remove this file from plugins."
-        )
-    elif action == "copy_collection":
-        final_text = (
-            f"🎉 Collection copy complete!\n\n"
-            f"📁 Collection: {target_collection}\n"
-            f"📄 Documents copied: {grand_total}\n"
-            f"{failed_note}\n"
-            f"ℹ️ The original DB is untouched, nothing else to change.\n"
-            f"⚠️ Delete this message (it contains a password)."
-        )
-    else:
-        final_text = (
-            f"🎉 Database copy complete!\n\n"
-            f"📦 Collections: {len(collections_to_copy)}\n"
-            f"📄 Documents copied: {grand_total}\n"
-            f"{failed_note}\n"
-            f"ℹ️ The original DB is untouched, nothing else to change.\n"
-            f"The new DB is just a ready backup/copy.\n"
-            f"⚠️ Delete this message (it contains a password)."
-        )
-
-    await status.edit(final_text)
+        await status.edit(final_text)
+    finally:
+        if old_client is not None:
+            await old_client.close()
+        if new_client is not None:
+            await new_client.close()
 
 
 async def _insert_batch(new_col, batch):
