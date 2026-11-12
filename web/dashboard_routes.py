@@ -14,9 +14,11 @@ CARD_CSS = """
 /* ── Search zone ── */
 .search-zone{padding:16px 20px 0;max-width:1400px;margin:0 auto}
 .search-row1{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-.search-row2{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:16px}
+.search-row2{display:flex;align-items:center;justify-content:center;gap:10px}
+.home-search-panel{margin-bottom:0}
 @media(min-width:768px){
-  .search-zone{padding:24px 24px 10px;display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:nowrap}
+  .search-zone{padding:24px 24px 10px}
+  .home-search-panel{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:nowrap}
   .search-row1{flex:1;max-width:650px;margin-bottom:0}
   .search-row2{margin-bottom:0;justify-content:flex-start;flex-shrink:0}
 }
@@ -1043,6 +1045,7 @@ _SEL_NONE = ' selected' if DEFAULT_MEDIA_MODE == 'none' else ''
 # ─────────────────────────────────────────────────────────────────────────────
 SEARCH_ZONE = (
     '<div class="search-zone">'
+      '<div class="search-box home-search-panel">'
         '<div class="search-row1">'
             '<div class="search-wrap" id="qWrap">'
                 '<input class="search-input" id="q" placeholder="Titles, people, genres\u2026">'
@@ -1084,6 +1087,7 @@ SEARCH_ZONE = (
                 '</div>'
             '</div>'
         '</div>'
+      '</div>'
     '</div>'
     '<div class="main" style="padding-top:4px;">'
         '<div class="results-info" id="resInfo" style="padding:0 12px 8px;">'
