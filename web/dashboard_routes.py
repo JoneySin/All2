@@ -173,26 +173,17 @@ CARD_CSS = """
 /* A reviewed destination is required before files or groups are moved. */
 .merge-card{max-width:560px!important;padding:24px!important}
 .merge-source,.merge-warning{border:1px solid var(--border);border-radius:10px;background:var(--bg3);padding:11px 12px;margin-top:14px;color:var(--text);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
-.merge-source small,.target-overline{display:block;color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;margin-bottom:4px}
+.merge-source small{display:block;color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;margin-bottom:4px}
 .merge-warning{color:#f7c77d;background:rgba(217,155,59,.09);border-color:rgba(217,155,59,.3)}
 .merge-id-row{display:flex;gap:8px}.merge-id-row .gm-input{min-width:0;flex:1}.merge-id-row button{flex-shrink:0;padding:0 15px}
 .merge-status{min-height:18px;margin-top:8px;font-size:12px;line-height:1.45;color:var(--muted)}
 .merge-status.error,.target-error{color:#fda4af}
-.target-preview{border:1px solid rgba(34,197,94,.45);border-radius:11px;background:var(--bg3);padding:12px;margin-top:10px;color:var(--text)}
-.target-head{display:flex;align-items:flex-start;gap:12px;min-width:0}.target-image-wrap{flex:0 0 96px;min-width:0;text-align:center}
-.target-image{position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:16/9;border-radius:8px;overflow:hidden;background:var(--bg4);color:var(--muted);font-size:22px}
-.target-image img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.target-image-wrap small{display:block;color:var(--muted);font-size:10px;margin-top:4px}
-.target-meta{min-width:0;flex:1}.target-name{font-size:15px;font-weight:800;line-height:1.35;overflow-wrap:anywhere}.target-badges{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
-.target-badge{border-radius:6px;background:var(--bg4);color:var(--text);padding:4px 7px;font-size:10px;font-weight:800;overflow-wrap:anywhere}.target-badge.id{background:#39230b;color:#ffd58a}.target-badge.kind{background:#103b55;color:#c2eaff}
-.target-list-label{font-size:10px;font-weight:800;color:var(--muted);letter-spacing:.5px;margin:12px 0 5px;text-transform:uppercase}
-.target-members{margin:0;padding:0;list-style:none}.target-members li{padding:6px 0;border-top:1px solid var(--border);font-size:11px;line-height:1.4;overflow-wrap:anywhere}
-.target-members small{display:block;color:var(--muted);font-size:10px}.target-more{color:var(--muted);font-size:11px;margin-top:6px}
 .target-confirm{display:flex;align-items:flex-start;gap:9px;color:var(--text);font-size:12px;font-weight:700;line-height:1.45;margin-top:12px;cursor:pointer}
 .target-confirm input{width:18px;height:18px;flex:none;accent-color:#22c55e;margin:0}
 .target-confirm[hidden],#mergePreview[hidden]{display:none!important}
 .merge-row{display:flex;gap:8px;margin-top:16px}.merge-row .gm-btn{flex:1;padding:12px}
 #gmPickNote .target-preview{margin-top:8px}#gmPickStatus:empty{display:none}
-@media(max-width:480px){.gm-card,.merge-card{padding:18px!important}.gm-type-option{padding:10px}.grp-openhead .grp-oadmin{width:100%;flex-wrap:wrap}.gm-row{flex-wrap:wrap}.gm-row .gm-btn{min-width:100px}.target-image-wrap{flex-basis:76px}}
+@media(max-width:480px){.gm-card,.merge-card{padding:18px!important}.gm-type-option{padding:10px}.grp-openhead .grp-oadmin{width:100%;flex-wrap:wrap}.gm-row{flex-wrap:wrap}.gm-row .gm-btn{min-width:100px}}
 </style>
 """
 
@@ -392,37 +383,6 @@ async function grpPost(url,body){
     var d={};try{d=await r.json();}catch(e){}
     if(!r.ok||d.error){var err=new Error(d.error||('HTTP '+r.status));err.status=r.status;err.code=d.code||'';throw err;}
     return d;
-}
-async function fetchGroupPreview(id,signal){
-    var r=await fetch('/api/group/preview?id='+encodeURIComponent(id),{cache:'no-store',signal:signal});
-    var d={};try{d=await r.json();}catch(e){}
-    if(!r.ok||d.error){var err=new Error(d.error||('HTTP '+r.status));err.status=r.status;throw err;}
-    var g=d.group;
-    if(!g||String(g.id)!==id||!(/^[0-9a-f]{64}$/).test(g.signature||''))throw new Error('Could not verify this group. Please try again.');
-    return g;
-}
-function targetPreviewHtml(g){
-    var url=String(g.cover||''),safe=url.indexOf('/api/thumb?')===0||url.indexOf('/api/group/thumb?')===0;
-    var image=safe?'<img src="'+esc(url)+'" alt="" onerror="this.hidden=true">':'';
-    var kind=g.group_type==='series'?'Series / episodes':'Quality versions';
-    var h='<div class="target-preview"><div class="target-head"><div class="target-image-wrap">'+
-        '<div class="target-image"><span aria-hidden="true">&#127916;</span>'+image+'</div><small>'+esc(safe?(g.cover_label||'Preview'):'No image')+'</small></div>'+
-        '<div class="target-meta"><span class="target-overline">Destination group</span><div class="target-name">'+esc(g.name||'Untitled group')+'</div>'+
-        '<div class="target-badges"><span class="target-badge id">GROUP #'+esc(g.id)+'</span><span class="target-badge kind">'+esc(kind)+'</span>'+
-        '<span class="target-badge">'+esc(g.count)+' files</span></div></div></div>';
-    var members=Array.isArray(g.members)?g.members:[];
-    h+='<div class="target-list-label">Files in this group'+(g.more?' (sample)':'')+'</div>';
-    if(!members.length)h+='<div class="target-more">No saved files.</div>';
-    else{
-        h+='<ul class="target-members">';
-        members.forEach(function(f){
-            var meta=[f.label,f.source].filter(Boolean).join(' · ');
-            h+='<li>'+esc(f.name||'File unavailable')+(meta?'<small>'+esc(meta)+'</small>':'')+'</li>';
-        });
-        h+='</ul>';
-        if(g.more)h+='<div class="target-more">+'+esc(g.more)+' more files</div>';
-    }
-    return h+'</div>';
 }
 function selCount(){return Object.keys(SEL).length;}
 var scanTimer=null;

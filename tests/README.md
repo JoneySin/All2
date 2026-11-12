@@ -86,6 +86,9 @@ NODE_PATH=/tmp/all2-playwright/node_modules node tests/group_stats_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/stats_ui_check.cjs
 ```
 
+The group and file editor browser checks also verify matching destination previews,
+thumbnail fallbacks, absence of member lists, and move confirmation and stale-target safety.
+
 The fixture uses port 8765 by default. Set `ALL2_UI_PORT` on the fixture and
 `ALL2_UI_URL` on the browser test to use a different port. `CHROMIUM_PATH` can
 point to a compatible Chromium executable instead of Playwright's installed one.
