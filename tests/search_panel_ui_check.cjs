@@ -41,6 +41,16 @@ const assert=require('node:assert/strict');
    }
  }
  await page.setViewportSize({width:1100,height:800});
+ // Filters are real keyboard-operable buttons, with state and focus restored.
+ await page.locator('#cddColBtn').focus();await page.keyboard.press('Enter');
+ assert.equal(await page.locator('#cddColBtn').getAttribute('aria-expanded'),'true');
+ await page.keyboard.press('Tab');assert.equal(await page.locator('#cddColMenu [data-val=all]').evaluate(e=>document.activeElement===e),true);
+ await Promise.all([page.waitForResponse(r=>r.url().includes('/api/search?')&&r.url().includes('col=all')),page.keyboard.press('Enter')]);
+ assert.equal(await page.locator('#cddColBtn').getAttribute('aria-expanded'),'false');
+ assert.equal(await page.locator('#cddColBtn').evaluate(e=>document.activeElement===e),true);
+ await page.keyboard.press('Enter');await page.keyboard.press('Escape');
+ assert.equal(await page.locator('#cddColMenu').isHidden(),true);
+ assert.equal(await page.locator('#cddColBtn').evaluate(e=>document.activeElement===e),true);
  await page.locator('#cddColBtn').click();
  await Promise.all([page.waitForResponse(r=>r.url().includes('/api/search?')&&r.url().includes('col=cloud')),page.locator('#cddColMenu [data-val=cloud]').click()]);
  assert.equal(await page.locator('#cddColLabel').innerText(),'🔵 Cloud');
@@ -48,7 +58,7 @@ const assert=require('node:assert/strict');
  await Promise.all([page.waitForResponse(r=>r.url().includes('/api/search?')&&r.url().includes('col=all')),page.locator('#cddColMenu [data-val=all]').click()]);
  await page.locator('#cddModeBtn').click();
  await Promise.all([page.waitForResponse(r=>r.url().includes('/api/search?')&&r.url().includes('mode=none')),page.locator('#cddModeMenu [data-val=none]').click()]);
- assert.equal(await page.locator('#cddModeLabel').innerText(),'📄 Text Mode');
+ assert.equal(await page.locator('#cddModeLabel').innerText(),'📄 Text');
  await page.locator('#cddGfBtn').click();
  await Promise.all([page.waitForResponse(r=>r.url().includes('/api/search?')&&r.url().includes('gf=single')),page.locator('#cddGfMenu [data-val=single]').click()]);
  await page.locator('#results > .file-card').first().waitFor();
@@ -63,5 +73,24 @@ const assert=require('node:assert/strict');
  await page.goto(base+'/actors');
  const actor=await page.locator('.search-box').evaluate(el=>{const s=getComputedStyle(el);return [s.backgroundColor,s.borderColor,s.borderWidth,s.borderRadius,s.boxShadow];});
  assert.deepEqual(actor,light);
+ // Main and both directories use the same actual filter and dropdown styles.
+ const styles=async locator=>locator.evaluate(el=>{
+   const s=getComputedStyle(el);return ['backgroundColor','color','borderColor','borderWidth','borderRadius','padding','fontSize','fontWeight','fontFamily','boxShadow'].map(k=>s[k]);
+ });
+ for(const theme of ['dark','light']){
+   await page.goto(base+'/dashboard');await page.evaluate(t=>document.documentElement.classList.toggle('light',t==='light'),theme);
+   await page.mouse.move(0,0);await page.waitForTimeout(300);
+   const homeWrap=await styles(page.locator('#cddColWrap'));
+   const homeMenu=await styles(page.locator('#cddColMenu'));
+   const homeItem=await styles(page.locator('#cddColMenu [data-val=cloud]'));
+   assert.equal(homeWrap[4],'8px');
+   for(const [path,menu] of [['/posts','#post_cat_menu'],['/actors','#dir_cat_menu']]){
+     await page.goto(base+path);await page.evaluate(t=>document.documentElement.classList.toggle('light',t==='light'),theme);
+     await page.mouse.move(0,0);await page.waitForTimeout(300);
+     assert.deepEqual(await styles(page.locator(menu).locator('..')),homeWrap,theme+' '+path+' filter');
+     assert.deepEqual(await styles(page.locator(menu)),homeMenu,theme+' '+path+' menu');
+     assert.deepEqual(await styles(page.locator(menu+' .cdd-item').nth(1)),homeItem,theme+' '+path+' option');
+   }
+ }
  assert.deepEqual(errors,[]);await browser.close();console.log('Home search panel: shared style, themes, filters and responsive menus OK');
 })().catch(e=>{console.error(e);process.exit(1)});

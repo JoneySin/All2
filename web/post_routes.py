@@ -247,14 +247,14 @@ async def posts_directory_page(req):
         </div>
         <div class="s-row-2">
             <div class="cdd-wrap" onclick="togglePostCDD('view', event)">
-                <span id="post_view_lbl">{'📄 Text' if DEFAULT_CATALOG_MODE == 'text' else '🖼️ Poster'}</span> <span style="font-size:10px; color:var(--muted);">▼</span>
+                <span id="post_view_lbl">{'📄 Text' if DEFAULT_CATALOG_MODE == 'text' else '🖼️ Poster'}</span> <span class="cdd-arrow" aria-hidden="true">▼</span>
                 <div class="cdd-menu" id="post_view_menu">
                     <div class="cdd-item" onclick="pickPostView('poster', '🖼️ Poster', event)">🖼️ Poster</div>
                     <div class="cdd-item" onclick="pickPostView('text', '📄 Text', event)">📄 Text</div>
                 </div>
             </div>
             <div class="cdd-wrap" onclick="togglePostCDD('cat', event)">
-                <span id="post_cat_lbl">All</span> <span style="font-size:10px; color:var(--muted);">▼</span>
+                <span id="post_cat_lbl">All</span> <span class="cdd-arrow" aria-hidden="true">▼</span>
                 <div class="cdd-menu" id="post_cat_menu">
                     <div class="cdd-item" onclick="pickPostCat('All', 'All', event)">All</div>
                     <div class="cdd-item" onclick="pickPostCat('Movies', '🎬 Movies', event)">🎬 Movies</div>

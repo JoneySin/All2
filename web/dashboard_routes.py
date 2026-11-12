@@ -1,6 +1,6 @@
 import time
 from aiohttp import web
-from web.web_assets import build_page, get_auth, form_wrapper, require_active_plan, DEFAULT_MEDIA_MODE
+from web.web_assets import build_page, get_auth, form_wrapper, require_active_plan, DEFAULT_MEDIA_MODE, DIRECTORY_FILTER_CSS
 from utils import temp
 from database.users_chats_db import web_db
 
@@ -25,9 +25,8 @@ CARD_CSS = """
   .home-search-panel #cddGfWrap{grid-area:group}
   .home-search-panel #cddColWrap{grid-area:collection}
   .home-search-panel #cddModeWrap{grid-area:mode}
-  .home-search-panel .cdd-btn,.home-search-panel #cddGfBtn{width:100%!important}
 }
-@media(max-width:767px){.search-row2 .cdd-wrap{flex:1 1 0}.search-row2 .cdd-btn{width:100%}}
+@media(max-width:767px){.search-row2 .cdd-wrap{flex:1 1 0;min-width:0}.search-row1 .gf-wrap{flex:0 0 100px}}
 
 .search-wrap{flex:1;min-width:0;display:flex;align-items:center;background:var(--bg3);border:1.5px solid var(--border);border-radius:12px;padding:0 6px 0 18px;gap:8px;overflow:hidden;min-height:38px;transition:border-color .18s}
 .search-wrap:focus-within{border-color:var(--border)}
@@ -47,34 +46,16 @@ CARD_CSS = """
   border-radius:999px;
   transition:background-color 9999s ease-in-out 0s;
 }
-/* ── Custom dropdown ── */
-.cdd-wrap{flex:0 1 auto;min-width:0;position:relative;user-select:none}
-.cdd-btn{width:170px;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:999px;padding:8px 28px 8px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:flex-start;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:border-color .15s,box-shadow .15s}
-.cdd-btn:hover,.cdd-btn.open{border-color:var(--accent);box-shadow:0 0 0 3px rgba(229,9,20,0.12)}
-.cdd-arrow{position:absolute;right:12px;top:50%;transform:translateY(-50%);pointer-events:none;font-size:9px;color:var(--muted);transition:transform .2s}
-.cdd-btn.open+.cdd-arrow{transform:translateY(-50%) rotate(180deg)}
-
-.cdd-menu{position:absolute;top:calc(100% + 7px);left:50%;transform:translateX(-50%);min-width:max-content;background:var(--bg2,var(--bg3));border:1.5px solid var(--border);border-radius:16px;overflow:hidden;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.45);animation:cddIn .15s ease}
-@keyframes cddIn{
-    from{opacity:0;transform:translate(-50%, -6px)}
-    to{opacity:1;transform:translate(-50%, 0)}
-}
-
-.cdd-item{display:flex;align-items:center;gap:10px;padding:13px 14px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;transition:background .12s;border-bottom:1px solid var(--border)}
-.cdd-item:last-child{border-bottom:none}
-.cdd-item:hover{background:var(--bg3)}
-.cdd-item.selected{color:var(--accent)}
-.cdd-radio{width:18px;height:18px;border-radius:50%;border:2px solid var(--border);margin-left:auto;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:border-color .15s}
-.cdd-item.selected .cdd-radio{border-color:var(--accent)}
-.cdd-radio-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:none}
-.cdd-item.selected .cdd-radio-dot{display:block}
+/* The surrounding control and menu use the same shared directory filter CSS. */
+.home-search-panel .cdd-btn{background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;min-width:0;flex:1;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-search-panel .cdd-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+.home-search-panel .cdd-arrow{pointer-events:none;margin-left:8px}
+.home-search-panel button.cdd-item{display:block;width:100%;background:none;border:0;border-bottom:1px solid var(--border);color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.home-search-panel button.cdd-item:last-child{border-bottom:0}.home-search-panel button.cdd-item:hover{background:var(--bg3);color:var(--accent)}
+.home-search-panel button.cdd-item.selected{color:var(--accent)}
+.home-search-panel button.cdd-item:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .source-pill.mixed{background:#78350f;color:#fcd34d;border:1px solid #f59e0b}
 .source-pill.mixed .source-dot{background:#fcd34d}
-/* ── Group filter button (red, small) ── */
-.gf-btn{width:auto!important;min-width:74px;background:var(--accent)!important;border-color:var(--accent)!important;color:#fff!important;padding:8px 26px 8px 14px!important;justify-content:center}
-.gf-wrap{flex:0 0 auto}
-.gf-wrap .cdd-arrow{color:#fff!important}
-.gf-wrap .cdd-menu{left:auto;right:0;transform:none;min-width:130px}
 /* ── Quality group card (master thumbnail = single file jaisa bada poster) ── */
 .grp-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;position:relative;cursor:pointer;box-shadow:0 4px 10px rgba(0,0,0,.2);transition:all .3s cubic-bezier(.25,.8,.25,1)}
 .grp-card.open{border-color:var(--accent)}
@@ -210,7 +191,7 @@ var CDDS={col:['cddColMenu','cddColBtn'],mode:['cddModeMenu','cddModeBtn'],gf:['
 function closeCdds(){
     Object.keys(CDDS).forEach(function(k){
         var m=document.getElementById(CDDS[k][0]),b=document.getElementById(CDDS[k][1]);
-        if(m)m.style.display='none';if(b)b.classList.remove('open');
+        if(m)m.style.display='none';if(b){b.classList.remove('open');b.setAttribute('aria-expanded','false');}
     });
 }
 function toggleCdd(which,e){
@@ -219,26 +200,29 @@ function toggleCdd(which,e){
     var btn=document.getElementById(CDDS[which][1]);
     var isOpen=menu.style.display!=='none';
     closeCdds();
-    if(!isOpen){menu.style.display='block';btn.classList.add('open');}
+    if(!isOpen){menu.style.display='block';btn.classList.add('open');btn.setAttribute('aria-expanded','true');}
 }
 var curGF='all';
 function pickGF(val,label,el,e){
     if(e){e.stopPropagation();}
     curGF=val;curPage=1;
     document.getElementById('cddGfLabel').textContent=label;
+    document.getElementById('cddGfBtn').setAttribute('aria-label','Group filter: '+label);
     document.querySelectorAll('#cddGfMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
     el.classList.add('selected');
     closeCdds();
+    if(e&&e.detail===0)document.getElementById('cddGfBtn').focus();
     doSearch(0,true);
 }
 function pickCol(val,label,el,e){
     if(e){e.stopPropagation();}
     curCol=val;
     document.getElementById('cddColLabel').textContent=label;
+    document.getElementById('cddColBtn').setAttribute('aria-label','Collection filter: '+label);
     document.querySelectorAll('#cddColMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
     el.classList.add('selected');
-    document.getElementById('cddColMenu').style.display='none';
-    document.getElementById('cddColBtn').classList.remove('open');
+    closeCdds();
+    if(e&&e.detail===0)document.getElementById('cddColBtn').focus();
     doSearch(0,true);
 }
 function pickMode(val,label,el,e){
@@ -246,14 +230,18 @@ function pickMode(val,label,el,e){
     pMode=val;
     MediaView.set(pMode);
     document.getElementById('cddModeLabel').textContent=label;
+    document.getElementById('cddModeBtn').setAttribute('aria-label','View mode filter: '+label);
     document.querySelectorAll('#cddModeMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
     el.classList.add('selected');
-    document.getElementById('cddModeMenu').style.display='none';
-    document.getElementById('cddModeBtn').classList.remove('open');
+    closeCdds();
+    if(e&&e.detail===0)document.getElementById('cddModeBtn').focus();
     doSearch(curOff,true);
 }
 document.addEventListener('click',function(e){
     if(!e.target.closest('.cdd-wrap')){closeCdds();}
+});
+document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'){var open=document.querySelector('.home-search-panel .cdd-btn[aria-expanded=\"true\"]');if(open){closeCdds();open.focus();}}
 });
 document.querySelectorAll('.cdd-menu').forEach(function(m){
     m.addEventListener('click',function(e){e.stopPropagation();});
@@ -978,12 +966,14 @@ document.addEventListener('DOMContentLoaded',function(){
     }
     var mItems=document.querySelectorAll('#cddModeMenu .cdd-item');
     mItems.forEach(function(i){i.classList.remove('selected');if(i.dataset.val===pMode)i.classList.add('selected');});
-    document.getElementById('cddModeLabel').textContent=(pMode==='none')?'\\ud83d\\udcc4 Text Mode':'\\ud83d\\uddbc\\ufe0f Poster Mode';
+    document.getElementById('cddModeBtn').setAttribute('aria-label','View mode filter: '+(pMode==='none'?'Text':'Poster'));
+    document.getElementById('cddModeLabel').textContent=(pMode==='none')?'\\ud83d\\udcc4 Text':'\\ud83d\\uddbc\\ufe0f Poster';
     MediaView.subscribe(function(value){
         var mode=value==='text'?'none':'tg';if(mode===pMode)return;
         pMode=mode;
+        document.getElementById('cddModeBtn').setAttribute('aria-label','View mode filter: '+(mode==='none'?'Text':'Poster'));
         document.querySelectorAll('#cddModeMenu .cdd-item').forEach(function(i){i.classList.toggle('selected',i.dataset.val===mode);});
-        document.getElementById('cddModeLabel').textContent=mode==='none'?'📄 Text Mode':'🖼️ Poster Mode';
+        document.getElementById('cddModeLabel').textContent=mode==='none'?'📄 Text':'🖼️ Poster';
         doSearch(0,true);
     });
     var savedQ=sessionStorage.getItem('ff_dash_q');
@@ -992,8 +982,8 @@ document.addEventListener('DOMContentLoaded',function(){
 """.replace("__DEFAULT_MEDIA_MODE__", DEFAULT_MEDIA_MODE)
 
 # 🎛️ Default mode dropdown state (centralized via DEFAULT_MEDIA_MODE in web_assets.py)
-_MODE_TG_LBL = '\U0001f5bc\ufe0f Poster Mode'
-_MODE_NONE_LBL = '\U0001f4c4 Text Mode'
+_MODE_TG_LBL = '\U0001f5bc\ufe0f Poster'
+_MODE_NONE_LBL = '\U0001f4c4 Text'
 _DEF_MODE_LBL = _MODE_NONE_LBL if DEFAULT_MEDIA_MODE == 'none' else _MODE_TG_LBL
 _SEL_TG = ' selected' if DEFAULT_MEDIA_MODE == 'tg' else ''
 _SEL_NONE = ' selected' if DEFAULT_MEDIA_MODE == 'none' else ''
@@ -1009,39 +999,39 @@ SEARCH_ZONE = (
                 '<input class="search-input" id="q" placeholder="Titles, people, genres\u2026">'
                 '<span class="search-spinner" id="qSpinner"></span>'
             '</div>'
-            '<div class="cdd-wrap gf-wrap" id="cddGfWrap">'
-                '<div class="cdd-btn gf-btn" id="cddGfBtn" onclick="toggleCdd(\'gf\')">'
+            '<div class="cdd-wrap gf-wrap" id="cddGfWrap" onclick="toggleCdd(\'gf\',event)">'
+                '<button type="button" class="cdd-btn" id="cddGfBtn" aria-label="Group filter: All" aria-expanded="false" aria-controls="cddGfMenu">'
                     '<span id="cddGfLabel">All</span>'
-                '</div>'
-                '<span class="cdd-arrow">&#9660;</span>'
+                '</button>'
+                '<span class="cdd-arrow" aria-hidden="true">&#9660;</span>'
                 '<div class="cdd-menu" id="cddGfMenu" style="display:none">'
-                    '<div class="cdd-item selected" data-val="all" onclick="pickGF(\'all\',\'All\',this)">All<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item" data-val="group" onclick="pickGF(\'group\',\'Group\',this)">Group<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item" data-val="single" onclick="pickGF(\'single\',\'UnGroup\',this)">UnGroup<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<button type="button" class="cdd-item selected" data-val="all" onclick="pickGF(\'all\',\'All\',this,event)">All</button>'
+                    '<button type="button" class="cdd-item" data-val="group" onclick="pickGF(\'group\',\'Group\',this,event)">Group</button>'
+                    '<button type="button" class="cdd-item" data-val="single" onclick="pickGF(\'single\',\'UnGroup\',this,event)">UnGroup</button>'
                 '</div>'
             '</div>'
         '</div>'
         '<div class="search-row2">'
-            '<div class="cdd-wrap" id="cddColWrap">'
-                '<div class="cdd-btn" id="cddColBtn" onclick="toggleCdd(\'col\')">'
+            '<div class="cdd-wrap" id="cddColWrap" onclick="toggleCdd(\'col\',event)">'
+                '<button type="button" class="cdd-btn" id="cddColBtn" aria-label="Collection filter: All" aria-expanded="false" aria-controls="cddColMenu">'
                     '<span id="cddColLabel">All</span>'
-                '</div>'
-                '<span class="cdd-arrow">&#9660;</span>'
+                '</button>'
+                '<span class="cdd-arrow" aria-hidden="true">&#9660;</span>'
                 '<div class="cdd-menu" id="cddColMenu" style="display:none">'
-                    '<div class="cdd-item selected" data-val="all" onclick="pickCol(\'all\',\'All\',this)">All<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item" data-val="primary" onclick="pickCol(\'primary\',\'\U0001f7e2 Primary\',this)">\U0001f7e2 Primary<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item" data-val="cloud" onclick="pickCol(\'cloud\',\'\U0001f535 Cloud\',this)">\U0001f535 Cloud<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item" data-val="archive" onclick="pickCol(\'archive\',\'\U0001f7e0 Archive\',this)">\U0001f7e0 Archive<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<button type="button" class="cdd-item selected" data-val="all" onclick="pickCol(\'all\',\'All\',this,event)">All</button>'
+                    '<button type="button" class="cdd-item" data-val="primary" onclick="pickCol(\'primary\',\'\U0001f7e2 Primary\',this,event)">\U0001f7e2 Primary</button>'
+                    '<button type="button" class="cdd-item" data-val="cloud" onclick="pickCol(\'cloud\',\'\U0001f535 Cloud\',this,event)">\U0001f535 Cloud</button>'
+                    '<button type="button" class="cdd-item" data-val="archive" onclick="pickCol(\'archive\',\'\U0001f7e0 Archive\',this,event)">\U0001f7e0 Archive</button>'
                 '</div>'
             '</div>'
-            '<div class="cdd-wrap" id="cddModeWrap">'
-                '<div class="cdd-btn" id="cddModeBtn" onclick="toggleCdd(\'mode\')">'
+            '<div class="cdd-wrap" id="cddModeWrap" onclick="toggleCdd(\'mode\',event)">'
+                '<button type="button" class="cdd-btn" id="cddModeBtn" aria-label="View mode filter" aria-expanded="false" aria-controls="cddModeMenu">'
                     '<span id="cddModeLabel">' + _DEF_MODE_LBL + '</span>'
-                '</div>'
-                '<span class="cdd-arrow">&#9660;</span>'
+                '</button>'
+                '<span class="cdd-arrow" aria-hidden="true">&#9660;</span>'
                 '<div class="cdd-menu" id="cddModeMenu" style="display:none">'
-                    '<div class="cdd-item' + _SEL_TG + '" data-val="tg" onclick="pickMode(\'tg\',\'\U0001f5bc\ufe0f Poster Mode\',this)">\U0001f5bc\ufe0f Poster Mode<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item' + _SEL_NONE + '" data-val="none" onclick="pickMode(\'none\',\'\U0001f4c4 Text Mode\',this)">\U0001f4c4 Text Mode<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<button type="button" class="cdd-item' + _SEL_TG + '" data-val="tg" onclick="pickMode(\'tg\',\'\U0001f5bc\ufe0f Poster\',this,event)">\U0001f5bc\ufe0f Poster</button>'
+                    '<button type="button" class="cdd-item' + _SEL_NONE + '" data-val="none" onclick="pickMode(\'none\',\'\U0001f4c4 Text\',this,event)">\U0001f4c4 Text</button>'
                 '</div>'
             '</div>'
         '</div>'
@@ -1067,7 +1057,7 @@ SEARCH_ZONE = (
 )
 
 # ✅ OPTIMIZATION 1: Pre-compile the entire body string ONCE when the app starts.
-DASHBOARD_BODY = CARD_CSS + SEARCH_ZONE + f"<script>{JS_ENGINE}</script>"
+DASHBOARD_BODY = DIRECTORY_FILTER_CSS + CARD_CSS + SEARCH_ZONE + f"<script>{JS_ENGINE}</script>"
 
 
 @dashboard_routes.get('/dashboard')

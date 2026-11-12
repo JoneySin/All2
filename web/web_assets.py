@@ -27,8 +27,20 @@ DEFAULT_MEDIA_MODE = "none" if DEFAULT_VIEW_MODE == "text" else "tg"
 # ─────────────────────────────────────────────
 # 🎨 SHARED DIRECTORY CSS
 # ✅ DRY: /actors और /posts दोनों grid pages में यह ~24-rule CSS ब्लॉक हुबहू कॉपी
-# था। एक जगह भी class बदलने पर दूसरा पेज टूट जाता। अब दोनों इसी को embed करते हैं।
+# था। Filter styles are also shared with the home page.
 # ─────────────────────────────────────────────
+# Shared filter controls for the home, profile directory and post directory pages.
+DIRECTORY_FILTER_CSS = """<style>
+        .cdd-wrap { position: relative; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; cursor: pointer; font-weight: 700; font-size: 13px; color: var(--text); flex: 1; min-width: 100px; display: flex; justify-content: space-between; align-items: center; user-select: none; transition:0.2s; }
+        .cdd-wrap:hover { border-color: var(--accent); }
+        .cdd-arrow { font-size:10px; color:var(--muted); }
+        .cdd-menu { position: absolute; top: calc(100% + 5px); left: 0; right: 0; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; z-index: 100; display: none; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+        .cdd-item { padding: 10px 14px; border-bottom: 1px solid var(--border); transition: 0.2s; }
+        .cdd-item:last-child { border-bottom: none; }
+        .cdd-item:hover { background: var(--bg3); color: var(--accent); }
+        .cdd-item.selected { color: var(--accent); }
+</style>"""
+
 DIRECTORY_CSS = """
     <style>
         .dir-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
@@ -44,12 +56,9 @@ DIRECTORY_CSS = """
         .s-btn:hover { background:var(--accent-hover); transform:scale(1.02); }
 
         .s-row-2 { display: flex; gap: 10px; flex-wrap:wrap; align-items:center; }
-        .cdd-wrap { position: relative; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; cursor: pointer; font-weight: 700; font-size: 13px; color: var(--text); flex: 1; min-width: 100px; display: flex; justify-content: space-between; align-items: center; user-select: none; transition:0.2s; }
-        .cdd-wrap:hover { border-color: var(--accent); }
-        .cdd-menu { position: absolute; top: calc(100% + 5px); left: 0; right: 0; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; z-index: 100; display: none; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
-        .cdd-item { padding: 10px 14px; border-bottom: 1px solid var(--border); transition: 0.2s; }
-        .cdd-item:last-child { border-bottom: none; }
-        .cdd-item:hover { background: var(--bg3); color: var(--accent); }
+    </style>
+""" + DIRECTORY_FILTER_CSS + """
+    <style>
 
         .pg-bar { display:flex; justify-content:center; align-items:center; gap:15px; margin-top:30px; }
         .pg-btn { background:var(--bg4); color:var(--text); border:1px solid var(--border); padding:8px 20px; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px; transition:0.2s; }

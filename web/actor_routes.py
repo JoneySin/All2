@@ -48,7 +48,7 @@ async def actors_directory_page(req):
         </div>
         <div class="s-row-2">
             <div class="cdd-wrap" onclick="toggleDirCDD('cat', event)">
-                <span id="dir_cat_lbl">All</span> <span style="font-size:10px; color:var(--muted);">▼</span>
+                <span id="dir_cat_lbl">All</span> <span class="cdd-arrow" aria-hidden="true">▼</span>
                 <div class="cdd-menu" id="dir_cat_menu">
                     <div class="cdd-item" onclick="pickDirCat('all', 'All', event)">All</div>
                     <div class="cdd-item" onclick="pickDirCat('actor', '🎭 Actor', event)">🎭 Actor</div>
@@ -57,7 +57,7 @@ async def actors_directory_page(req):
                 </div>
             </div>
             <div class="cdd-wrap" onclick="toggleDirCDD('mode', event)">
-                <span id="dir_mode_lbl">{'📄 Text' if DEFAULT_CATALOG_MODE == 'text' else '🖼️ Poster'}</span> <span style="font-size:10px; color:var(--muted);">▼</span>
+                <span id="dir_mode_lbl">{'📄 Text' if DEFAULT_CATALOG_MODE == 'text' else '🖼️ Poster'}</span> <span class="cdd-arrow" aria-hidden="true">▼</span>
                 <div class="cdd-menu" id="dir_mode_menu">
                     <div class="cdd-item" onclick="pickDirMode('poster', '🖼️ Poster', event)">🖼️ Poster</div>
                     <div class="cdd-item" onclick="pickDirMode('text', '📄 Text', event)">📄 Text</div>

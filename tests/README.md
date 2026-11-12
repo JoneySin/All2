@@ -60,7 +60,8 @@ preference across dashboard, posts, profiles and miniapp, including another tab.
 The catalog search check covers error handling, same-query retry and stale-response races.
 The prefetch check verifies navigation retries when a speculative request fails.
 The home search-panel check compares its shared style with posts/profiles and tests
-mobile layout, desktop filters below the full-width search, themes, dropdowns and search
+mobile layout, desktop filters below the full-width search, matching shared filter styles,
+keyboard use, themes, dropdowns and search
 on 320px through desktop widths.
 The branding check covers the original red F logo and its original font sizes
 on the dashboard, sidebar, guest page, mini-app, landing and watch page at
