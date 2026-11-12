@@ -101,3 +101,10 @@ thumbnail upload and metadata save, legacy and custom links, adding and removing
 rows, validation, preserving links across saves, avatar upload inside the editor,
 profile creation and the 320px layout. Both fixtures use mocked MongoDB and Telegram; stop one
 before starting the other or set a different `ALL2_UI_PORT` and `ALL2_UI_URL`.
+
+Thumbnail regressions also exercise concurrent cover requests, lock cancellation,
+revision isolation and serving a poster without waiting for a slow metadata probe.
+The backfill queue is bounded and falls back to inline work under saturation.
+Grouped search tests check that repeated batches reuse request-local query plans.
+These tests use mocks; real MongoDB query timing and Telegram throughput/flood
+limits must be measured in the deployment environment.

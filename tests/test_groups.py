@@ -1151,6 +1151,29 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(spec == [("score", {"$meta": "textScore"}), ("_id", -1)]
                                 for spec in col.sort_specs))
 
+    async def test_group_and_file_query_plans_are_reused_within_one_page(self):
+        # Several batches of the same group's members precede a standalone file.
+        members = [f'z{i:02}' for i in range(8)]
+        await self.insert_files(*(doc(fid, 'Library grouped', group_id='7') for fid in members),
+                                doc('a', 'Library single'))
+        await self.groups.insert_one({'_id': '7', 'name': 'Library group', 'members': members})
+        group_query = api._group_records_query
+        find = self.cols['primary'].find
+        text_probes = []
+
+        def counted_find(query, *args, **kwargs):
+            if '$text' in query:
+                text_probes.append(query)
+            return find(query, *args, **kwargs)
+
+        with patch.object(api, '_group_records_query', AsyncMock(wraps=group_query)) as planned, \
+             patch.object(self.cols['primary'], 'find', side_effect=counted_find):
+            cards, nxt = await api._collection_results_page('Library', 'primary', 0, 2, 'none', False)
+        self.assertEqual([card.get('gid') or card.get('file_id') for card in cards], ['7', 'a'])
+        self.assertFalse(nxt)
+        self.assertEqual(planned.await_count, 1)
+        self.assertEqual(len(text_probes), 1)
+
     async def test_group_only_reads_saved_records_not_file_search(self):
         await self.insert_files(doc('a', 'Other 720p'), doc('b', 'Other 1080p', 'cloud'),
                                 doc('c', 'Special 720p'), doc('d', 'Special 1080p'))

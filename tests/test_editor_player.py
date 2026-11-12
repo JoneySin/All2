@@ -175,6 +175,150 @@ class EditorPlayerTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(task, 2)
         self.assertEqual((await self.cols['primary'].find_one({'_id': 'race'}))['thumb_url'], 'TG_ID:admin')
 
+    async def test_poster_does_not_wait_for_slow_metadata_probe(self):
+        await self.cols['primary'].insert_one({'_id': 'slow', 'file_ref': 'video', 'file_name': 'film.mp4'})
+        self.bot.send_cached_media.return_value = SimpleNamespace(
+            id=99, video=SimpleNamespace(thumbs=[SimpleNamespace(file_id='poster')]), document=None)
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def slow_probe(*_args):
+            started.set()
+            await release.wait()
+
+        with patch.object(api, '_backfill_duration', AsyncMock()) as duration, \
+             patch.object(api, '_backfill_media_meta', side_effect=slow_probe), \
+             patch.object(api, '_THUMB_BACKFILL_SEMAPHORE', asyncio.Semaphore(2)):
+            try:
+                response = await asyncio.wait_for(self.client.get('/api/thumb?file_id=slow&v=0'), 2)
+                self.assertEqual(await response.read(), b'image-bytes')
+                await asyncio.wait_for(started.wait(), 2)
+                self.assertTrue(api._THUMB_BACKFILL_TASKS)
+                duration.assert_awaited_once()
+                api.db.add_to_delete_queue.assert_awaited_once_with(api.BIN_CHANNEL, 99, 5)
+            finally:
+                release.set()
+                await asyncio.gather(*list(api._THUMB_BACKFILL_TASKS))
+        self.assertEqual((await self.cols['primary'].find_one({'_id': 'slow'}))['thumb_url'], 'TG_ID:poster')
+
+    async def test_background_metadata_preserves_concurrent_updates(self):
+        col = self.cols['primary']
+        await col.insert_many([{'_id': 'race-meta', 'file_name': 'video.mp4'},
+                               {'_id': 'ordinary', 'file_name': 'video.mp4'}])
+        media = SimpleNamespace(file_id='ref', duration=120)
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def probe(*_args, **_kwargs):
+            started.set()
+            await release.wait()
+            return {'w': 1280, 'h': 720, 'duration': 125}
+
+        with patch.object(api, 'msg_media', return_value=media), \
+             patch.object(api, 'should_probe_media', return_value=True), \
+             patch.object(api, 'build_media_meta', return_value={'w': 1280, 'h': 720, 'mime': 'video/mp4', 'v': 1}), \
+             patch.object(api, 'probe_telegram_file', side_effect=probe), \
+             patch.object(api, '_THUMB_BACKFILL_SEMAPHORE', asyncio.Semaphore(2)):
+            existing = await col.find_one({'_id': 'race-meta'})
+            task = asyncio.create_task(api._run_thumb_backfill(col, 'race-meta', existing, object()))
+            await asyncio.wait_for(started.wait(), 2)
+            await col.update_one({'_id': 'race-meta'}, {'$set': {'meta': {'w': 1920, 'h': 1080}, 'duration': 999}})
+            release.set()
+            await asyncio.wait_for(task, 2)
+            saved = await col.find_one({'_id': 'race-meta'})
+            self.assertEqual((saved['meta']['w'], saved['duration']), (1920, 999))
+            existing = await col.find_one({'_id': 'ordinary'})
+            await api._run_thumb_backfill(col, 'ordinary', existing, object())
+            saved = await col.find_one({'_id': 'ordinary'})
+            self.assertEqual((saved['meta']['w'], saved['duration']), (1280, 125))
+
+    async def test_duration_backfill_does_not_overwrite_a_concurrent_value(self):
+        col = self.cols['primary']
+        await col.insert_one({'_id': 'duration-race', 'duration': 999})
+        # The earlier read saw no duration, but a newer writer has since saved one.
+        with patch.object(api, 'msg_media', return_value=SimpleNamespace(duration=120)):
+            await api._backfill_duration(col, 'duration-race', {'_id': 'duration-race'}, object())
+        self.assertEqual((await col.find_one({'_id': 'duration-race'}))['duration'], 999)
+
+    async def test_backfill_capacity_falls_back_to_inline_without_losing_work(self):
+        with patch.object(api, '_THUMB_BACKFILL_LIMIT', 0), \
+             patch.object(api, '_run_thumb_backfill', AsyncMock()) as backfill:
+            await api._schedule_thumb_backfill(self.cols['primary'], 'id', {}, object())
+            backfill.assert_awaited_once()
+        self.assertFalse(api._THUMB_BACKFILL_TASKS)
+
+    async def test_thumbnail_lock_keeps_waiters_serialized_and_cleans_up(self):
+        first_ready, first_release = asyncio.Event(), asyncio.Event()
+        second_ready, second_release = asyncio.Event(), asyncio.Event()
+        third_ready = asyncio.Event()
+
+        async def worker(ready, release):
+            async with api._thumbnail_lock('lock-test'):
+                ready.set()
+                await release.wait()
+
+        first = asyncio.create_task(worker(first_ready, first_release))
+        await asyncio.wait_for(first_ready.wait(), 2)
+        second = asyncio.create_task(worker(second_ready, second_release))
+        await asyncio.sleep(0)
+        first_release.set()
+        await asyncio.wait_for(second_ready.wait(), 2)
+        third = asyncio.create_task(worker(third_ready, second_release))
+        await asyncio.sleep(0)
+        self.assertFalse(third_ready.is_set(), 'new arrival must not bypass an existing waiter')
+        third.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await third
+        second_release.set()
+        await asyncio.gather(first, second)
+        self.assertNotIn('lock-test', api.thumb_locks)
+
+    async def test_concurrent_file_thumbnails_share_download(self):
+        await self.cols['primary'].insert_one({'_id': 'same', 'thumb_url': 'TG_ID:stored'})
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def download(*_args, **_kwargs):
+            entered.set()
+            await release.wait()
+            return io.BytesIO(b'file-cover')
+
+        self.bot.download_media.side_effect = download
+        with patch.object(api, 'thumb_semaphore', asyncio.Semaphore(2)):
+            requests = [asyncio.create_task(self.client.get('/api/thumb?file_id=same&v=r1')) for _ in range(5)]
+            await asyncio.wait_for(entered.wait(), 2)
+            await asyncio.sleep(0.02)
+            release.set()
+            responses = await asyncio.gather(*requests)
+        self.assertEqual([r.status for r in responses], [200] * 5)
+        self.assertEqual([await r.read() for r in responses], [b'file-cover'] * 5)
+        self.bot.download_media.assert_awaited_once()
+        self.assertNotIn('primary:same:r1', api.thumb_locks)
+
+    async def test_concurrent_group_cover_requests_share_download_and_cache(self):
+        await self.groups.insert_one({'_id': '15', 'thumb_url': 'TG_ID:cover'})
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def download(*_args, **_kwargs):
+            entered.set()
+            await release.wait()
+            return io.BytesIO(b'group-cover')
+
+        self.bot.download_media.side_effect = download
+        with patch.object(api, 'thumb_semaphore', asyncio.Semaphore(2)):
+            requests = [asyncio.create_task(self.client.get('/api/group/thumb?gid=15&v=r1')) for _ in range(5)]
+            await asyncio.wait_for(entered.wait(), 2)
+            await asyncio.sleep(0.02)
+            release.set()
+            responses = await asyncio.gather(*requests)
+        self.assertEqual([r.status for r in responses], [200] * 5)
+        self.assertEqual([await r.read() for r in responses], [b'group-cover'] * 5)
+        self.bot.download_media.assert_awaited_once()
+        self.assertNotIn('g:15:r1', api.thumb_locks)
+        # An uploaded new revision must not use the old bytes.
+        self.bot.download_media.side_effect = None
+        self.bot.download_media.return_value = io.BytesIO(b'new-cover')
+        response = await self.client.get('/api/group/thumb?gid=15&v=r2')
+        self.assertEqual(await response.read(), b'new-cover')
+        self.assertEqual(self.bot.download_media.await_count, 2)
+
     async def test_prefetch_in_flight_is_not_recached_after_edit(self):
         entered, release = asyncio.Event(), asyncio.Event()
 

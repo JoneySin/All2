@@ -14,6 +14,7 @@ import base64
 import logging
 import urllib.parse
 from collections import Counter, defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from functools import wraps
 from lru import LRU
@@ -59,6 +60,23 @@ thumb_semaphore = asyncio.Semaphore(15)
 thumb_cache = LRU(MAX_CACHE)  # ✅ C-लेंग्वेज आधारित सुपरफास्ट कैशे (Size Fixed)
 thumb_locks = {}
 
+@asynccontextmanager
+async def _thumbnail_lock(key):
+    """Coalesce a key's fetches, including waiters and cancelled requests."""
+    entry = thumb_locks.get(key)
+    if entry is None:
+        entry = [asyncio.Lock(), 0]
+        thumb_locks[key] = entry
+    entry[1] += 1
+    try:
+        async with entry[0]:
+            yield
+    finally:
+        entry[1] -= 1
+        if not entry[1] and thumb_locks.get(key) is entry:
+            del thumb_locks[key]
+
+
 # KOYEB OPTIMIZATION: Limits reduced to 40 to protect 512MB RAM limits
 PREFETCH_CACHE = LRU(40)  
 TRENDING_CACHE = LRU(40)  
@@ -91,94 +109,80 @@ async def _get_or_fetch_thumb(fid, col_name="primary", is_retry=False, version="
         cached_val = thumb_cache[cache_key]
         return None if cached_val == "NO_THUMB" else cached_val
 
-    lock = thumb_locks.setdefault(cache_key, asyncio.Lock())
+    async with _thumbnail_lock(cache_key):
+        if cache_key in thumb_cache:
+            cached_val = thumb_cache[cache_key]
+            return None if cached_val == "NO_THUMB" else cached_val
 
-    try:
-        async with lock:
-            if cache_key in thumb_cache:
-                cached_val = thumb_cache[cache_key]
-                return None if cached_val == "NO_THUMB" else cached_val
+        async def _fetch():
+            target_collection = COLLECTIONS.get(col_name, COLLECTIONS["primary"])
+            existing = await target_collection.find_one(
+                {"_id": fid},
+                {"thumb_url": 1, "thumb_revision": 1, "is_thumb_permanent": 1,
+                 "duration": 1, "meta": 1, "file_ref": 1, "file_size": 1, "file_name": 1}
+            )
 
-            async def _fetch():
-                target_collection = COLLECTIONS.get(col_name, COLLECTIONS["primary"])
-                existing = await target_collection.find_one(
-                    {"_id": fid},
-                    {"thumb_url": 1, "thumb_revision": 1, "is_thumb_permanent": 1,
-                     "duration": 1, "meta": 1, "file_ref": 1, "file_size": 1, "file_name": 1}
-                )
+            if existing and existing.get("thumb_url", "").startswith("TG_ID:"):
+                saved_thumb_id = existing["thumb_url"].replace("TG_ID:", "")
+                try:
+                    file_data = await temp.BOT.download_media(saved_thumb_id, in_memory=True)
+                    if file_data:
+                        img_bytes = file_data.getvalue()
+                        thumb_cache[cache_key] = img_bytes
+                        return img_bytes
+                except Exception:
+                    pass
+                # A permanent, user-uploaded image must not be silently
+                # replaced with Telegram's original thumbnail on failure.
+                if existing.get("is_thumb_permanent"):
+                    return None
 
-                if existing and existing.get("thumb_url", "").startswith("TG_ID:"):
-                    saved_thumb_id = existing["thumb_url"].replace("TG_ID:", "")
-                    try:
-                        file_data = await temp.BOT.download_media(saved_thumb_id, in_memory=True)
+            for attempt in range(5):
+                try:
+                    msg = await temp.BOT.send_cached_media(chat_id=BIN_CHANNEL, file_id=(existing or {}).get("file_ref") or fid)
+                    thumb_id = None
+
+                    # Schedule cleanup immediately, including failed downloads. Metadata
+                    # probing runs separately so it never holds up the visible poster.
+                    await db.add_to_delete_queue(BIN_CHANNEL, msg.id, 5)
+                    await _schedule_thumb_backfill(target_collection, fid, existing, msg)
+
+                    if msg.video and msg.video.thumbs and len(msg.video.thumbs) > 0:
+                        thumb_id = msg.video.thumbs[0].file_id
+                    elif msg.document and msg.document.thumbs and len(msg.document.thumbs) > 0:
+                        thumb_id = msg.document.thumbs[0].file_id
+
+                    if thumb_id:
+                        file_data = await temp.BOT.download_media(thumb_id, in_memory=True)
                         if file_data:
                             img_bytes = file_data.getvalue()
                             thumb_cache[cache_key] = img_bytes
+                            # A slow original-thumbnail lookup must never overwrite
+                            # a new admin upload that completed while it was running.
+                            observed_thumb = (existing or {}).get("thumb_url", {"$exists": False})
+                            await target_collection.update_one(
+                                {"_id": fid, "thumb_url": observed_thumb, "is_thumb_permanent": {"$ne": True}},
+                                {"$set": {"thumb_url": f"TG_ID:{thumb_id}"}}
+                            )
                             return img_bytes
-                    except Exception:
-                        pass
-                    # A permanent, user-uploaded image must not be silently
-                    # replaced with Telegram's original thumbnail on failure.
-                    if existing.get("is_thumb_permanent"):
+                    else:
+                        thumb_cache[cache_key] = "NO_THUMB"
                         return None
 
-                for attempt in range(5):
-                    try:
-                        msg = await temp.BOT.send_cached_media(chat_id=BIN_CHANNEL, file_id=(existing or {}).get("file_ref") or fid)
-                        thumb_id = None
-
-                        # ✅ NEW: purane (duration ke bina index huye) docs ke liye free
-                        # backfill — yeh msg hum thumbnail ke liye waise hi bhejte hain,
-                        # isliye extra Telegram API call ya DB read nahi lagti. Sirf tab
-                        # likhte hain jab doc me duration abhi maujood na ho.
-                        await _backfill_duration(target_collection, fid, existing, msg)
-
-                        # ✅ NEW: usi free msg se width/height/mime_type bhi backfill
-                        # (meta) — ye fields sirf index ke waqt milte hain, isliye
-                        # purani files ke liye yahi ek-matra free mauka hai.
-                        await _backfill_media_meta(target_collection, fid, existing, msg)
-
-                        if msg.video and msg.video.thumbs and len(msg.video.thumbs) > 0:
-                            thumb_id = msg.video.thumbs[0].file_id
-                        elif msg.document and msg.document.thumbs and len(msg.document.thumbs) > 0:
-                            thumb_id = msg.document.thumbs[0].file_id
-
-                        if thumb_id:
-                            file_data = await temp.BOT.download_media(thumb_id, in_memory=True)
-                            if file_data:
-                                img_bytes = file_data.getvalue()
-                                thumb_cache[cache_key] = img_bytes
-                                # A slow original-thumbnail lookup must never overwrite
-                                # a new admin upload that completed while it was running.
-                                observed_thumb = (existing or {}).get("thumb_url", {"$exists": False})
-                                await target_collection.update_one(
-                                    {"_id": fid, "thumb_url": observed_thumb, "is_thumb_permanent": {"$ne": True}},
-                                    {"$set": {"thumb_url": f"TG_ID:{thumb_id}"}}
-                                )
-                                await db.add_to_delete_queue(BIN_CHANNEL, msg.id, 5)
-                                return img_bytes
-                        else:
-                            thumb_cache[cache_key] = "NO_THUMB"
-                            await db.add_to_delete_queue(BIN_CHANNEL, msg.id, 5)
-                            return None
-
-                    except Exception as e:
-                        err_text = str(e)
-                        if "FLOOD_WAIT" in err_text or "420" in err_text:
-                            match = re.search(r'wait of (\d+) second', err_text)
-                            wait_time = int(match.group(1)) if match else 20
-                            await asyncio.sleep(wait_time + 2)
-                            continue
-                        await asyncio.sleep(2)
+                except Exception as e:
+                    err_text = str(e)
+                    if "FLOOD_WAIT" in err_text or "420" in err_text:
+                        match = re.search(r'wait of (\d+) second', err_text)
+                        wait_time = int(match.group(1)) if match else 20
+                        await asyncio.sleep(wait_time + 2)
                         continue
+                    await asyncio.sleep(2)
+                    continue
 
-                return None
+            return None
 
-            async with thumb_semaphore:
-                return await _fetch()
-
-    finally:
-        thumb_locks.pop(cache_key, None)
+        async with thumb_semaphore:
+            return await _fetch()
 
 
 # ─────────────────────────────────────────────────────────
@@ -222,6 +226,7 @@ async def _backfill_media_meta(col, fid, existing, msg):
         if not (meta["w"] or meta["h"] or meta["mime"]):
             return  # kuch bhi useful nahi mila (documents par width/height 0 hota hai)
         set_payload = {f"meta.{k}": v for k, v in meta.items()}
+        pdur = 0
         if needs_probe and not (probed.get("w") and probed.get("h")):
             # probe nahi ho paya → v mat likho, migration retry karega
             set_payload.pop("meta.v", None)
@@ -229,10 +234,23 @@ async def _backfill_media_meta(col, fid, existing, msg):
             try:
                 pdur = int((probed or {}).get("duration") or 0)
             except (TypeError, ValueError):
-                pdur = 0
-            if pdur > 0:
-                set_payload["duration"] = pdur
-        await col.update_one({"_id": fid}, {"$set": set_payload})
+                pass
+        # A migration or another writer may have supplied better metadata while
+        # the probe was running. Never overwrite a changed snapshot.
+        observed_meta = existing.get("meta", {"$exists": False})
+        saved = await col.update_one({"_id": fid, "meta": observed_meta}, {"$set": set_payload})
+        if saved.matched_count and pdur > 0:
+            # Duration backfill runs before the probe; accept that value or the
+            # original snapshot, but not a concurrent writer's newer value.
+            try:
+                media_duration = int(getattr(media, "duration", 0) or 0)
+            except (TypeError, ValueError):
+                media_duration = 0
+            observed = existing.get("duration")
+            allowed = [observed]
+            if not observed and media_duration > 0:
+                allowed.append(media_duration)
+            await col.update_one({"_id": fid, "duration": {"$in": allowed}}, {"$set": {"duration": pdur}})
     except Exception as e:
         logger.debug(f"Media meta backfill skipped for {fid}: {e}")
 
@@ -252,9 +270,38 @@ async def _backfill_duration(col, fid, existing, msg):
         media = msg_media(msg)
         duration = int(getattr(media, "duration", 0) or 0)
         if duration > 0:
-            await col.update_one({"_id": fid}, {"$set": {"duration": duration}})
+            observed = (existing or {}).get("duration", {"$exists": False})
+            await col.update_one({"_id": fid, "duration": observed}, {"$set": {"duration": duration}})
     except Exception as e:
         logger.debug(f"Duration backfill skipped for {fid}: {e}")
+
+
+# Backfill can involve slow Telegram byte probes. Keep it off the thumbnail
+# response path, with bounded work; overload falls back to inline processing
+# rather than silently losing metadata work.
+_THUMB_BACKFILL_TASKS = set()
+_THUMB_BACKFILL_SEMAPHORE = asyncio.Semaphore(2)
+_THUMB_BACKFILL_LIMIT = 32
+
+
+async def _run_thumb_backfill(col, fid, existing, msg):
+    try:
+        async with _THUMB_BACKFILL_SEMAPHORE:
+            await _backfill_duration(col, fid, existing, msg)
+            await _backfill_media_meta(col, fid, existing, msg)
+    except Exception as exc:
+        logger.warning("Thumbnail metadata backfill failed for %s: %s", fid, exc)
+
+
+async def _schedule_thumb_backfill(col, fid, existing, msg):
+    if existing and existing.get('duration') and (existing.get('meta') or {}).get('w'):
+        return
+    if len(_THUMB_BACKFILL_TASKS) >= _THUMB_BACKFILL_LIMIT:
+        await _run_thumb_backfill(col, fid, existing, msg)
+        return
+    task = asyncio.create_task(_run_thumb_backfill(col, fid, existing, msg))
+    _THUMB_BACKFILL_TASKS.add(task)
+    task.add_done_callback(_THUMB_BACKFILL_TASKS.discard)
 
 
 # ─────────────────────────────────────────────────────────
@@ -1473,31 +1520,32 @@ async def _grouped_cursor_page(q, col, offset, lim, mode, gf):
     return cards, ""
 
 
-async def _ordered_file_page(q, col, offset, limit):
+async def _ordered_file_page(q, col, offset, limit, plans=None):
     """Read only file collections, in Primary → Cloud → Archive order."""
     sources = ('primary', 'cloud', 'archive') if col == 'all' else (col,)
     result, skip = [], offset
     target = limit + 1  # Peek across source boundaries to avoid a blank final page.
     regex = _build_regex(q) if q else None
+    plans = {} if plans is None else plans
     for source in sources:
         collection = FILE_COLLECTIONS.get(source)
         if collection is None or len(result) >= target:
             continue
-        query, text_search = build_query_filter(q, regex) if q else ({}, False)
+        if source not in plans:
+            query, text_search = build_query_filter(q, regex) if q else ({}, False)
+            if query is not None and text_search:
+                # Pick the strategy once per collection for this request.
+                try:
+                    has_text = bool(await collection.find(query, {'_id': 1}).limit(1).to_list(length=1))
+                except Exception as exc:
+                    logger.warning(f'{source} text search unavailable, using filename search: {exc}')
+                    has_text = False
+                if not has_text:
+                    query, text_search = build_query_filter('', regex)
+            plans[source] = query, text_search
+        query, text_search = plans[source]
         if query is None:
             continue
-        if text_search:
-            # Pick one search strategy for the whole collection, not based on
-            # whether this particular offset happens to be empty.
-            try:
-                has_text = bool(await collection.find(query, {'_id': 1}).limit(1).to_list(length=1))
-            except Exception as exc:
-                logger.warning(f'{source} text search unavailable, using filename search: {exc}')
-                has_text = False
-            if not has_text:
-                query, text_search = build_query_filter('', regex)
-                if query is None:
-                    continue
         take = target - len(result)
         projection = FILE_PROJECTION_SCORED if text_search else {**FILE_PROJECTION, 'added_on': 1}
         order = [('score', {'$meta': 'textScore'}), ('_id', -1)] if text_search else ([('added_on', -1), ('_id', -1)] if not q else [('_id', -1)])
@@ -1537,9 +1585,9 @@ async def _group_records_query(q):
     return query, projection, sorting
 
 
-async def _group_records_page(q, offset, limit):
+async def _group_records_page(q, offset, limit, plan=None):
     """Search and page GroupQuality records directly, never the file search."""
-    query, projection, sorting = await _group_records_query(q)
+    query, projection, sorting = plan if plan is not None else await _group_records_query(q)
     if query is None:
         return [], False
     cursor = groups.find(query, projection).sort(sorting).skip(offset).limit(limit + 1)
@@ -1547,11 +1595,11 @@ async def _group_records_page(q, offset, limit):
     return docs[:limit], len(docs) > limit
 
 
-async def _saved_member_ids(ids, q=''):
+async def _saved_member_ids(ids, q='', plan=None):
     """Find members represented by saved group results, including legacy files."""
     if not ids:
         return set()
-    query, _, _ = await _group_records_query(q)
+    query, _, _ = plan if plan is not None else await _group_records_query(q)
     if query is None:
         return set()
     membership = {'members': {'$in': ids}}
@@ -1580,10 +1628,19 @@ async def _collection_results_page(q, col, offset, limit, mode, groups_only):
         state = {'v': 1, 'ctx': context, 'groups': [], 'gp': 0, 'fp': 0,
                  'seen': [], 'gg': legacy_offset, 'phase': 'groups'}
     cards = []
+    group_plan = None
+    file_plans = {}
+
+    async def get_group_plan():
+        nonlocal group_plan
+        if group_plan is None:
+            group_plan = await _group_records_query(q)
+        return group_plan
+
     if state['phase'] == 'groups':
         for _ in range(12):
             wanted = max(limit - len(cards), 1)
-            records, more = await _group_records_page(q, state['gg'], wanted)
+            records, more = await _group_records_page(q, state['gg'], wanted, await get_group_plan())
             if records:
                 # Batch collection reads for the whole page, not once per group.
                 rendered = await _group_cards(records, mode)
@@ -1602,10 +1659,10 @@ async def _collection_results_page(q, col, offset, limit, mode, groups_only):
     if len(cards) >= limit:
         return cards, await _encode_group_cursor(state)
     for _ in range(12):
-        docs, nxt = await _ordered_file_page(q, col, state['fp'], max(limit, 1))
+        docs, nxt = await _ordered_file_page(q, col, state['fp'], max(limit, 1), file_plans)
         if not docs:
             return cards, ''
-        grouped_ids = await _saved_member_ids([doc['_id'] for doc in docs], q)
+        grouped_ids = await _saved_member_ids([doc['_id'] for doc in docs], q, await get_group_plan())
         for index, doc in enumerate(docs):
             if doc['_id'] in grouped_ids:
                 continue
@@ -2741,23 +2798,35 @@ async def api_group_thumb(req):
         return web.Response(status=400)
     revision = req.query.get("v", "")[:100]
     ck = f"g:{gid}" + (f":{revision}" if revision else "")
-    img = thumb_cache.get(ck)
-    if img is None:
-        g = await groups.find_one({"_id": gid}, {"thumb_url": 1})
-        tu = (g or {}).get("thumb_url", "")
-        if not tu.startswith("TG_ID:"):
-            return web.Response(status=404)
-        try:
-            fd = await temp.BOT.download_media(tu.replace("TG_ID:", ""), in_memory=True)
-            img = fd.getvalue() if fd else None
-        except Exception as e:
-            logger.warning(f"group thumb fetch failed: {e}")
-            img = None
-        if not img:
-            return web.Response(status=404)
-        thumb_cache[ck] = img
+    img = await _get_or_fetch_group_thumb(gid, ck)
+    if not img:
+        return web.Response(status=404)
     return web.Response(body=img, content_type="image/jpeg",
                         headers={"Content-Disposition": 'inline; filename="poster.jpg"', "Cache-Control": "max-age=86400"})
+
+
+async def _get_or_fetch_group_thumb(gid, cache_key):
+    img = thumb_cache.get(cache_key)
+    if img is not None:
+        return img
+    async with _thumbnail_lock(cache_key):
+        img = thumb_cache.get(cache_key)
+        if img is not None:
+            return img
+        async with thumb_semaphore:
+            g = await groups.find_one({"_id": gid}, {"thumb_url": 1})
+            tu = (g or {}).get("thumb_url", "")
+            if not tu.startswith("TG_ID:"):
+                return None
+            try:
+                fd = await temp.BOT.download_media(tu.removeprefix("TG_ID:"), in_memory=True)
+                img = fd.getvalue() if fd else None
+            except Exception as e:
+                logger.warning(f"group thumb fetch failed: {e}")
+                return None
+            if img:
+                thumb_cache[cache_key] = img
+            return img
 
 
 # ─────────────────────────────────────────────────────────
