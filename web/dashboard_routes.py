@@ -128,10 +128,10 @@ CARD_CSS = """
 .sel-mode .file-card::after{content:'';position:absolute;top:8px;right:8px;width:22px;height:22px;border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.55);z-index:7;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:900}
 .file-card.sel{outline:2px solid #22c55e;outline-offset:-2px}
 .sel-mode .file-card.sel::after{content:'✓';background:#22c55e;border-color:#22c55e}
-.sel-bar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:150;background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:9px 12px;display:flex;align-items:center;gap:8px;box-shadow:0 8px 30px rgba(0,0,0,.55);max-width:96vw}
+.sel-bar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:150;background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:9px 12px;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px;box-shadow:0 8px 30px rgba(0,0,0,.55);width:max-content;max-width:96vw}
 .sel-bar span{font-size:12px;font-weight:700;color:var(--text);white-space:nowrap}
 .sel-bar button,.gm-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer;color:#fff;background:var(--accent)}
-.sel-bar button.alt,.gm-btn.alt{background:var(--bg4)}
+.sel-bar button.alt,.sel-bar button.sel-scan,.gm-btn.alt{background:var(--bg4)}
 .sel-fab{position:fixed;right:16px;bottom:18px;z-index:140;background:var(--accent);color:#fff;border:none;border-radius:999px;padding:11px 16px;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(229,9,20,.45)}
 .gm-card{max-width:620px!important;padding:24px!important}
 .gm-saving .gm-card{pointer-events:none}
@@ -488,15 +488,6 @@ function targetPreviewHtml(g){
     return h+'</div>';
 }
 function selCount(){return Object.keys(SEL).length;}
-function ensureAdminMenu(){
-    var m=document.getElementById('cddGfMenu');
-    if(!m||!isAdminView||document.getElementById('gfScanItem'))return;
-    var d=document.createElement('div');
-    d.id='gfScanItem';d.className='cdd-item';d.style.borderTop='1px solid var(--border)';d.style.color='#ffd166';
-    d.innerHTML='&#9881; Scan all &amp; build groups';
-    d.onclick=function(e){scanAllGroups(e);};
-    m.appendChild(d);
-}
 var scanTimer=null;
 async function scanAllGroups(e){
     if(e)e.stopPropagation();
@@ -521,7 +512,6 @@ async function scanAllGroups(e){
     }catch(err){showToast(err.message,'error');}
 }
 function renderSelBar(){
-    ensureAdminMenu();
     var bar=document.getElementById('selBar'),fab=document.getElementById('selFab');
     if(!isAdminView){if(bar)bar.remove();if(fab)fab.remove();return;}
     if(!fab){fab=document.createElement('button');fab.id='selFab';fab.className='sel-fab';fab.onclick=function(){toggleSelMode();};document.body.appendChild(fab);}
@@ -532,6 +522,7 @@ function renderSelBar(){
     var n=selCount();
     bar.innerHTML='<span>'+n+' selected</span>'+
         '<button onclick="openSelectedGroup()"'+(n?'':' disabled style="opacity:.5"')+'>&#128279; Group</button>'+
+        '<button class="sel-scan" type="button" aria-label="Scan all and build groups" title="Scan all and build groups" onclick="scanAllGroups(event)">&#9881; Scan</button>'+
         '<button class="alt" onclick="toggleSelMode()">Cancel</button>';
 }
 function toggleSelMode(on){
@@ -1100,15 +1091,13 @@ SEARCH_ZONE = (
             '</div>'
             '<div class="cdd-wrap gf-wrap" id="cddGfWrap">'
                 '<div class="cdd-btn gf-btn" id="cddGfBtn" onclick="toggleCdd(\'gf\')">'
-                    '<span id="cddGfLabel">Grouped</span>'
+                    '<span id="cddGfLabel">All</span>'
                 '</div>'
                 '<span class="cdd-arrow">&#9660;</span>'
                 '<div class="cdd-menu" id="cddGfMenu" style="display:none">'
-                    '<div class="cdd-item selected" data-val="all" onclick="pickGF(\'all\',\'Grouped\',this)">Grouped view (all files)<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item" data-val="group" onclick="pickGF(\'group\',\'Groups only\',this)">Groups only<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item" data-val="quality" onclick="pickGF(\'quality\',\'Quality\',this)">Quality groups<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item" data-val="series" onclick="pickGF(\'series\',\'Series\',this)">Series groups<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
-                    '<div class="cdd-item" data-val="single" onclick="pickGF(\'single\',\'Ungrouped\',this)">Ungrouped view (all files)<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<div class="cdd-item selected" data-val="all" onclick="pickGF(\'all\',\'All\',this)">All<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<div class="cdd-item" data-val="group" onclick="pickGF(\'group\',\'Group\',this)">Group<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<div class="cdd-item" data-val="single" onclick="pickGF(\'single\',\'UnGroup\',this)">UnGroup<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
                 '</div>'
             '</div>'
         '</div>'

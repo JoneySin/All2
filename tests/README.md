@@ -16,7 +16,8 @@ For grouped `/api/search` requests, treat `next_offset` as an opaque continuatio
 value and send it back unchanged, including when a selective filter returns an
 empty page. Large continuations are stored in `GroupSearchCursors` and expire after
 two hours; the application's index setup creates a TTL index to clean them up.
-Restart the search if a cursor expires. Ungrouped search uses numeric offsets.
+Restart the search if a cursor expires. The ungrouped recent view uses numeric
+offsets; ungrouped text search can also return opaque group-member cursors.
 
 ```sh
 python -m venv .venv
@@ -35,8 +36,9 @@ can be revealed by clicking the card or using the keyboard. It also checks
 outside-click dismissal, nested cards, selection mode and non-admin behavior.
 The file-editor test checks quality overrides, current membership, destination
 preview and confirmation, changed destinations, and moves from dashboard and
-actor cards. The ungrouped-view test covers grouped and standalone files,
-group-name searches, playback and group IDs appearing only on group cards.
+actor cards. The ungrouped-view test covers the All, Group and UnGroup filter
+choices, grouped and standalone files, group-name searches, playback, group IDs
+appearing only on group cards, and the admin scan control in Group Mode.
 It uses a **test-only, always-admin, in-memory** server; never deploy that server.
 Install Node.js and Playwright separately, for example:
 

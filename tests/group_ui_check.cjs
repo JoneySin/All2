@@ -272,16 +272,13 @@ const assert = require('node:assert/strict');
  assert.equal(await duo.locator('.grp-textinfo .grp-badge').textContent(),'2 QUALITY');
  assert.equal(await page.locator('.grp-card').filter({hasText:'Unknown Runtime'}).count(),0);
  assert.equal(await page.locator('.file-card[data-fid^="no"]').count(),3);
- await page.locator('#cddGfBtn').click();await page.locator('#cddGfMenu [data-val=quality]').click();
- await autoSeries.waitFor({state:'detached'});await autoMovie.waitFor();
- await duo.waitFor();
- await page.locator('#cddGfBtn').click();await page.locator('#cddGfMenu [data-val=series]').click();
- await autoMovie.waitFor({state:'detached'});await duo.waitFor({state:'detached'});await autoSeries.waitFor();
- console.log('Automatic cards: two-file threshold, runtimes, episode series and filters OK');
+ await page.locator('#cddGfBtn').click();await page.locator('#cddGfMenu [data-val=group]').click();
+ await autoMovie.waitFor();await duo.waitFor();await autoSeries.waitFor();
+ assert.equal(await page.locator('#results > .file-card').count(),0);
+ console.log('Automatic cards: two-file threshold, runtimes, episode series and group filter OK');
 
  // Removing a member from a two-file group warns and closes its now-deleted
  // editor, while leaving both files intact.
- await page.locator('#cddGfBtn').click();await page.locator('#cddGfMenu [data-val=quality]').click();await duo.waitFor();
  const duoGid=(await duo.locator('.grp-textinfo .group-id-chip').textContent()).match(/\d+/)[0];
  await page.evaluate(k=>editGroup(k),await duo.getAttribute('data-gk'));
  await page.locator('#grpModal').waitFor();
