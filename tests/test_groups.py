@@ -825,6 +825,15 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         for fid, source in (("a", "primary"), ("b", "cloud")):
             self.assertEqual((await self.cols[source].find_one({"_id": fid}))["group_id"], group["_id"])
 
+    async def test_scan_endpoints_are_admin_only(self):
+        for role in ("user", None):
+            with patch.object(api, "get_user_role", AsyncMock(return_value=(role, 2))):
+                response = await self.client.post("/api/group/scan_all", json={})
+                self.assertEqual(response.status, 403)
+                response = await self.client.get("/api/group/scan_status")
+                self.assertEqual(response.status, 403)
+        self.assertFalse(api.SCAN_STATE.get("running"))
+
     async def test_scan_counts_unique_files_across_collections(self):
         await self.insert_files(doc("same", "Film 720p.mkv"), doc("same", "Film 720p.mkv", "cloud"))
         await api._scan_all_groups()

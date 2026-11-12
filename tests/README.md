@@ -18,7 +18,9 @@ Catalogue tests cover stable timestamp ties and page boundaries, filters, access
 invalid offsets and database failures. MP4 probe tests cover the shared header/tail fallback for both magic bytes and
 filename hints, including error and short-tail cases.
 Database overview browser tests cover responsive themes, storage errors and retries,
-and real cache-clear request handling. Saved-group stats tests cover quality/series counts, legacy records, lifecycle
+real cache-clear request handling, and the saved-groups manual rescan control.
+The rescan test checks real scan-created groups, confirmation, progress, existing
+scans, completion, failures and status retry with the in-memory fixture. Saved-group stats tests cover quality/series counts, legacy records, lifecycle
 changes, admin access and database failures. Counts represent stored records,
 including preserved legacy singletons, not the number of visible search cards.
 

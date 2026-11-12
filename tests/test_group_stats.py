@@ -80,7 +80,8 @@ class GroupStatsTests(unittest.IsolatedAsyncioTestCase):
             body = await (await self.client.get('/stats')).text()
         for text in ('Database overview', '50% of files', '30% of files', '20% of files',
                      'Thumbnail records', 'Video stream plays', '73', 'Logged in today', 'Premium users',
-                     'Directory profiles', 'Content posts', 'Other / Uncategorized', 'Clear RAM cache'):
+                     'Directory profiles', 'Content posts', 'Other / Uncategorized', 'Clear RAM cache',
+                     'Automatic grouping', 'Rescan auto groups', 'group-scan-status'):
             self.assertIn(text, body)
         self.assertIn('class="dist-primary" style="width:50%"', body)
         self.assertIn('class="dist-cloud" style="width:30%"', body)

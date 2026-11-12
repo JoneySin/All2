@@ -37,7 +37,8 @@ _STATS_CSS = """<style>
 .detail-number{font-size:32px;font-weight:900;letter-spacing:-1px;line-height:1.1;margin:21px 0 5px;color:var(--stat-text);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.detail-description{font-size:11px;color:var(--stat-muted);line-height:1.5}
 .breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:18px}.breakdown-item{background:var(--stat-soft);border:1px solid var(--stat-border);border-radius:9px;padding:10px 12px;min-width:0}.breakdown-label{font-size:11px;color:var(--stat-muted);line-height:1.3}.breakdown-value{font-size:16px;font-weight:800;color:var(--stat-text);margin-top:5px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.breakdown-wide{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px}.breakdown-wide .breakdown-value{margin:0}
 .operations-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.operation-card{display:flex;flex-direction:column;gap:14px}.operation-card .detail-number{margin:4px 0 0;font-size:26px}.operation-line{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:11px;color:var(--stat-muted)}.operation-line strong{color:var(--stat-text);font-size:12px}.meter-fill{height:100%;width:0;background:var(--accent);border-radius:99px;transition:width .35s}.storage-warning{color:var(--accent)!important}.storage-retry{display:none;align-self:flex-start;border:0;padding:0;background:none;color:var(--accent);font-size:12px;font-weight:800;cursor:pointer}.storage-retry.visible{display:block}
-.cache-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;align-self:flex-start;border:1px solid var(--stat-border);border-radius:9px;background:var(--stat-soft);color:var(--stat-text);padding:10px 13px;cursor:pointer;font-size:12px;font-weight:800;transition:border-color .2s,opacity .2s}.cache-btn:hover{border-color:var(--accent)}.cache-btn:disabled{opacity:.6;cursor:wait}.cache-status{min-height:18px;font-size:11px;color:var(--stat-muted)}.stats-footnote{margin-top:21px;color:var(--stat-muted);font-size:11px;line-height:1.6}
+.cache-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;align-self:flex-start;border:1px solid var(--stat-border);border-radius:9px;background:var(--stat-soft);color:var(--stat-text);padding:10px 13px;cursor:pointer;font-size:12px;font-weight:800;transition:border-color .2s,opacity .2s}.cache-btn:hover{border-color:var(--accent)}.cache-btn:disabled{opacity:.6;cursor:wait}.cache-status{min-height:18px;font-size:11px;color:var(--stat-muted)}.group-scan{border-top:1px solid var(--stat-border);margin-top:18px;padding-top:16px;display:flex;flex-direction:column;align-items:flex-start;gap:9px}.group-scan h4{font-size:12px;color:var(--stat-text);margin:0}.group-scan .cache-status{line-height:1.5;overflow-wrap:anywhere}.group-scan .cache-status.error{color:var(--accent)}
+.stats-footnote{margin-top:21px;color:var(--stat-muted);font-size:11px;line-height:1.6}
 @media(max-width:800px){.stats-head{align-items:flex-start}.overview-panel{grid-template-columns:1fr;gap:23px}.overview-side{border-left:0;border-top:1px solid var(--stat-border);padding:22px 0 0}.collection-grid{grid-template-columns:1fr 1fr}.collection-card:last-child{grid-column:1/-1}}
 @media(max-width:560px){.stats-page{padding:26px 16px 48px}.stats-head{gap:12px}.stats-head h1{font-size:27px}.stats-head p{font-size:12px}.stats-refresh{padding:9px 10px}.overview-panel{padding:24px 22px;border-radius:15px}.overview-value{font-size:48px}.collection-grid{grid-template-columns:1fr}.collection-card:last-child{grid-column:auto}.collection-number{margin-top:18px}.detail-grid,.operations-grid{grid-template-columns:1fr}.section-heading{align-items:flex-start;flex-direction:column;gap:5px}.section-heading p{font-size:11px}.stats-card{padding:18px}.detail-card{padding:19px}}
 @media(prefers-reduced-motion:reduce){.stats-page *{transition:none!important}}
@@ -67,6 +68,52 @@ _STATS_JS = """<script>
   }
   retry.addEventListener('click',loadDbStats);
   loadDbStats();
+})();
+(function(){
+  var button=document.getElementById('group-rescan'),status=document.getElementById('group-scan-status');
+  var timer=null, generation=0;
+  function message(text,error){status.textContent=text;status.classList.toggle('error',!!error);}
+  function schedule(id,delay){timer=setTimeout(function(){poll(id);},delay);}
+  async function poll(id){
+    try{
+      var r=await fetch('/api/group/scan_status',{cache:'no-store'});
+      var s=await r.json();
+      if(!r.ok||!s||typeof s.running!=='boolean')throw new Error('Status unavailable');
+      if(id!==generation)return;
+      if(s.running){
+        button.disabled=true;button.textContent='Scanning…';
+        message('Scan in progress: '+(s.phase||'starting')+' ('+(s.scanned||0)+' / '+(s.total||0)+' files).',false);
+        schedule(id,2000);
+      }else{
+        button.disabled=false;button.textContent='Rescan auto groups';
+        if(s.error)message('Scan failed or stopped: '+s.error+'. You can retry.',true);
+        else if(s.finished)message('Scan complete: '+(s.created||0)+' groups created, '+(s.added||0)+' files added'+(s.skipped_big?' · '+s.skipped_big+' oversized groups skipped':'')+'. Refresh this page to update counts.',false);
+        else message('Ready to scan.',false);
+      }
+    }catch(e){
+      if(id!==generation)return;
+      button.disabled=false;button.textContent='Rescan auto groups';
+      message('Could not check scan status. Retrying; a running scan will not be started twice.',true);
+      schedule(id,5000);
+    }
+  }
+  button.addEventListener('click',async function(){
+    if(button.disabled||!confirm('Rescan all file collections for automatic groups? This may take several minutes.'))return;
+    var id=++generation;clearTimeout(timer);button.disabled=true;button.textContent='Starting…';message('Starting scan…',false);
+    try{
+      var r=await fetch('/api/group/scan_all',{method:'POST'}),d=await r.json().catch(function(){return {};});
+      if(!r.ok||d.error||(!d.started&&!d.running))throw new Error(d.error||'Could not start scan');
+      if(id!==generation)return;
+      message(d.started?'Scan started.':'A scan is already running.',false);
+      poll(id);
+    }catch(e){
+      if(id!==generation)return;
+      button.disabled=false;button.textContent='Rescan auto groups';
+      message('Could not start scan: '+(e.message||'Please try again')+'. Checking status again shortly.',true);
+      schedule(id,5000);
+    }
+  });
+  poll(generation);
 })();
 async function triggerCacheFlush(){
   var btn=document.getElementById('flushBtn'),status=document.getElementById('flush-status');
@@ -179,6 +226,9 @@ async def stats(req):
       <article class="stats-card detail-card" id="saved-group-stats"><div class="card-top"><div class="card-title"><span class="section-icon">{_icon('groups')}</span><h3>Saved Groups · Total</h3></div><span class="card-badge">GROUPS</span></div>
         <div class="detail-number" id="saved-group-total">{group_count_markup('total', 0)}</div><div class="detail-description">Saved group records, including legacy records</div>
         <div class="breakdown"><div class="breakdown-item"><div class="breakdown-label">Quality Groups</div><div class="breakdown-value" id="saved-quality-count">{group_count_markup('quality', 0)}</div></div><div class="breakdown-item"><div class="breakdown-label">Series Groups</div><div class="breakdown-value" id="saved-series-count">{group_count_markup('series', 0)}</div></div></div>
+        <div class="group-scan"><h4>Automatic grouping</h4><div class="detail-description">Scan Primary, Cloud and Archive for compatible files. Large libraries may take several minutes.</div>
+          <button class="cache-btn" id="group-rescan" type="button" disabled>Checking scan…</button><div class="cache-status" id="group-scan-status" role="status" aria-live="polite">Checking scan status…</div>
+        </div>
       </article>
       <article class="stats-card detail-card"><div class="card-top"><div class="card-title"><span class="section-icon">{_icon('people')}</span><h3>System subscribers</h3></div><span class="card-badge">USERS</span></div>
         <div class="detail-number">{users:,}</div><div class="detail-description">Total user records</div><div class="breakdown">{_breakdown('Logged in today', logged_in_today)}{_breakdown('Premium users', premium_users)}</div>

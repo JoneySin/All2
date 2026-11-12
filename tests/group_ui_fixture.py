@@ -139,6 +139,15 @@ async def seed_automatic_examples(_req):
     return web.json_response({"ok": True})
 
 
+async def seed_scan_examples(_req):
+    # Leave these compatible files ungrouped so the stats UI must actually run a scan.
+    for fid, name, source in (("scan1", "Rescan Test Film 720p.mkv", "primary"),
+                              ("scan2", "Rescan Test Film 1080p.mkv", "cloud")):
+        await cols[source].insert_one({"_id": fid, "file_ref": fid, "file_name": name,
+                                       "file_type": "video", "file_size": 1000, "duration": 3600})
+    return web.json_response({"ok": True})
+
+
 async def seed_mixed_recent(_req):
     # Large enough that a naive first raw page contains mostly standalone files,
     # even though grouped view can expand the recent anchor's older siblings.
@@ -218,6 +227,7 @@ app.router.add_get("/fixture/watch", watch_page)
 app.router.add_get("/fixture/landing", stream.root_route_handler)
 app.router.add_get("/fixture/actor-cards", actor_cards)
 app.router.add_post("/fixture/seed_auto", seed_automatic_examples)
+app.router.add_post("/fixture/seed_scan", seed_scan_examples)
 app.router.add_post("/fixture/seed_mixed_recent", seed_mixed_recent)
 app.router.add_get("/api/thumb", thumb)
 app.add_routes(api.search_routes)
