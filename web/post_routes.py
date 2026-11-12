@@ -14,6 +14,7 @@ from database.ia_filterdb import posts as posts_col
 # ✅ DRY: fast_json + DIRECTORY_CSS अब web_assets से आते हैं (पहले दोनों यहाँ copy थे)
 from web.web_assets import build_page, get_auth, require_active_plan, fast_json, DIRECTORY_CSS, DEFAULT_CATALOG_MODE
 from web.post_editor import build_post_editor, post_image_src
+from web.catalog_cards import render_catalog_card
 
 post_routes = web.RouteTableDef()
 
@@ -254,9 +255,9 @@ async def posts_directory_page(req):
                 </div>
             </div>
             <div class="cdd-wrap" onclick="togglePostCDD('cat', event)">
-                <span id="post_cat_lbl">📁 All Categories</span> <span style="font-size:10px; color:var(--muted);">▼</span>
+                <span id="post_cat_lbl">All</span> <span style="font-size:10px; color:var(--muted);">▼</span>
                 <div class="cdd-menu" id="post_cat_menu">
-                    <div class="cdd-item" onclick="pickPostCat('All', '📁 All Categories', event)">📁 All Categories</div>
+                    <div class="cdd-item" onclick="pickPostCat('All', 'All', event)">All</div>
                     <div class="cdd-item" onclick="pickPostCat('Movies', '🎬 Movies', event)">🎬 Movies</div>
                     <div class="cdd-item" onclick="pickPostCat('Web Series', '📺 Web Series', event)">📺 Web Series</div>
                     <div class="cdd-item" onclick="pickPostCat('App Video', '📱 App Video', event)">📱 App Video</div>
@@ -268,27 +269,8 @@ async def posts_directory_page(req):
     </div>
     '''
 
-    post_items = ""
-    for p in all_posts:
-        cover = p.get("cover_image", "")
-        img_src = html.escape(post_image_src(cover), quote=True)
-        cat_name = html.escape(p.get("category", "Uncategorized"))
-        title_text = html.escape(p.get("title", "Untitled"))
-        
-        post_items += f'''<div class="act-card card-enter" onclick="window.location.href='/post/{str(p["_id"])}'">
-            <div class="poster-wrap" style="position:relative; padding-top:135%; background:var(--bg3); overflow:hidden;">
-                <img src="{img_src}" class="act-poster" loading="lazy">
-                <div style="position:absolute; top:8px; left:8px; background:rgba(229,9,20,0.9); color:#fff; font-size:10px; padding:4px 8px; border-radius:4px; font-weight:800; backdrop-filter:blur(4px); z-index:2; text-transform:uppercase; box-shadow:0 2px 10px rgba(0,0,0,0.5);">🎬 {cat_name}</div>
-                <div style="position:absolute; bottom:0; left:0; right:0; background:linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 40%, transparent 100%); padding:30px 12px 12px 12px; z-index:2; text-align:center;">
-                    <div style="font-size:14.5px; font-weight:900; color:#fff; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; text-shadow:0 2px 6px rgba(0,0,0,0.9); letter-spacing:0.5px;">{title_text}</div>
-                </div>
-            </div>
-            <div class="card-body">
-                <div style="font-size:14px; font-weight:800; color:var(--text); text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">{title_text}</div>
-                <div style="font-size:11px; color:var(--muted); font-weight:700; margin-top:4px;">{cat_name}</div>
-            </div>
-        </div>'''
-    
+    post_items = ''.join(render_catalog_card(p, 'post') for p in all_posts)
+
     grid_mode_cls = ' grid-text-mode' if DEFAULT_CATALOG_MODE == 'text' else ''
     empty_grid = '<div style="grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--muted);">No posts found.</div>'
     initial_grid = f'<div id="post_grid_container" class="dir-grid{grid_mode_cls}">{post_items or empty_grid}</div>'
@@ -306,29 +288,36 @@ async def posts_directory_page(req):
     var pOff = 0, pLim = 20, pPage = 1;
     var postReqId = 0;
     var pNext = {has_nxt_str};
-    var currentPCat = 'All'; var currentPView = '{DEFAULT_CATALOG_MODE}';
+    var currentPCat = 'All'; var currentPView = MediaView.get('{DEFAULT_CATALOG_MODE}');
     var lastPQ = "", lastPCat = "All", lastPView = "{DEFAULT_CATALOG_MODE}", lastPOff = 0;
 
     document.addEventListener("DOMContentLoaded", () => {{
         if(sessionStorage.getItem('ff_post_state')) {{
             document.getElementById('post_q').value = sessionStorage.getItem('ff_post_q') || "";
             currentPCat = sessionStorage.getItem('ff_post_cat') || "All";
-            currentPView = sessionStorage.getItem('ff_post_view') || "{DEFAULT_CATALOG_MODE}";
+            currentPView = MediaView.get('{DEFAULT_CATALOG_MODE}');
             pOff = parseInt(sessionStorage.getItem('ff_post_off') || "0");
             pPage = parseInt(sessionStorage.getItem('ff_post_page') || "1");
 
-            const catMap = {{'All':'📁 All Categories', 'Movies':'🎬 Movies', 'Web Series':'📺 Web Series', 'App Video':'📱 App Video', 'Porn':'🔞 Porn'}};
+            const catMap = {{'All':'All', 'Movies':'🎬 Movies', 'Web Series':'📺 Web Series', 'App Video':'📱 App Video', 'Porn':'🔞 Porn'}};
             const viewMap = {{'poster':'🖼️ Poster', 'text':'📄 Text'}};
-            document.getElementById('post_cat_lbl').innerText = catMap[currentPCat] || '📁 All Categories';
+            document.getElementById('post_cat_lbl').innerText = catMap[currentPCat] || 'All';
             document.getElementById('post_view_lbl').innerText = viewMap[currentPView] || viewMap['{DEFAULT_CATALOG_MODE}'];
 
             applyPostViewMode();
             searchPosts(true);
         }} else {{
+            document.getElementById('post_view_lbl').innerText = currentPView === 'text' ? '📄 Text' : '🖼️ Poster';
             applyPostViewMode();
             updatePgUI();
             staggerCards(document.getElementById('post_grid_container'));
         }}
+    }});
+
+    MediaView.subscribe(function(value) {{
+        if(value===currentPView)return;
+        currentPView=value;document.getElementById('post_view_lbl').innerText=value==='text'?'📄 Text':'🖼️ Poster';
+        lastPView=currentPView;applyPostViewMode();
     }});
 
     function closeAllPostCDD() {{ document.getElementById('post_view_menu').style.display='none'; document.getElementById('post_cat_menu').style.display='none'; }}
@@ -342,7 +331,7 @@ async def posts_directory_page(req):
         if (!isVis) menu.style.display = 'block';
     }}
 
-    function pickPostView(val, lbl, e) {{ e.stopPropagation(); currentPView = val; document.getElementById('post_view_lbl').innerText = lbl; closeAllPostCDD(); applyPostViewMode(); resetPost(); searchPosts(); }}
+    function pickPostView(val, lbl, e) {{ e.stopPropagation(); currentPView = MediaView.set(val); lastPView = currentPView; document.getElementById('post_view_lbl').innerText = lbl; closeAllPostCDD(); applyPostViewMode(); }}
     function pickPostCat(val, lbl, e) {{ e.stopPropagation(); currentPCat = val; document.getElementById('post_cat_lbl').innerText = lbl; closeAllPostCDD(); resetPost(); searchPosts(); }}
 
     function applyPostViewMode() {{
@@ -425,27 +414,8 @@ async def api_posts_search(req):
     
     if not docs: return web.json_response({"html": '<div style="grid-column:1/-1; text-align:center; color:var(--muted); padding:40px;">No posts matching your search.</div>', "has_next": False}, dumps=fast_json)
         
-    html_out = ""
-    for p in docs:
-        cover = p.get("cover_image", "")
-        img_src = html.escape(post_image_src(cover), quote=True)
-        cat_name = html.escape(p.get("category", "Uncategorized"))
-        title_text = html.escape(p.get("title", "Untitled"))
-        
-        html_out += f'''<div class="act-card card-enter" onclick="window.location.href='/post/{str(p["_id"])}'">
-            <div class="poster-wrap" style="position:relative; padding-top:135%; background:var(--bg3); overflow:hidden;">
-                <img src="{img_src}" class="act-poster" loading="lazy">
-                <div style="position:absolute; top:8px; left:8px; background:rgba(229,9,20,0.9); color:#fff; font-size:10px; padding:4px 8px; border-radius:4px; font-weight:800; backdrop-filter:blur(4px); z-index:2; text-transform:uppercase; box-shadow:0 2px 10px rgba(0,0,0,0.5);">🎬 {cat_name}</div>
-                <div style="position:absolute; bottom:0; left:0; right:0; background:linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 40%, transparent 100%); padding:30px 12px 12px 12px; z-index:2; text-align:center;">
-                    <div style="font-size:14.5px; font-weight:900; color:#fff; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; text-shadow:0 2px 6px rgba(0,0,0,0.9); letter-spacing:0.5px;">{title_text}</div>
-                </div>
-            </div>
-            <div class="card-body">
-                <div style="font-size:14px; font-weight:800; color:var(--text); text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">{title_text}</div>
-                <div style="font-size:11px; color:var(--muted); font-weight:700; margin-top:4px;">{cat_name}</div>
-            </div>
-        </div>'''
-            
+    html_out = ''.join(render_catalog_card(p, 'post') for p in docs)
+
     return web.json_response({"html": html_out, "has_next": has_next}, dumps=fast_json)
 
 # ─────────────────────────────────────────────────────────

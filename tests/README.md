@@ -42,7 +42,10 @@ actor cards. The ungrouped-view test covers the All, Group and UnGroup filter
 choices, grouped and standalone files, group-name-only exclusion, playback, group IDs
 appearing only on group cards, and the admin scan control in Group Mode. The
 recent-view test covers raw collection order, older group members, standalone files and multi-page
-forward/back navigation without changing group membership.
+forward/back navigation without changing group membership and verifies next-page
+prefetch reuse. Shared-view checks cover the All labels, common text/poster
+preference across dashboard, posts, profiles and miniapp, including another tab.
+The prefetch check verifies navigation retries when a speculative request fails.
 It uses a **test-only, always-admin, in-memory** server; never deploy that server.
 Install Node.js and Playwright separately, for example:
 
@@ -61,6 +64,8 @@ NODE_PATH=/tmp/all2-playwright/node_modules node tests/group_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/file_editor_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/ungrouped_view_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/ungrouped_recent_ui_check.cjs
+NODE_PATH=/tmp/all2-playwright/node_modules node tests/shared_view_ui_check.cjs
+NODE_PATH=/tmp/all2-playwright/node_modules node tests/prefetch_ui_check.cjs
 ```
 
 The fixture uses port 8765 by default. Set `ALL2_UI_PORT` on the fixture and

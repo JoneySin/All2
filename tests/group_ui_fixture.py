@@ -20,6 +20,8 @@ from database import ia_filterdb as db
 from web import search_api as api
 from web.dashboard_routes import DASHBOARD_BODY
 from web.actor_routes import ACTOR_MEDIA_SCRIPT
+from web import actor_routes as actor, post_routes as post
+from bson import ObjectId
 from web.web_assets import build_page
 
 mongo = AsyncMongoMockClient()
@@ -32,6 +34,8 @@ db.groups = api.groups = store.QualityGroups
 api.group_seq = store.QualityGroupSeq
 api.group_search_cursors = store.GroupSearchCursors
 api.FILE_COLLECTIONS = cols
+actor.actors = store.Actors
+post.posts_col = store.Posts
 
 
 async def admin_role(_req):
@@ -42,6 +46,12 @@ async def no_siblings(_key):
     return []
 
 
+async def active(_role, _tg_id):
+    return True
+
+
+actor.get_auth = post.get_auth = admin_role
+actor.require_active_plan = post.require_active_plan = active
 api.get_user_role = admin_role
 api._siblings = no_siblings
 
@@ -89,6 +99,10 @@ async def seed(_app):
          "scanned_at": now, "updated_at": now},
     ])
     await store.QualityGroupSeq.insert_one({"_id": "seq", "n": 12})
+    await store.Actors.insert_one({'_id': ObjectId('65ab12345678901234567890'), 'name':'Test Profile',
+                                   'category':'actor', 'tags':[], 'gallery':[], 'created_at':1})
+    await store.Posts.insert_one({'_id': ObjectId('65ab12345678901234567891'), 'title':'Test Post',
+                                  'category':'Movies', 'created_at':1})
 
 
 async def seed_automatic_examples(_req):
@@ -170,5 +184,7 @@ app.router.add_post("/fixture/seed_auto", seed_automatic_examples)
 app.router.add_post("/fixture/seed_mixed_recent", seed_mixed_recent)
 app.router.add_get("/api/thumb", thumb)
 app.add_routes(api.search_routes)
+app.add_routes(actor.actor_routes)
+app.add_routes(post.post_routes)
 app.on_startup.append(seed)
 web.run_app(app, host="0.0.0.0", port=int(os.environ.get("ALL2_UI_PORT", "8765")), print=None)

@@ -8,7 +8,7 @@ const assert=require('node:assert/strict');
  const base=process.env.ALL2_UI_URL||'http://127.0.0.1:8765',errors=[];
  page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/*',r=>r.request().url().startsWith(base+'/')?r.continue():r.abort());
- await page.addInitScript(()=>localStorage.setItem('ff_dashboard_mode','tg'));
+ await page.addInitScript(()=>localStorage.setItem('ff_view_mode','poster'));
  await page.goto(base+'/dashboard');await page.locator('.grp-card').first().waitFor();
  assert.equal(await page.locator('#cddGfLabel').textContent(),'All');
  assert.deepEqual((await page.locator('#cddGfMenu .cdd-item').allTextContents()).map(t=>t.trim()),['All','Group','UnGroup']);

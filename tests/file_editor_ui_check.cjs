@@ -9,7 +9,7 @@ const assert=require('node:assert/strict');
  const base=process.env.ALL2_UI_URL||'http://127.0.0.1:8765';
  page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/*',r=>r.request().url().startsWith(base+'/')?r.continue():r.abort());
- await page.addInitScript(()=>localStorage.setItem('ff_dashboard_mode','none'));
+ await page.addInitScript(()=>localStorage.setItem('ff_view_mode','text'));
  await page.goto(base+'/dashboard');
  const file=page.locator('.file-card[data-fid="f1"]').first();await file.waitFor();
  await file.locator('.fc-text-info').click();await file.locator('.text-admin-row .btn-edit').first().click();

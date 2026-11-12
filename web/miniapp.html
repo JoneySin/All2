@@ -179,9 +179,9 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt);min-
     </div>
     <div class="fi">
       <div class="cw" id="cwCol">
-        <div class="cb" id="cbCol" onclick="tCdd('Col')"><span id="clCol">📂 All</span><span class="ca">&#9660;</span></div>
+        <div class="cb" id="cbCol" onclick="tCdd('Col')"><span id="clCol">All</span><span class="ca">&#9660;</span></div>
         <div class="cm" id="cmCol">
-          <div class="ci sel" data-val="all" onclick="setCdd(this,'Col','col')">📂 All Collections<div class="cr"><div class="cd"></div></div></div>
+          <div class="ci sel" data-val="all" onclick="setCdd(this,'Col','col')">All<div class="cr"><div class="cd"></div></div></div>
           <div class="ci" data-val="primary" onclick="setCdd(this,'Col','col')">🟢 Primary<div class="cr"><div class="cd"></div></div></div>
           <div class="ci" data-val="cloud" onclick="setCdd(this,'Col','col')">☁️ Cloud<div class="cr"><div class="cd"></div></div></div>
           <div class="ci" data-val="archive" onclick="setCdd(this,'Col','col')">📦 Archive<div class="cr"><div class="cd"></div></div></div>
@@ -231,6 +231,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt);min-
 
 
 <script>
+__MEDIA_CARD_JS__
 const tg=window.Telegram.WebApp;
 tg.expand();tg.ready();
 const ID=tg.initData||'';
@@ -239,8 +240,8 @@ const H={'X-Telegram-Init-Data':ID};
 // state
 let curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
 let searchReqId=0;
-let pMode=localStorage.getItem('ff_mode')||'__DEFAULT_MEDIA_MODE__'; /* 🎛️ default injected from web_assets.DEFAULT_MEDIA_MODE */
-let plyr=null,streamUrl='',playerReq=0,playerAbort=null;
+let pMode=MediaView.media('__DEFAULT_MEDIA_MODE__'); /* 🎛️ default injected from web_assets.DEFAULT_MEDIA_MODE */
+let plyr=null,streamUrl='',playerReq=0,playerAbort=null,miniMediaFiles={};
 
 
 // init mode
@@ -250,6 +251,14 @@ if(pMode==='none'){
   Q1('#clMode').textContent='⚡ Fast (Text)';
   Q1('#results').classList.add('mn');
 }
+
+MediaView.subscribe(value=>{
+  let mode=value==='text'?'none':'tg';if(mode===pMode)return;
+  pMode=mode;
+  Q('#cmMode .ci').forEach(i=>i.classList.toggle('sel',i.dataset.val===mode));
+  Q1('#clMode').textContent=mode==='none'?'⚡ Fast (Text)':'📸 TG Thumb';
+  Q1('#results').classList.toggle('mn',mode==='none');doSearch(0,true);
+});
 
 // helpers
 function Q(s,p=document){return p.querySelectorAll(s)}
@@ -296,7 +305,7 @@ function setCdd(item,id,key){
   Q1('#cm'+id).classList.remove('open');Q1('#cb'+id).classList.remove('open');
   if(key==='col'){curCol=val;doSearch(0,true);}
   else{
-    pMode=val;localStorage.setItem('ff_mode',val);
+    pMode=val;MediaView.set(val);
     Q1('#results').classList.toggle('mn',val==='none');
     doSearch(curOff,true);
   }
@@ -374,21 +383,7 @@ async function doSearch(off,allowEmpty){
       return;
     }
     let h='';
-    d.results.forEach(f=>{
-      let sc=['primary','cloud','archive'].includes((f.source||'').toLowerCase())?f.source.toLowerCase():'primary';
-      /* ⏱️ duration chip — purani (bina-duration) files par f.duration khali aata hai,
-         tab chip banta hi nahi, "0:00" jaisa bekaar text nahi dikhta. */
-      let dc=f.duration?`<span class="dc">${esc(f.duration)}</span>`:'';
-      let td=f.duration?`<span class="td">${esc(f.duration)}</span>`:'';
-      /* 🖼️ resolution chip — 1280×720 → "720p", 1920×1080 → "1080p"; khali to nahi banta */
-      let rc=f.res?`<span class="rc">${esc(f.res)}</span>`:'';
-      let tr=f.res?`<span class="tr">${esc(f.res)}</span>`:'';
-      let ph=pMode!=='none'
-        ?`<div class="pb" id="pb-${f.file_id}"><img src="${f.tg_thumb}" data-col="${sc}" class="fp" loading="lazy" onload="this.classList.add('on')" onerror="thumbErr('${f.file_id}')"><div class="pt"><span class="sc">${esc(f.size||'')}</span>${dc}${rc}<span class="sp ${sc}"><span class="sd"></span>${sc.toUpperCase()}</span></div></div>`
-        :`<div class="ti"><span class="ts">${esc(f.size||'')}</span>${td}${tr}<span class="tp ${sc}"><span class="sd"></span>${sc.toUpperCase()}</span></div>`;
-      let nameArg=encodeURIComponent(f.name||'').replace(/'/g,'%27');
-      h+=`<div class="fc ce" onclick="openStream('${f.file_id}',decodeURIComponent('${nameArg}'))">${ph}<div class="fb"><div class="fn">${esc(f.name)}</div></div></div>`;
-    });
+    d.results.forEach(f=>{ miniMediaFiles[f.file_id]=f; h+=renderMediaFile(f,pMode,{mini:true}); });
     let res=Q1('#results');res.innerHTML=h;stagger(res);
     nextOff=d.next_offset;
     let pb=Q1('#pgBox');pb.style.display='flex';
@@ -397,6 +392,9 @@ async function doSearch(off,allowEmpty){
     window.scrollTo({top:0,behavior:'smooth'});
   }catch(e){if(myReq===searchReqId){qWrap.classList.remove('loading');showErr('generic','Connection fail. Dobara try karo.');}}
 }
+
+// Playback uses the same shared card data without embedding filenames in handlers.
+function miniPlayFile(card){let f=miniMediaFiles[card.dataset.fid];if(f)openStream(f.stream_id||f.file_id,f.name);}
 
 // player
 async function openStream(id,name){

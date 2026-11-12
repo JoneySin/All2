@@ -1,3 +1,4 @@
+from web.media_cards import MEDIA_CARD_JS
 import time
 import html
 import orjson
@@ -17,15 +18,10 @@ def fast_json(data):
     return orjson.dumps(data).decode('utf-8')
 
 # ─────────────────────────────────────────────
-# 🎛️ CENTRALIZED DEFAULT VIEW MODES
-# ✅ DRY: हर page (dashboard, posts, actors, actor-profile, miniapp) का default
-# view mode अब यहीं एक जगह से control होता है — बदलना हो तो सिर्फ़ ये दो lines।
-#
-# DEFAULT_CATALOG_MODE → /posts और /actors directory grids ('poster' | 'text')
-# DEFAULT_MEDIA_MODE   → dashboard, miniapp और actor-profile media results ('tg' | 'none')
-# ─────────────────────────────────────────────
-DEFAULT_CATALOG_MODE = "text"
-DEFAULT_MEDIA_MODE = "none"
+# 🎛️ One default for every text/poster view; API adapters use legacy values.
+DEFAULT_VIEW_MODE = "text"  # "text" or "poster"
+DEFAULT_CATALOG_MODE = DEFAULT_VIEW_MODE
+DEFAULT_MEDIA_MODE = "none" if DEFAULT_VIEW_MODE == "text" else "tg"
 
 # ─────────────────────────────────────────────
 # 🎨 SHARED DIRECTORY CSS
@@ -182,7 +178,7 @@ function toggleThemeFixed(){var l=document.documentElement.classList.toggle('lig
 function openSidebar(){document.getElementById('sidebar').classList.add('open');document.getElementById('sbOverlay').classList.add('open');document.getElementById('hamBtn').classList.add('open');}
 function closeSidebar(){document.getElementById('sidebar').classList.remove('open');document.getElementById('sbOverlay').classList.remove('open');document.getElementById('hamBtn').classList.remove('open');}
 var curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
-var pMode=localStorage.getItem('posterMode')||'__DEFAULT_MEDIA_MODE__';
+var pMode=MediaView.media('__DEFAULT_MEDIA_MODE__');
 var LIMIT_VAL = __LIMIT_PLACEHOLDER__;
 
 var activeFid = '', activeCol = '', cropperInstance = null, fileSaveInProgress = false;
@@ -501,7 +497,7 @@ _HEAD_POST = (
     '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.css">'
     f'<style>{CSS}</style>'
     '<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.js"></script>'
-    f'<script>{JS}</script></head>'
+    f'<script>{MEDIA_CARD_JS}{JS}</script></head>'
 )
 
 # Admin-only edit modal भी constant है — हर request पर दोबारा evaluate करने की ज़रूरत नहीं

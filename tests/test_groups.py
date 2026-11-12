@@ -1265,6 +1265,19 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([r['file_id'] for r in (await response.json())['results']], ['c'])
         self.assertEqual(await self.groups.count_documents({}), 1)
 
+    async def test_group_page_batches_member_reads_and_keeps_overlaps(self):
+        await self.insert_files(doc('a', 'A'), doc('b', 'B', 'cloud'), doc('c', 'C', 'archive'))
+        records = [{'_id':'1', 'name':'One', 'members':['a','b']},
+                   {'_id':'2', 'name':'Two', 'members':['b','c']}]
+        real_files, real_refresh = api.get_files_by_ids, api._refresh_group_rows
+        with patch.object(api, 'get_files_by_ids', AsyncMock(wraps=real_files)) as lookup, \
+             patch.object(api, '_refresh_group_rows', AsyncMock(wraps=real_refresh)) as refresh:
+            cards = await api._group_cards(records, 'none')
+        self.assertEqual([card['gid'] for card in cards], ['1', '2'])
+        self.assertEqual([{x['file_id'] for x in c['variants']} for c in cards], [{'a','b'},{'b','c'}])
+        self.assertEqual(lookup.await_count, 1)
+        self.assertEqual(refresh.await_count, 1)
+
     async def test_group_only_recent_excludes_singletons_and_unsaved_files(self):
         await self.insert_files(doc('a', 'Saved A'), doc('b', 'Saved B', 'cloud'),
                                 doc('c', 'Singleton', group_id='2'), doc('d', 'Unsaved'))

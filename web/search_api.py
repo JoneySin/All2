@@ -33,6 +33,7 @@ from database.users_chats_db import db
 # ✅ DRY: fast_json भी अब web_assets से ही आता है (पहले search_api/actor_routes/
 # post_routes तीनों में इसकी अलग-अलग copy थी)।
 from web.web_assets import get_auth as web_get_auth, fast_json, DEFAULT_MEDIA_MODE
+from web.media_cards import MEDIA_CARD_JS
 from web.grouping import (AUTO_QUALITY_MAX, AUTO_SERIES_MAX, GROUP_TYPES,
                           auto_group_plan, duration_seconds, episode_identity, group_type,
                           order_series, quality_title_key, series_key, series_title)
@@ -1246,19 +1247,19 @@ async def _group_hits(q):
 
 
 async def _group_cards(page_groups, mode):
-    ids = [m for g in page_groups for m in g.get("members", [])]
+    """Batch member lookups once per page while rendering each saved record independently."""
+    ids = list(dict.fromkeys(m for g in page_groups for m in g.get("members", []) if m))
     docs = await get_files_by_ids(ids) if ids else []
-    by = {d["_id"]: d for d in docs}
-    ordered, manual = [], {}
-    for g in page_groups:                      # search ka group-order bana rahe
-        for m in g.get("members", []):
-            d = by.get(m)
-            if d:
-                ordered.append(d)
-                manual[m] = g
-    rows = _build_results_list(ordered, mode)
-    rows, _ = await _refresh_group_rows(rows, set(), {row.get("file_id") for row in rows})
-    return group_results(rows, manual)
+    rows = _build_results_list(docs, mode)
+    rows, _ = await _refresh_group_rows(rows, set(), set(ids))
+    by = {row["file_id"]: row for row in rows}
+    cards = []
+    for group in page_groups:
+        members = list(dict.fromkeys(group.get("members") or []))
+        ordered = [by[m] for m in members if m in by]
+        manual = {row["file_id"]: group for row in ordered}
+        cards.extend(group_results(ordered, manual))
+    return cards
 
 
 async def _grouped_first_page(q, off, lim, mode, gf, gs):
@@ -1614,12 +1615,10 @@ async def _collection_results_page(q, col, offset, limit, mode, groups_only):
             wanted = max(limit - len(cards), 1)
             records, more = await _group_records_page(q, state['gg'], wanted)
             if records:
-                # Render each saved record independently, including when old
-                # records overlap in membership. No auto-grouping or writes.
-                for record in records:
-                    rendered = await _group_cards([record], mode)
-                    cards.extend(card for card in rendered if card.get('group') and
-                                 (col == 'all' or any(v.get('raw_collection') == col for v in card.get('variants', []))))
+                # Batch collection reads for the whole page, not once per group.
+                rendered = await _group_cards(records, mode)
+                cards.extend(card for card in rendered if card.get('group') and
+                             (col == 'all' or any(v.get('raw_collection') == col for v in card.get('variants', []))))
                 state['gg'] += len(records)
             if not more:
                 state['phase'] = 'files'
@@ -2919,5 +2918,5 @@ async def miniapp_page(req):
     # 🎛️ Centralized default view mode inject (DEFAULT_MEDIA_MODE — web_assets.py)
     with open(html_path, "r", encoding="utf-8") as f:
         html_src = f.read()
-    html_src = html_src.replace("__DEFAULT_MEDIA_MODE__", DEFAULT_MEDIA_MODE)
+    html_src = html_src.replace("__DEFAULT_MEDIA_MODE__", DEFAULT_MEDIA_MODE).replace("__MEDIA_CARD_JS__", MEDIA_CARD_JS)
     return web.Response(text=html_src, content_type="text/html", charset="utf-8")

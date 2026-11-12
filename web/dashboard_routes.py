@@ -207,10 +207,9 @@ CARD_CSS = """
 # ─────────────────────────────────────────────────────────────────────────────
 JS_ENGINE = """
 var curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
-var searchReqId=0;
-// Dashboard mode has its own preference key so an old shared posterMode value
-// cannot override the text-only dashboard default.
-var pMode=localStorage.getItem('ff_dashboard_mode')||'__DEFAULT_MEDIA_MODE__';
+var searchReqId=0, nextPagePrefetch=null;
+// Shared preference keeps media and catalogue views in sync.
+var pMode=MediaView.media('__DEFAULT_MEDIA_MODE__');
 var LIMIT_VAL = __LIMIT_PLACEHOLDER__;
 
 var CDDS={col:['cddColMenu','cddColBtn'],mode:['cddModeMenu','cddModeBtn'],gf:['cddGfMenu','cddGfBtn']};
@@ -251,7 +250,7 @@ function pickCol(val,label,el,e){
 function pickMode(val,label,el,e){
     if(e){e.stopPropagation();}
     pMode=val;
-    localStorage.setItem('ff_dashboard_mode',pMode);
+    MediaView.set(pMode);
     document.getElementById('cddModeLabel').textContent=label;
     document.querySelectorAll('#cddModeMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
     el.classList.add('selected');
@@ -281,73 +280,20 @@ var openGroups={};
 
 /* 📄 Ek file ka card (pehle doSearch ke andar forEach me tha — bina badle yahan aa gaya).
    nested=true: group ke andar wala variant card (card-enter animation nahi). */
+function dashboardFileAction(button, action){
+    var card=button.closest('.file-card'), f=card&&FILE_DATA[card.dataset.fid];
+    if(!f)return;
+    if(action==='edit')editFile(f.file_id,f.raw_collection,encodeURIComponent(f.name||'').replace(/'/g,'%27'),encodeURIComponent(f.caption||'').replace(/'/g,'%27'));
+    else if(action==='delete')deleteFile(f.file_id,f.raw_collection);
+    else if(action==='merge')mergeFile(f.file_id);
+    else if(action==='group')quickGroup(f.file_id);
+    else if(action==='remove'&&f.gid)removeFromGroup(f.gid,f.file_id);
+}
 function cardHtml(f,nested){
-            FILE_DATA[f.file_id]=f;
-            var sc=(f.source||'primary').toLowerCase();
-            if(!['primary','cloud','archive'].includes(sc))sc='primary';
-
-            var encName = encodeURIComponent(f.name || '').replace(/'/g, "%27").replace(/"/g, "%22");
-            var encCap = encodeURIComponent(f.caption || '').replace(/'/g, "%27").replace(/"/g, "%22");
-
-            var adminBtns='';
-            if(isAdminView){
-                adminBtns='<div class="poster-admin">'+
-                    '<button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\',\\''+encName+'\\', \\''+encCap+'\\')">&#9999; Edit</button>'+'<button class="btn-edit" onclick="event.stopPropagation();mergeFile(\\''+f.file_id+'\\')">&#128256; Merge</button>'+
-                    '<button class="btn-del" onclick="event.stopPropagation();deleteFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\')">&#128465; Delete</button>'+
-                    '<button class="btn-edit" onclick="event.stopPropagation();quickGroup(\\''+f.file_id+'\\')">&#128279; Group</button>'+(f.gid?'<button class="btn-edit" onclick="event.stopPropagation();removeFromGroup(\\''+f.gid+'\\',\\''+f.file_id+'\\')">&#10006; Remove</button>':'')+
-                '</div>';
-            }
-
-            /* ⏱️ Duration chip — sirf tab jab API ne asli duration bheja ho.
-               Purani (bina-duration index huyi) files par f.duration khali aata hai,
-               tab chip banta hi nahi — "0:00" jaisa bekaar text nahi dikhta. */
-            var durChip  = f.duration ? '<span class="dur-chip">'+f.duration+'</span>' : '';
-            var durText  = f.duration ? '<span class="tc-dur">'+f.duration+'</span>' : '';
-            /* 🖼️ Resolution chip (1280×720 → "720p", 1920×1080 → "1080p") — duration chip
-               jaisa hi null-tolerant: data na ho to chip banta hi nahi. */
-            var resChip  = f.res ? '<span class="res-chip">'+esc(f.res)+'</span>' : '';
-            var resText  = f.res ? '<span class="tc-res">'+esc(f.res)+'</span>' : '';
-            var epLabel = f.group_type==='series' ? (f.episode_label||(f.episode_position?'File '+f.episode_position:'')) : '';
-            var epChip = epLabel ? '<span class="episode-chip">'+esc(epLabel)+'</span>' : '';
-            var posterTrigger=isAdminView?'<button type="button" class="file-poster-trigger" aria-label="Show file editing options" aria-expanded="false" onclick="toggleAdminBtns(this.closest(\\'.file-card\\'),event)"></button>':'';
-
-            var posterHtml='';
-            if(pMode!=='none'){
-                posterHtml='<div class="poster-box" id="poster-box-'+f.file_id+'">'+
-                    '<img src="'+f.tg_thumb+'" id="img-poster-'+f.file_id+'" class="fc-poster" onload="this.classList.add(\\'loaded\\')" onerror="handleThumbError(\\''+f.file_id+'\\')" loading="lazy" decoding="async">'+
-                    '<div class="poster-top">'+
-                        epChip+'<span class="size-chip">'+f.size+'</span>'+
-                        durChip+resChip+
-                        '<span class="source-pill '+sc+'"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+
-                    '</div>'+posterTrigger+
-                    adminBtns+
-                '</div>';
-            }
-
-            var textInfo='';
-            if(pMode==='none'){
-                textInfo='<div class="fc-text-info">'+
-                    epChip+'<span class="tc-size">'+f.size+'</span>'+
-                    durText+resText+
-                    '<span class="source-pill '+sc+'" style="margin-left:auto"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+
-                '</div>';
-                if(isAdminView){
-                    textInfo+='<div class="text-admin-row">'+
-                        '<button class="btn-edit" onclick="event.stopPropagation();editFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\',\\''+encName+'\\', \\''+encCap+'\\')">&#9999; Edit</button>'+'<button class="btn-edit" onclick="event.stopPropagation();mergeFile(\\''+f.file_id+'\\')">&#128256; Merge</button>'+
-                        '<button class="btn-del" onclick="event.stopPropagation();deleteFile(\\''+f.file_id+'\\',\\''+f.raw_collection+'\\')">&#128465; Delete</button>'+
-                    '<button class="btn-edit" onclick="event.stopPropagation();quickGroup(\\''+f.file_id+'\\')">&#128279; Group</button>'+(f.gid?'<button class="btn-edit" onclick="event.stopPropagation();removeFromGroup(\\''+f.gid+'\\',\\''+f.file_id+'\\')">&#10006; Remove</button>':'')+
-                    '</div>';
-                }
-            }
-
-            var textControl=isAdminView&&pMode==='none'?' role="button" tabindex="0" aria-label="Show file editing options" aria-expanded="false" onclick="textFileClick(this,event)" onkeydown="textFileKey(this,event)"':'';
-            return '<div class="file-card'+(nested?'':' card-enter')+(SEL[f.file_id]?' sel':'')+(textControl?' text-file-trigger':'')+'" data-fid="'+esc(f.file_id)+'"'+textControl+'>'+
-                posterHtml+
-                textInfo+
-                '<div class="fc-body">'+
-                    '<button type="button" class="fc-name" id="name-title-'+esc(f.file_id)+'" onclick="playDashboardFile(this.closest(\\'.file-card\\').getAttribute(\\'data-fid\\'),this.closest(\\'.file-card\\'))">'+esc(f.name)+'</button>'+
-                '</div>'+
-            '</div>';
+    FILE_DATA[f.file_id]=f;
+    var actions=isAdminView?`<button class="btn-edit" onclick="event.stopPropagation();dashboardFileAction(this,'edit')">&#9999; Edit</button><button class="btn-edit" onclick="event.stopPropagation();dashboardFileAction(this,'merge')">&#128256; Merge</button><button class="btn-del" onclick="event.stopPropagation();dashboardFileAction(this,'delete')">&#128465; Delete</button><button class="btn-edit" onclick="event.stopPropagation();dashboardFileAction(this,'group')">&#128279; Group</button>`:'';
+    if(isAdminView&&f.gid)actions+=`<button class="btn-edit" onclick="event.stopPropagation();dashboardFileAction(this,'remove')">&#10006; Remove</button>`;
+    return renderMediaFile(f,pMode,{nested:nested,selected:!!SEL[f.file_id],admin:isAdminView,actions:actions,play:"playDashboardFile(this.closest('.file-card').dataset.fid,this.closest('.file-card'))"});
 }
 
 var GROUP_DATA={},FILE_DATA={},SEL={},selMode=false;
@@ -986,7 +932,9 @@ async function doSearch(o,allowEmpty,fresh){
     },150);
 
     try{
-        var r=await fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+encodeURIComponent(o)+'&col='+curCol+'&mode='+pMode+'&group=1&gf='+curGF+(fresh?'&fresh=1':''),{cache:'no-store'});
+        var url='/api/search?q='+encodeURIComponent(q)+'&offset='+encodeURIComponent(o)+'&col='+curCol+'&mode='+pMode+'&group=1&gf='+curGF+(fresh?'&fresh=1':'');
+        var pref=nextPagePrefetch;nextPagePrefetch=null;
+        var r=(!fresh&&pref&&pref.url===url&&Date.now()-pref.started<5000) ? await pref.request.catch(function(){return fetch(url,{cache:'no-store'});}) : await fetch(url,{cache:'no-store'});
         if(myReq!==searchReqId){clearTimeout(loadTimer);if(qWrap)qWrap.classList.remove('loading');return;}
         clearTimeout(loadTimer);
         if(qWrap)qWrap.classList.remove('loading');
@@ -1035,7 +983,11 @@ async function doSearch(o,allowEmpty,fresh){
         document.getElementById('pgInfo').textContent='Page '+curPage;
 
         if(nextOff) {
-            fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+encodeURIComponent(nextOff)+'&col='+curCol+'&mode='+pMode+'&group=1&gf='+curGF);
+            var nextUrl='/api/search?q='+encodeURIComponent(q)+'&offset='+encodeURIComponent(nextOff)+'&col='+curCol+'&mode='+pMode+'&group=1&gf='+curGF;
+            var request=fetch(nextUrl,{cache:'no-store'}).then(function(response){if(!response.ok)throw new Error('Prefetch failed');return response;});
+            // Consume errors even if navigation never uses the prefetch.
+            request.catch(function(){});
+            nextPagePrefetch={url:nextUrl,request:request,started:Date.now()};
         }
     }catch(e){clearTimeout(loadTimer);if(myReq!==searchReqId)return;if(qWrap)qWrap.classList.remove('loading');showToast('Network error','error');}
 }
@@ -1067,6 +1019,13 @@ document.addEventListener('DOMContentLoaded',function(){
     var mItems=document.querySelectorAll('#cddModeMenu .cdd-item');
     mItems.forEach(function(i){i.classList.remove('selected');if(i.dataset.val===pMode)i.classList.add('selected');});
     document.getElementById('cddModeLabel').textContent=(pMode==='none')?'\\ud83d\\udcc4 Text Mode':'\\ud83d\\uddbc\\ufe0f Poster Mode';
+    MediaView.subscribe(function(value){
+        var mode=value==='text'?'none':'tg';if(mode===pMode)return;
+        pMode=mode;
+        document.querySelectorAll('#cddModeMenu .cdd-item').forEach(function(i){i.classList.toggle('selected',i.dataset.val===mode);});
+        document.getElementById('cddModeLabel').textContent=mode==='none'?'📄 Text Mode':'🖼️ Poster Mode';
+        doSearch(0,true);
+    });
     var savedQ=sessionStorage.getItem('ff_dash_q');
     if(savedQ && q){q.value=savedQ;doSearch(0);}else{doSearch(0,true);}
 });
@@ -1104,11 +1063,11 @@ SEARCH_ZONE = (
         '<div class="search-row2">'
             '<div class="cdd-wrap" id="cddColWrap">'
                 '<div class="cdd-btn" id="cddColBtn" onclick="toggleCdd(\'col\')">'
-                    '<span id="cddColLabel">\U0001f4c2 All Collections</span>'
+                    '<span id="cddColLabel">All</span>'
                 '</div>'
                 '<span class="cdd-arrow">&#9660;</span>'
                 '<div class="cdd-menu" id="cddColMenu" style="display:none">'
-                    '<div class="cdd-item selected" data-val="all" onclick="pickCol(\'all\',\'\U0001f4c2 All Collections\',this)">\U0001f4c2 All Collections<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
+                    '<div class="cdd-item selected" data-val="all" onclick="pickCol(\'all\',\'All\',this)">All<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
                     '<div class="cdd-item" data-val="primary" onclick="pickCol(\'primary\',\'\U0001f7e2 Primary\',this)">\U0001f7e2 Primary<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
                     '<div class="cdd-item" data-val="cloud" onclick="pickCol(\'cloud\',\'\U0001f535 Cloud\',this)">\U0001f535 Cloud<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
                     '<div class="cdd-item" data-val="archive" onclick="pickCol(\'archive\',\'\U0001f7e0 Archive\',this)">\U0001f7e0 Archive<span class="cdd-radio"><span class="cdd-radio-dot"></span></span></div>'
