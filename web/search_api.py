@@ -26,7 +26,7 @@ from utils import temp, get_size, is_premium, get_duration_str
 from stream_security import sign_params, STREAM_TTL
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
-from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, group_search_cursors, get_files_by_ids, find_phrase_files, search_groups, get_groups_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media
+from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, group_search_cursors, get_files_by_ids, find_phrase_files, search_groups, get_groups_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media, FILE_PROJECTION, FILE_PROJECTION_SCORED, GROUP_PROJECTION, _build_regex, _strict_text_query, build_query_filter
 from media_probe import probe_telegram_file, should_probe_media
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
@@ -1502,145 +1502,155 @@ async def _grouped_cursor_page(q, col, offset, lim, mode, gf):
     return cards, ""
 
 
-async def _flat_group_ids_for_docs(docs):
-    """Find saved groups represented by the ordered file-search window."""
-    order = {doc['_id']: i for i, doc in enumerate(docs) if doc.get('_id')}
-    if not order:
-        return []
-    try:
-        found = []
-        async for group in groups.find({'members': {'$in': list(order)}}, {'members': 1}):
-            members = group.get('members') or []
-            if len(set(members)) >= 2:
-                anchor = min((order[fid] for fid in members if fid in order), default=len(order))
-                found.append((anchor, str(group['_id'])))
-        return [gid for _, gid in sorted(found)]
-    except Exception as exc:
-        logger.warning(f"ungrouped membership lookup failed: {exc}")
-        raise _GroupCursorStorageError from exc
+async def _ordered_file_page(q, col, offset, limit):
+    """Read only file collections, in Primary → Cloud → Archive order."""
+    sources = ('primary', 'cloud', 'archive') if col == 'all' else (col,)
+    result, skip = [], offset
+    target = limit + 1  # Peek across source boundaries to avoid a blank final page.
+    regex = _build_regex(q) if q else None
+    for source in sources:
+        collection = FILE_COLLECTIONS.get(source)
+        if collection is None or len(result) >= target:
+            continue
+        query, text_search = build_query_filter(q, regex) if q else ({}, False)
+        if query is None:
+            continue
+        if text_search:
+            # Pick one search strategy for the whole collection, not based on
+            # whether this particular offset happens to be empty.
+            try:
+                has_text = bool(await collection.find(query, {'_id': 1}).limit(1).to_list(length=1))
+            except Exception as exc:
+                logger.warning(f'{source} text search unavailable, using filename search: {exc}')
+                has_text = False
+            if not has_text:
+                query, text_search = build_query_filter('', regex)
+                if query is None:
+                    continue
+        take = target - len(result)
+        projection = FILE_PROJECTION_SCORED if text_search else {**FILE_PROJECTION, 'added_on': 1}
+        order = [('score', {'$meta': 'textScore'}), ('_id', -1)] if text_search else ([('added_on', -1), ('_id', -1)] if not q else [('_id', -1)])
+        cursor = collection.find(query, projection).sort(order)
+        docs = await cursor.skip(skip).limit(take).to_list(length=take)
+        if docs:
+            for doc in docs:
+                doc['source_col'] = source
+            result.extend(docs)
+            skip = 0
+        elif skip:
+            skip = max(0, skip - await collection.count_documents(query))
+    return result[:limit], (offset + limit if len(result) > limit else '')
 
 
-async def _flat_group_search_page(q, col, offset, lim, mode):
-    """Show every file separately, including members represented by group cards.
+async def _group_records_query(q):
+    """Select the same search strategy for all GroupQuality pages and deduplication."""
+    query, projection, sorting = {}, GROUP_PROJECTION, [('updated_at', -1), ('_id', -1)]
+    if q:
+        regex = _build_regex(q)
+        strict = _strict_text_query(q)
+        text_query = {'$text': {'$search': strict}} if strict else None
+        use_text = False
+        if text_query:
+            try:
+                use_text = bool(await groups.find(text_query, {'_id': 1}).limit(1).to_list(length=1))
+            except Exception as exc:
+                logger.warning(f'group text search unavailable, using filename search: {exc}')
+        if use_text:
+            query = text_query
+            projection = {**GROUP_PROJECTION, 'score': {'$meta': 'textScore'}}
+            sorting = [('score', {'$meta': 'textScore'}), ('_id', -1)]
+        elif regex:
+            query = {'$or': [{'name': regex}, {'files.name': regex}]}
+        else:
+            return None, projection, sorting
+    return query, projection, sorting
 
-    Recent groups are discovered from the same window as grouped view. Searches
-    also include group-title matches. No grouping writes are performed. Separate
-    member/raw positions and a seen set prevent skipped or duplicate files.
-    """
-    context = _cursor_context(q, col, "single")
-    value = str(offset or "0")
+
+async def _group_records_page(q, offset, limit):
+    """Search and page GroupQuality records directly, never the file search."""
+    query, projection, sorting = await _group_records_query(q)
+    if query is None:
+        return [], False
+    cursor = groups.find(query, projection).sort(sorting).skip(offset).limit(limit + 1)
+    docs = await cursor.to_list(length=limit + 1)
+    return docs[:limit], len(docs) > limit
+
+
+async def _saved_member_ids(ids, q=''):
+    """Find members represented by saved group results, including legacy files."""
+    if not ids:
+        return set()
+    query, _, _ = await _group_records_query(q)
+    if query is None:
+        return set()
+    membership = {'members': {'$in': ids}}
+    match = {'$and': [query, membership]} if query else membership
+    candidates = [g async for g in groups.find(match, {'members': 1})
+                  if len(set(g.get('members') or [])) >= 2]
+    all_members = list(dict.fromkeys(m for g in candidates for m in (g.get('members') or [])))
+    live = {d['_id'] for d in await get_files_by_ids(all_members)} if all_members else set()
+    return {m for g in candidates if len(set(g.get('members') or []) & live) >= 2
+            for m in (g.get('members') or [])}
+
+
+async def _collection_results_page(q, col, offset, limit, mode, groups_only):
+    """GroupQuality first, then standalone files in collection order."""
+    context = _cursor_context(q, col, 'records_group' if groups_only else 'records_all')
+    value = str(offset or '0')
     if value.startswith((_GROUP_CURSOR_PREFIX, _GROUP_CURSOR_STORED_PREFIX)):
         state = await _decode_group_cursor(value, context)
+        if state.get('phase') not in ('groups', 'files') or not isinstance(state.get('gg'), int) or not 0 <= state['gg'] <= 100000000:
+            raise ValueError('Invalid collection cursor')
     else:
         try:
             legacy_offset = max(0, int(value))
         except (ValueError, TypeError) as exc:
-            raise ValueError("Invalid file pagination offset.") from exc
-        if q:
-            hits = await _group_hits(q) or []
-            ids = list(dict.fromkeys(str(g["_id"]) for g in hits if g.get("_id")))
-        else:
-            ids = []
-        # Seed from the same window that grouped view uses. This exposes the
-        # older siblings of a visible group immediately, even if only one member
-        # is recent or matches by caption and has no group_id mark.
-        if not legacy_offset:
-            anchors, _ = await _fetch_page(q, col, 0, max(lim * 2, 16), False)
-            ids = list(dict.fromkeys(ids + await _flat_group_ids_for_docs(anchors)))
-        # Legacy numeric offsets still address the ordinary raw stream.
-        state = {"v": 1, "ctx": context, "groups": ids,
-                 "gp": len(ids) if legacy_offset else 0, "mp": 0,
-                 "fp": legacy_offset, "seen": []}
-
-    seen, rows = set(state["seen"]), []
-    group_hops = 0
-
-    while state["gp"] < len(state["groups"]) and len(rows) < lim and group_hops < 64:
-        group_hops += 1
-        found = await get_groups_by_ids([state["groups"][state["gp"]]])
-        members = list(dict.fromkeys(found[0].get("members") or [])) if found else []
-        # Bound each lookup even for a large series. Advance by the IDs inspected,
-        # not the number of available files, so missing records cannot stall paging.
-        chunk = members[state["mp"]:state["mp"] + max(lim - len(rows), 1)]
-        if not chunk:
-            seen.add('g:' + state['groups'][state['gp']])
-            state["gp"] += 1
-            state["mp"] = 0
-            continue
-        docs = await get_files_by_ids(chunk)
-        by_id = {doc["_id"]: doc for doc in docs}
-        for fid in chunk:
-            state["mp"] += 1
-            doc = by_id.get(fid)
-            if not doc or (col != "all" and doc.get("source_col") != col):
-                continue
-            row = _build_results_list([doc], mode)[0]
-            token = _card_cursor_token(row)
-            if token not in seen:
-                seen.add(token)
-                rows.append(row)
-        if state["mp"] >= len(members):
-            seen.add('g:' + state['groups'][state['gp']])
-            state["gp"] += 1
-            state["mp"] = 0
-
-    # Completed groups no longer need to stay in the pending queue. Remember
-    # them in seen so their raw members cannot enqueue them repeatedly.
-    if state['gp']:
-        del state['groups'][:state['gp']]
-        state['gp'] = 0
-    if state["gp"] < len(state["groups"]):
-        state["seen"] = sorted(seen)
-        return await _annotate_raw_groups(rows), await _encode_group_cursor(state)
-
-    # Ordinary file results can overlap group members, including on later pages.
-    # Limit hops to keep highly duplicated searches responsive; an empty page may
-    # still have a continuation, just as in grouped search.
-    more = False
-    for _ in range(12):
-        if len(rows) >= lim:
-            more = True
-            break
-        docs, nxt = await _fetch_page(q, col, state["fp"], max(lim, 1), False)
-        if not docs:
-            more = False
-            break
-        # Legacy members can lack group_id marks, and a caption-only match may
-        # not appear in the group-name index. Discover their saved groups from
-        # authoritative membership, then expand those groups on the next page.
-        known = set(state["groups"])
-        discovered = False
-        try:
-            ids = [doc["_id"] for doc in docs if doc.get("_id")]
-            async for group in groups.find({"members": {"$in": ids}}, {"members": 1}):
-                gid = str(group["_id"])
-                if gid not in known and ('g:' + gid) not in seen and len(set(group.get("members") or [])) >= 2:
-                    state["groups"].append(gid)
-                    known.add(gid)
-                    discovered = True
-        except Exception as exc:
-            logger.warning(f"ungrouped membership lookup failed: {exc}")
-            raise _GroupCursorStorageError from exc
-        for index, doc in enumerate(docs):
-            row = _build_results_list([doc], mode)[0]
-            token = _card_cursor_token(row)
-            if token not in seen:
-                if len(rows) >= lim:
-                    state["fp"] += index
-                    more = True
-                    break
-                seen.add(token)
-                rows.append(row)
-        else:
-            state["fp"] += len(docs)
-            more = bool(nxt) or discovered
-            if discovered:
+            raise ValueError('Invalid collection offset') from exc
+        state = {'v': 1, 'ctx': context, 'groups': [], 'gp': 0, 'fp': 0,
+                 'seen': [], 'gg': legacy_offset, 'phase': 'groups'}
+    cards = []
+    if state['phase'] == 'groups':
+        for _ in range(12):
+            wanted = max(limit - len(cards), 1)
+            records, more = await _group_records_page(q, state['gg'], wanted)
+            if records:
+                # Render each saved record independently, including when old
+                # records overlap in membership. No auto-grouping or writes.
+                for record in records:
+                    rendered = await _group_cards([record], mode)
+                    cards.extend(card for card in rendered if card.get('group') and
+                                 (col == 'all' or any(v.get('raw_collection') == col for v in card.get('variants', []))))
+                state['gg'] += len(records)
+            if not more:
+                state['phase'] = 'files'
                 break
-            if more:
+            if len(cards) >= limit:
+                break
+        if state['phase'] == 'groups':
+            return cards, await _encode_group_cursor(state)
+        if groups_only:
+            return cards, ''
+    if len(cards) >= limit:
+        return cards, await _encode_group_cursor(state)
+    for _ in range(12):
+        docs, nxt = await _ordered_file_page(q, col, state['fp'], max(limit, 1))
+        if not docs:
+            return cards, ''
+        grouped_ids = await _saved_member_ids([doc['_id'] for doc in docs], q)
+        for index, doc in enumerate(docs):
+            if doc['_id'] in grouped_ids:
                 continue
-        break
-    state["seen"] = sorted(seen)
-    return await _annotate_raw_groups(rows), (await _encode_group_cursor(state) if more else "")
+            if len(cards) >= limit:
+                state['fp'] += index
+                return cards, await _encode_group_cursor(state)
+            row = _build_results_list([doc], mode)[0]
+            # A stale mark or legacy singleton is not a visible group.
+            row.update(gid='', group_num='')
+            cards.append(row)
+        state['fp'] += len(docs)
+        if not nxt:
+            return cards, ''
+    return cards, await _encode_group_cursor(state)
 
 
 @search_routes.get("/api/search")
@@ -1660,21 +1670,35 @@ async def api_search(req):
     gf = req.query.get("gf", "all").lower()
     gf = {"ungroup": "single", "single": "single", "group": "group",
           "quality": "quality", "series": "series"}.get(gf, "all") if want_group else "all"
-    # Ungroup is a presentation choice: every file remains visible individually,
-    # including files represented by recent or search-matched group cards.
-    flat_view = want_group and gf == "single"
     gflag = ("g1" + gf) if want_group else "g0"
+
+    if want_group and gf == 'single':
+        try:
+            file_offset = max(0, int(off))
+            docs, nxt = await _ordered_file_page(q, col, file_offset, MAX_WEB_RESULTS)
+            return web.json_response({'results': _build_results_list(docs, mode),
+                                      'total': file_offset + len(docs) + (1 if nxt else 0),
+                                      'next_offset': nxt, 'is_admin': role == 'admin',
+                                      'is_recent': not bool(q)}, dumps=fast_json)
+        except ValueError:
+            return web.json_response({'error': 'Invalid file offset. Start the search again.'}, status=400, dumps=fast_json)
+        except Exception as exc:
+            logger.warning(f'ungrouped file search failed: {exc}')
+            return web.json_response({'error': 'File search is temporarily unavailable.'}, status=503, dumps=fast_json)
 
     if want_group:
         try:
-            cards, nxt = (await _flat_group_search_page(q, col, off, MAX_WEB_RESULTS, mode)
-                          if flat_view else await _grouped_cursor_page(q, col, off, MAX_WEB_RESULTS, mode, gf))
+            cards, nxt = (await _collection_results_page(q, col, off, MAX_WEB_RESULTS, mode, gf == 'group')
+                          if gf in ('all', 'group') else await _grouped_cursor_page(q, col, off, MAX_WEB_RESULTS, mode, gf))
         except ValueError:
             return web.json_response({"error": "Invalid or expired pagination cursor. Start the search again."}, status=400, dumps=fast_json)
         except _GroupCursorLimitError:
             return web.json_response({"error": "Too many results to continue. Please narrow your search."}, status=400, dumps=fast_json)
         except _GroupCursorStorageError:
             return web.json_response({"error": "Pagination is temporarily unavailable. Please try again."}, status=503, dumps=fast_json)
+        except Exception as exc:
+            logger.warning(f"group search failed: {exc}")
+            return web.json_response({"error": "Search is temporarily unavailable."}, status=503, dumps=fast_json)
         return web.json_response({
             "results": cards, "total": len(cards) + (1 if nxt else 0), "next_offset": nxt,
             "is_admin": role == "admin", "is_recent": not bool(q),

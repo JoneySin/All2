@@ -18,7 +18,8 @@ const assert=require('node:assert/strict');
  await page.locator('.file-card[data-fid="oldgroup00"]').waitFor();
  assert.equal(await page.locator('#results > .grp-card').count(),0);
  const first=await page.locator('#results > .file-card').evaluateAll(es=>es.map(e=>e.dataset.fid));
- assert.ok(first.filter(id=>members.includes(id)).length>=10,JSON.stringify(first));
+ assert.deepEqual(first.slice(0,12),[...singles].reverse()); // Primary's newest standalone files stay first.
+ assert.ok(first.includes('oldgroup00'));
  // Membership is retained and editable even though its badge is hidden.
  const f=page.locator('.file-card[data-fid="oldgroup00"]');await f.locator('.fc-text-info').click();await f.locator('.text-admin-row .btn-edit').first().click();
  await page.locator('#emCurrentGroup').filter({hasText:'#19'}).waitFor();await page.locator('#editCombinedModal .file-editor-cancel').click();
@@ -33,5 +34,5 @@ const assert=require('node:assert/strict');
  assert.equal(all.length,new Set(all).size);
  await page.locator('#pBtn').click();await page.locator('#pgInfo').filter({hasText:'Page '+(pageNum-1)}).waitFor();
  const preview=await page.request.get(base+'/api/group/preview?id=19');assert.equal((await preview.json()).group.count,27);
- assert.deepEqual(errors,[]);await browser.close();console.log('Recent UnGroup: grouped siblings on first page, every file across pages, back navigation and membership OK');
+ assert.deepEqual(errors,[]);await browser.close();console.log('Recent UnGroup: raw source order, every file across pages, back navigation and membership OK');
 })().catch(e=>{console.error(e);process.exit(1)});

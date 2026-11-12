@@ -16,8 +16,10 @@ For grouped `/api/search` requests, treat `next_offset` as an opaque continuatio
 value and send it back unchanged, including when a selective filter returns an
 empty page. Large continuations are stored in `GroupSearchCursors` and expire after
 two hours; the application's index setup creates a TTL index to clean them up.
-Restart the search if a cursor expires. Both recent and text-search ungrouped
-views can return opaque group-member cursors; always pass them back unchanged.
+Restart the search if a cursor expires. All searches saved GroupQuality records
+first, followed by standalone files in Primary, Cloud, Archive order. Group reads
+only saved group records. UnGroup searches individual files in Primary, Cloud,
+Archive order, without group expansion; its offsets are numeric.
 
 ```sh
 python -m venv .venv
@@ -37,9 +39,9 @@ outside-click dismissal, nested cards, selection mode and non-admin behavior.
 The file-editor test checks quality overrides, current membership, destination
 preview and confirmation, changed destinations, and moves from dashboard and
 actor cards. The ungrouped-view test covers the All, Group and UnGroup filter
-choices, grouped and standalone files, group-name searches, playback, group IDs
+choices, grouped and standalone files, group-name-only exclusion, playback, group IDs
 appearing only on group cards, and the admin scan control in Group Mode. The
-recent-view test covers older group members, standalone files and multi-page
+recent-view test covers raw collection order, older group members, standalone files and multi-page
 forward/back navigation without changing group membership.
 It uses a **test-only, always-admin, in-memory** server; never deploy that server.
 Install Node.js and Playwright separately, for example:

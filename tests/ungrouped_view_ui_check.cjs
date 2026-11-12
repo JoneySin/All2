@@ -40,7 +40,7 @@ const assert=require('node:assert/strict');
  let r=await page.request.get(base+'/api/file/editor?file_id=a1&collection=primary');assert.equal((await r.json()).group_id,'11');
  r=await page.request.post(base+'/api/group/update',{data:{group_id:'11',name:'Special Collection'}});assert.equal(r.status(),200);
  await page.evaluate(async()=>{document.querySelector('#q').value='Special Collection';await doSearch(0,true,true);});
- for(const fid of ['a1','a2','a3'])assert.equal(await page.locator(`.file-card[data-fid="${fid}"]`).count(),1,fid);
+ for(const fid of ['a1','a2','a3'])assert.equal(await page.locator(`.file-card[data-fid="${fid}"]`).count(),0,fid);
  assert.equal(await page.locator('.grp-card').count(),0);
  await page.locator('#cddGfBtn').click();
  await Promise.all([page.waitForResponse(r=>r.url().includes('/api/search?')&&r.url().includes('gf=all')),page.locator('#cddGfMenu [data-val=all]').click()]);
@@ -67,5 +67,5 @@ const assert=require('node:assert/strict');
    assert.equal(await page.locator('#fixture-actor .group-id-chip, #fixture-actor .actor-group-id').count(),0);
    assert.equal(await page.locator('#fixture-actor .file-card').textContent().then(t=>t.includes('GROUP #')),false);
  }
- assert.deepEqual(errors,[]);await browser.close();console.log('Ungrouped view: all files, group-name searches, playback, group-only IDs and actor cards OK');
+ assert.deepEqual(errors,[]);await browser.close();console.log('Ungrouped view: all files, group-name-only exclusion, playback, group-only IDs and actor cards OK');
 })().catch(e=>{console.error(e);process.exit(1)});

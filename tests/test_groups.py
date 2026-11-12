@@ -803,107 +803,40 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({r["file_id"]: r["gid"] for r in data["results"]},
                          {"a": "11", "b": "11", "c": "12", "d": "12"})
 
-    async def test_ungrouped_view_contains_all_members_of_matching_groups(self):
-        members = [f'm{i:02d}' for i in range(26)]
-        for i, fid in enumerate(members):
-            name = 'Festival matching member' if i == 0 else f'Unrelated member {i}'
-            extra = {'group_id': '11'} if i % 2 else {}  # include legacy unmarked members
-            await self.insert_files(doc(fid, name, ('primary', 'cloud', 'archive')[i % 3], **extra))
-        await self.insert_files(*(doc(f's{i}', f'Festival single {i}', 'cloud') for i in range(4)))
-        group = {'_id': '11', 'num': 11, 'name': 'Festival collection', 'members': members,
-                 'files': [{'id': f, 'name': f} for f in members], 'group_type': 'series'}
-        await self.groups.insert_one(group)
+    async def test_ungrouped_search_only_matches_files_not_group_names(self):
+        await self.insert_files(doc('a', 'Festival matching', group_id='11'),
+                                doc('b', 'Unrelated sibling', 'cloud', group_id='11'),
+                                doc('c', 'Festival single', 'archive'))
+        await self.groups.insert_one({'_id': '11', 'name': 'Special Collection', 'members': ['a', 'b'],
+                                      'files': [{'id':'a', 'name':'Festival matching'}, {'id':'b', 'name':'Unrelated sibling'}]})
+        def regex_filter(raw, regex, lang=None):
+            return {'file_name': regex}, False
+        with patch.object(api, 'build_query_filter', regex_filter), \
+             patch.object(api.groups, 'find', side_effect=AssertionError('UnGroup must not read groups')):
+            response = await self.client.get('/api/search', params={'q':'Festival', 'group':'1', 'gf':'single'})
+            data = await response.json()
+            self.assertEqual(response.status, 200, data)
+            self.assertEqual([r['file_id'] for r in data['results']], ['a', 'c'])
+            response = await self.client.get('/api/search', params={'q':'Special Collection', 'group':'1', 'gf':'single'})
+            self.assertEqual((await response.json())['results'], [])
+        self.assertEqual((await self.groups.find_one({'_id':'11'}))['members'], ['a', 'b'])
 
-        def regex_filter(raw, _regex, lang=None):
-            return {'file_name': re.compile(re.escape(raw), re.I)}, False
-
-        async def collect(params):
-            result, offset = [], 0
-            for _ in range(50):
-                response = await self.client.get('/api/search', params={**params, 'offset': offset})
+    async def test_recent_ungroup_pages_in_collection_order(self):
+        docs = [doc(f'{source}{i}', 'File', source, added_on=i, group_id='11')
+                for source in ('primary','cloud','archive') for i in range(4)]
+        await self.insert_files(*docs)
+        expected = [(source, f'{source}{i}') for source in ('primary','cloud','archive') for i in reversed(range(4))]
+        with patch.object(api, 'MAX_WEB_RESULTS', 5), patch.object(api.groups, 'find', side_effect=AssertionError('group lookup')):
+            found, offset = [], 0
+            for _ in range(5):
+                response = await self.client.get('/api/search', params={'group':'1', 'gf':'single', 'offset':offset})
                 data = await response.json()
                 self.assertEqual(response.status, 200, data)
-                self.assertTrue(all(not row.get('group') for row in data['results']))
-                result.extend(row['file_id'] for row in data['results'])
-                if not data['next_offset']:
-                    return result
+                found.extend((r['raw_collection'], r['file_id']) for r in data['results'])
                 offset = data['next_offset']
-            self.fail('ungrouped pagination did not terminate')
-
-        with patch.object(api, '_group_hits', AsyncMock(return_value=[group])), \
-             patch.object(db, 'COLLECTIONS', self.cols), \
-             patch.object(db, 'build_query_filter', regex_filter), patch.object(api, 'MAX_WEB_RESULTS', 5):
-            params = {'q': 'Festival', 'group': '1', 'gf': 'single', 'mode': 'none'}
-            actual = await collect(params)
-            self.assertEqual(set(actual), set(members) | {f's{i}' for i in range(4)})
-            self.assertEqual(len(actual), 30)  # member also matching the raw query appears only once
-            cloud = await collect({**params, 'col': 'cloud'})
-            self.assertEqual(set(cloud), {members[i] for i in range(26) if i % 3 == 1} | {f's{i}' for i in range(4)})
-            # Recent view shows both grouped and standalone records without changing membership.
-            recent = await collect({'group': '1', 'gf': 'ungroup', 'mode': 'none'})
-            self.assertEqual(set(recent), set(actual))
-            # A legacy unmarked member can match a caption/name even when the
-            # group lookup did not find the group. Its siblings must still show.
-            with patch.object(api, '_group_hits', AsyncMock(return_value=[])):
-                first = await self.client.get('/api/search', params=params)
-                first_data = await first.json()
-                self.assertEqual({row['file_id'] for row in first_data['results']}, set(members[:5]))
-                discovered = await collect(params)
-                self.assertEqual(set(discovered), set(actual))
-                self.assertEqual(len(discovered), len(actual))
-        self.assertEqual((await self.groups.find_one({'_id': '11'}))['members'], members)
-        self.assertNotIn('group_id', await self.cols['primary'].find_one({'_id': 'm00'}))
-
-    async def test_recent_ungroup_flattens_visible_groups_without_losing_any_files(self):
-        # Only one group member is recent; its siblings are much older. A plain
-        # recent-file page showed mostly standalone files while All showed the
-        # entire group card, creating the impression its members were missing.
-        members = [f'g{i:02d}' for i in range(18)]
-        for i, fid in enumerate(members):
-            await self.insert_files(doc(fid, f'Group member {i}', ('primary', 'cloud', 'archive')[i % 3],
-                                        added_on=1000 if i == 0 else 1, group_id='11' if i % 2 else None))
-        singles = [f's{i:02d}' for i in range(8)]
-        await self.insert_files(*(doc(fid, f'Standalone {i}', added_on=1100+i) for i, fid in enumerate(singles)))
-        group = {'_id': '11', 'num': 11, 'name': 'Saved Group', 'members': members, 'group_type': 'series',
-                 'files': [{'id': fid, 'name': f'Group member {i}'} for i, fid in enumerate(members)]}
-        await self.groups.insert_one(group)
-        with patch.object(api, 'MAX_WEB_RESULTS', 5), patch.object(db, 'COLLECTIONS', self.cols):
-            first = await self.client.get('/api/search', params={'group': '1', 'gf': 'single', 'mode': 'none'})
-            data = await first.json()
-            self.assertEqual(first.status, 200, data)
-            self.assertEqual({row['file_id'] for row in data['results']}, set(members[:5]))
-            collected = [row['file_id'] for row in data['results']]
-            token = data['next_offset']
-            self.assertTrue(str(token).startswith(('g1_', 'g2_')))
-            for _ in range(40):
-                if not token:
-                    break
-                response = await self.client.get('/api/search', params={'group': '1', 'gf': 'single',
-                                                                         'mode': 'none', 'offset': token})
-                data = await response.json()
-                self.assertEqual(response.status, 200, data)
-                self.assertTrue(all(not row.get('group') for row in data['results']))
-                collected.extend(row['file_id'] for row in data['results'])
-                token = data['next_offset']
-            else:
-                self.fail('recent ungrouped view did not finish')
-            self.assertEqual(set(collected), set(members + singles))
-            self.assertEqual(len(collected), len(members) + len(singles))
-            # Collection filters must never introduce other collections' files.
-            offset, cloud = 0, []
-            for _ in range(40):
-                response = await self.client.get('/api/search', params={'group': '1', 'gf': 'single',
-                                                                         'col': 'cloud', 'offset': offset})
-                data = await response.json()
-                self.assertEqual(response.status, 200, data)
-                cloud.extend(row['file_id'] for row in data['results'])
-                offset = data['next_offset']
-                if not offset:
-                    break
-            self.assertEqual(set(cloud), {members[i] for i in range(18) if i % 3 == 1})
-            self.assertEqual(len(cloud), len(set(cloud)))
-        self.assertEqual((await self.groups.find_one({'_id': '11'}))['members'], members)
-        self.assertEqual(await self.groups.count_documents({}), 1)
+                if not offset: break
+            else: self.fail('pagination did not terminate')
+        self.assertEqual(found, expected)
 
     async def test_search_partitions_durations_and_series_and_is_idempotent(self):
         docs = [
@@ -1212,37 +1145,17 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(spec == [("score", {"$meta": "textScore"}), ("_id", -1)]
                                 for spec in col.sort_specs))
 
-    async def test_grouped_cursor_deduplicates_copies_more_than_256_cards_apart(self):
-        stream = ([doc("duplicate", "Library Duplicate", "primary")]
-                  + [doc(f"single{i:03d}", f"Library Unique {i}") for i in range(320)]
-                  + [doc("duplicate", "Library Duplicate", "cloud")])
-
-        async def raw(_q, limit, offset=0, **_kwargs):
-            page = stream[offset:offset + limit]
-            return page, (offset + len(page) if offset + len(page) < len(stream) else ""), 0, "All"
-
-        async def singles(rows, *_args, **_kwargs):
-            return rows
-
-        found, offset, stored = [], "0", False
-        with patch.object(api, "_group_hits", AsyncMock(return_value=[])), patch.object(api, "get_search_results", raw), \
-             patch.object(api, "_finalize", singles), patch.object(api, "MAX_WEB_RESULTS", 21):
-            for _ in range(25):
-                response = await self.client.get("/api/search", params={"q": "Library", "group": "1", "offset": offset})
-                data = await response.json()
-                self.assertEqual(response.status, 200, data)
-                found.extend(row["file_id"] for row in data["results"])
-                offset = data["next_offset"]
-                stored |= str(offset).startswith("g2_")
-                self.assertLessEqual(len(str(offset)), api._GROUP_CURSOR_INLINE_LIMIT)
-                if not offset:
-                    break
-            else:
-                self.fail("grouped cursor did not terminate")
-        self.assertTrue(stored)  # Large seen sets spill to short shared cursors.
-        self.assertEqual(len(found), 321)
-        self.assertEqual(len(set(found)), 321)
-        self.assertEqual(found.count("duplicate"), 1)
+    async def test_group_only_reads_saved_records_not_file_search(self):
+        await self.insert_files(doc('a', 'Other 720p'), doc('b', 'Other 1080p', 'cloud'),
+                                doc('c', 'Special 720p'), doc('d', 'Special 1080p'))
+        await self.groups.insert_one({'_id':'7', 'name':'Special Collection', 'members':['a','b'], 'group_type':'quality'})
+        with patch.object(api, '_ordered_file_page', AsyncMock(side_effect=AssertionError('file search'))), \
+             patch.object(api, '_finalize', AsyncMock(side_effect=AssertionError('group write'))):
+            response = await self.client.get('/api/search', params={'q':'Special Collection','group':'1','gf':'group'})
+            data = await response.json()
+            self.assertEqual(response.status, 200, data)
+            self.assertEqual([r['gid'] for r in data['results']], ['7'])
+        self.assertEqual(await self.groups.count_documents({}), 1)
 
     async def test_stored_cursor_is_reusable_query_scoped_and_expires(self):
         stream = [doc(f"file{i}", f"Library {i}") for i in range(3)]
@@ -1251,12 +1164,10 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             page = stream[offset:offset + limit]
             return page, (offset + len(page) if offset + len(page) < len(stream) else ""), 0, "All"
 
-        async def singles(rows, *_args, **_kwargs):
-            return rows
+        await self.insert_files(*stream)
 
         params = {"q": "Library", "group": "1", "mode": "none"}
-        with patch.object(api, "_group_hits", AsyncMock(return_value=[])), patch.object(api, "get_search_results", raw), \
-             patch.object(api, "_finalize", singles), patch.object(api, "MAX_WEB_RESULTS", 1), \
+        with patch.object(api, "build_query_filter", lambda raw, regex, lang=None: ({"file_name": regex}, False)), patch.object(api, "MAX_WEB_RESULTS", 1), \
              patch.object(api, "_GROUP_CURSOR_INLINE_LIMIT", 1):
             first = await self.client.get("/api/search", params=params)
             token = (await first.json())["next_offset"]
@@ -1300,33 +1211,22 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         indexes = await self.db.GroupSearchCursors.index_information()
         self.assertEqual(indexes["group_search_cursor_ttl"]["expireAfterSeconds"], 0)
 
-    async def test_large_group_hit_snapshot_and_storage_failure(self):
-        hits = [{"_id": str(i)} for i in range(1, 1201)]
-
-        async def lookup(ids):
-            return [{"_id": gid} for gid in ids]
-
-        async def cards(groups, _mode):
-            return [{"group": True, "group_type": "quality", "gid": g["_id"]} for g in groups]
-
-        params = {"q": "Library", "group": "1"}
-        with patch.object(api, "_group_hits", AsyncMock(return_value=hits)), \
-             patch.object(api, "get_groups_by_ids", lookup), patch.object(api, "_group_cards", cards), \
-             patch.object(api, "MAX_WEB_RESULTS", 2), patch.object(api, "_GROUP_CURSOR_INLINE_LIMIT", 1):
-            first = await self.client.get("/api/search", params=params)
-            first_data = await first.json()
-            self.assertEqual(first.status, 200, first_data)
-            token = first_data["next_offset"]
-            self.assertTrue(token.startswith("g2_"))
-            second = await self.client.get("/api/search", params={**params, "offset": token})
-            second_data = await second.json()
-            self.assertEqual(second.status, 200, second_data)
-            self.assertEqual([c["gid"] for c in first_data["results"]], ["1", "2"])
-            self.assertEqual([c["gid"] for c in second_data["results"]], ["3", "4"])
-            with patch.object(api.group_search_cursors, "insert_one", AsyncMock(side_effect=RuntimeError("offline"))):
-                failed = await self.client.get("/api/search", params=params)
+    async def test_group_pages_and_cursor_storage_failure(self):
+        for i in range(5):
+            await self.insert_files(doc(f'a{i}', f'Library {i} A'), doc(f'b{i}', f'Library {i} B', 'cloud'))
+            await self.groups.insert_one({'_id':str(i), 'name':f'Library {i}', 'members':[f'a{i}',f'b{i}'], 'updated_at':i})
+        params = {'q':'Library', 'group':'1', 'gf':'group'}
+        with patch.object(api, 'MAX_WEB_RESULTS', 2), patch.object(api, '_GROUP_CURSOR_INLINE_LIMIT', 1):
+            first = await self.client.get('/api/search', params=params)
+            data = await first.json()
+            self.assertEqual(first.status, 200, data)
+            self.assertEqual([r['gid'] for r in data['results']], ['4','3'])
+            self.assertTrue(data['next_offset'].startswith('g2_'))
+            second = await self.client.get('/api/search', params={**params, 'offset':data['next_offset']})
+            self.assertEqual([r['gid'] for r in (await second.json())['results']], ['2','1'])
+            with patch.object(api.group_search_cursors, 'insert_one', AsyncMock(side_effect=RuntimeError('offline'))):
+                failed = await self.client.get('/api/search', params=params)
             self.assertEqual(failed.status, 503)
-            self.assertIn("temporarily unavailable", (await failed.json())["error"])
 
     async def test_selective_filter_may_continue_after_an_empty_page(self):
         stream = [doc(f"solo{i:03d}", f"Library {i}") for i in range(192)] + [doc("target", "Library Series")]
@@ -1351,67 +1251,57 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([card["gid"] for card in data["results"]], ["42"])
             self.assertFalse(data["next_offset"])
 
-    async def test_grouped_search_cursor_survives_persisting_groups_and_page_boundaries(self):
-        # The same Telegram ID appears in two collections; variants are separated
-        # by many unrelated files and lie in all three collections.
-        docs = [doc("zzold1", "Library Legacy 720p", group_id="7"),
-                doc("zzold2", "Library Legacy 1080p", "cloud", group_id="7"),
-                doc("zzquality", "Library Ocean 720p", duration=500),
-                doc("bbquality", "Library Ocean 1080p", "cloud", duration=500),
-                doc("aaquality", "Library Ocean 480p", "archive", duration=500)]
-        for i in range(26):
-            source = ("primary", "cloud", "archive")[i % 3]
-            docs.append(doc(f"solo{i:02d}", f"Library Solo {i:02d}", source))
-        docs.append(doc("solo05", "Library Solo 05", "primary"))  # duplicate copy
-        await self.insert_files(*docs)
-        await self.groups.insert_one({"_id": "7", "num": 7, "name": "Library Legacy", "group_type": "quality",
-                                      "members": ["zzold1", "zzold2"], "auto_keys": ["library legacy"],
-                                      "excluded": []})
+    async def test_all_includes_matching_file_when_its_saved_group_does_not_match(self):
+        await self.insert_files(doc('a', 'Festival file', group_id='7'),
+                                doc('b', 'Unrelated sibling', 'cloud', group_id='7'),
+                                doc('c', 'Festival archive', 'archive'))
+        await self.groups.insert_one({'_id':'7', 'name':'Other Collection', 'members':['a','b']})
+        with patch.object(api, 'build_query_filter', lambda raw, regex, lang=None: ({'file_name':regex}, False)):
+            response = await self.client.get('/api/search', params={'q':'Festival', 'group':'1', 'gf':'all'})
+            data = await response.json()
+            self.assertEqual(response.status, 200, data)
+            self.assertEqual([r['file_id'] for r in data['results']], ['a', 'c'])
+            response = await self.client.get('/api/search', params={'q':'Festival', 'group':'1', 'gf':'single', 'col':'archive'})
+            self.assertEqual([r['file_id'] for r in (await response.json())['results']], ['c'])
+        self.assertEqual(await self.groups.count_documents({}), 1)
 
-        def regex_filter(raw, _regex, lang=None):
-            return {"file_name": re.compile(re.escape(raw), re.I)}, False
-
-        async def group_hits(_q):
-            return [group async for group in self.groups.find({})]
-
-        async def siblings(key):
-            rows = []
-            for source, col in self.cols.items():
-                async for item in col.find({}):
-                    name = item.get("file_name", "")
-                    if quality_title_key(name) == key or (episode_identity(name) and series_key(name) == key):
-                        rows.append(dict(item, source_col=source))
-            return rows
-
-        collected, offset, first_cursor = [], "0", None
-        with patch.object(db, "build_query_filter", regex_filter), patch.object(api, "_group_hits", group_hits), \
-             patch.object(api, "_siblings", siblings), patch.object(api, "MAX_WEB_RESULTS", 2):
-            for _ in range(30):
-                response = await self.client.get("/api/search", params={"q": "Library", "group": "1",
-                                                                          "mode": "none", "offset": offset})
-                data = await response.json()
-                self.assertEqual(response.status, 200, data)
-                self.assertLessEqual(len(data["results"]), 2)
-                collected.extend(data["results"])
-                offset = data["next_offset"]
-                if first_cursor is None:
-                    first_cursor = offset
-                if not offset:
-                    break
-            else:
-                self.fail("group cursor did not terminate")
-            wrong_query = await self.client.get("/api/search", params={"q": "Different", "group": "1",
-                                                                         "mode": "none", "offset": first_cursor})
-            self.assertEqual(wrong_query.status, 400)
-        groups = [card for card in collected if card.get("group")]
-        self.assertEqual(len(groups), 2)
-        self.assertEqual(groups[0]["gid"], "7")  # saved groups remain first
-        self.assertEqual({frozenset(v["file_id"] for v in card["variants"]) for card in groups},
-                         {frozenset({"zzold1", "zzold2"}), frozenset({"zzquality", "bbquality", "aaquality"})})
-        singles = [card["file_id"] for card in collected if not card.get("group")]
-        self.assertEqual(len(singles), 26)
-        self.assertEqual(set(singles), {f"solo{i:02d}" for i in range(26)})
+    async def test_group_only_recent_excludes_singletons_and_unsaved_files(self):
+        await self.insert_files(doc('a', 'Saved A'), doc('b', 'Saved B', 'cloud'),
+                                doc('c', 'Singleton', group_id='2'), doc('d', 'Unsaved'))
+        await self.groups.insert_many([{'_id':'1', 'name':'Saved', 'members':['a','b']},
+                                       {'_id':'2', 'name':'Legacy', 'members':['c']}])
+        with patch.object(api, '_ordered_file_page', AsyncMock(side_effect=AssertionError('file search'))):
+            response = await self.client.get('/api/search', params={'group':'1', 'gf':'group'})
+            data = await response.json()
+        self.assertEqual(response.status, 200, data)
+        self.assertEqual([r['gid'] for r in data['results']], ['1'])
         self.assertEqual(await self.groups.count_documents({}), 2)
+
+    async def test_all_pages_saved_groups_then_standalone_in_source_order(self):
+        docs = [doc('a', 'Library A', group_id='7'), doc('b', 'Library B', 'cloud', group_id='7')]
+        docs += [doc(f'{src}{i}', 'Library single', src) for src in ('primary','cloud','archive') for i in range(3)]
+        await self.insert_files(*docs)
+        await self.groups.insert_one({'_id':'7', 'num':7, 'name':'Library Group', 'members':['a','b'], 'group_type':'quality'})
+        before = await self.groups.find_one({'_id':'7'})
+        with patch.object(api, 'build_query_filter', lambda raw, regex, lang=None: ({'file_name':regex}, False)), \
+             patch.object(api, '_finalize', AsyncMock(side_effect=AssertionError('must not create groups'))), \
+             patch.object(api, 'MAX_WEB_RESULTS', 2):
+            found, offset, first = [], '0', None
+            for _ in range(15):
+                r = await self.client.get('/api/search', params={'q':'Library','group':'1','offset':offset})
+                data = await r.json(); self.assertEqual(r.status, 200, data)
+                found.extend(data['results']); offset = data['next_offset']
+                if first is None: first = offset
+                if not offset: break
+            else: self.fail('pagination did not terminate')
+            r = await self.client.get('/api/search', params={'q':'Different','group':'1','offset':first})
+            self.assertEqual(r.status, 400)
+        self.assertEqual(found[0]['gid'], '7')
+        self.assertTrue(found[0]['group'])
+        expected = [(src, f'{src}{i}') for src in ('primary','cloud','archive') for i in reversed(range(3))]
+        self.assertEqual([(x['raw_collection'], x['file_id']) for x in found[1:]], expected)
+        self.assertEqual(await self.groups.find_one({'_id':'7'}), before)
+        self.assertEqual(await self.groups.count_documents({}), 1)
 
     async def test_recent_series_filter_paginates_with_small_saved_group(self):
         docs = [doc("old1", "Older Show S01E01", group_id="12"),

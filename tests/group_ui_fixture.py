@@ -54,6 +54,7 @@ async def fixture_groups(query):
     return await store.QualityGroups.find({'$or': [{'name': regex}, {'files.name': regex}]}, db.GROUP_PROJECTION).to_list(length=600)
 
 db.build_query_filter = fixture_filter
+api.build_query_filter = fixture_filter
 api.search_groups = fixture_groups
 
 
@@ -106,6 +107,9 @@ async def seed_automatic_examples(_req):
         source = ("primary", "cloud", "archive")[index % 3]
         await cols[source].insert_one({"_id": fid, "file_ref": fid, "file_name": name, "file_type": "video",
                                        "file_size": 1000, "duration": duration, "added_on": now - index})
+    # Simulate the admin scan; normal search now only reads saved groups.
+    docs = await db.get_files_by_ids([fid for fid, _, _ in specs])
+    await api._finalize(api._build_results_list(docs, 'none'), True, siblings=False)
     api._invalidate_search_caches()
     return web.json_response({"ok": True})
 
