@@ -20,7 +20,7 @@ from database import ia_filterdb as db
 from web import search_api as api
 from web.dashboard_routes import DASHBOARD_BODY
 from web.actor_routes import ACTOR_MEDIA_SCRIPT
-from web import actor_routes as actor, post_routes as post
+from web import actor_routes as actor, post_routes as post, stream_routes as stream
 from bson import ObjectId
 from web.web_assets import build_page
 
@@ -157,6 +157,17 @@ async def dashboard(_req):
     return build_page("Mock Dashboard", DASHBOARD_BODY, "", "dash", "admin")
 
 
+async def user_dashboard(_req):
+    return build_page("Mock Dashboard", DASHBOARD_BODY, "", "dash", "user")
+
+
+async def guest_role(_req):
+    return None, None
+
+
+stream.get_auth = guest_role
+
+
 async def actor_cards(_req):
     # Exercise the actual shared actor-card renderer without a Telegram account.
     await cols['primary'].update_one({'_id': 'actor-file'}, {'$set': {'file_name': 'Actor file'}}, upsert=True)
@@ -179,6 +190,8 @@ async def thumb(_req):
 
 app = web.Application()
 app.router.add_get("/dashboard", dashboard)
+app.router.add_get("/fixture/user-dashboard", user_dashboard)
+app.router.add_get("/fixture/landing", stream.root_route_handler)
 app.router.add_get("/fixture/actor-cards", actor_cards)
 app.router.add_post("/fixture/seed_auto", seed_automatic_examples)
 app.router.add_post("/fixture/seed_mixed_recent", seed_mixed_recent)

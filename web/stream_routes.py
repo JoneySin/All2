@@ -6,6 +6,7 @@ from web.utils.custom_dl import TGCustomYield, chunk_size, offset_fix
 from web.utils.render_template import media_watch
 from web.utils.media_info import get_media_info
 from web.web_assets import get_auth
+from web.brand import BRAND_MARKUP, BRAND_CSS
 from stream_security import verify
 
 routes = web.RouteTableDef()
@@ -41,7 +42,6 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 html.light .hero-bg{background:linear-gradient(to top,var(--bg) 0,rgba(255,255,255,.6) 50%,rgba(255,255,255,.9) 100%),url('https://assets.nflxext.com/ffe/siteui/vlv3/f841d4c7-10e1-40af-bcae-07a3f8dc141a/f6d7434e-d6de-4185-a6d4-c77a2d08737b/IN-en-20220502-popsignuptwoweeks-perspective_alpha_website_medium.jpg') center/cover}
 .navbar{display:flex;justify-content:space-between;align-items:center;padding:25px 5%;z-index:10}
 .logo{font-size:28px;font-weight:900;color:var(--red);text-decoration:none;display:flex;align-items:center;gap:8px;letter-spacing:1px;text-transform:uppercase}
-.nf-icon{background:var(--red);color:#fff;padding:2px 8px;border-radius:3px;font-size:24px;line-height:1}
 .header-actions{display:flex;align-items:center;gap:12px}
 .theme-btn{background:transparent;border:1px solid var(--text);color:var(--text);padding:8px 16px;border-radius:4px;font-family:'DM Sans',sans-serif;font-weight:700;font-size:14px;cursor:pointer;transition:.2s}
 .theme-btn:hover{background:var(--text);color:var(--bg)}
@@ -59,13 +59,14 @@ html.light .hero-bg{background:linear-gradient(to top,var(--bg) 0,rgba(255,255,2
 .qp-title{width:100%;font-size:1rem;color:var(--text);opacity:0.7;margin-bottom:10px;font-weight:500;text-transform:uppercase;letter-spacing:1px}
 .tag{background:var(--tag-bg);border:1px solid var(--text);padding:8px 18px;border-radius:50px;font-size:14px;font-weight:700;cursor:pointer;transition:.2s}
 .tag:hover{background:var(--text);color:var(--bg)}
-@media (max-width:600px){.hero-title{font-size:2.5rem}.hero-sub{font-size:1.2rem}.search-container{flex-direction:column;gap:10px}.search-input{border-radius:4px;border:1px solid #808080;padding:15px}.search-btn{border-radius:4px;padding:15px;justify-content:center;font-size:1.2rem}.logo{font-size:20px}.nf-icon{font-size:18px}.theme-btn, .admin-btn{padding:6px 12px;font-size:12px;}}
+@media (max-width:600px){.hero-title{font-size:2.5rem}.hero-sub{font-size:1.2rem}.search-container{flex-direction:column;gap:10px}.search-input{border-radius:4px;border:1px solid #808080;padding:15px}.search-btn{border-radius:4px;padding:15px;justify-content:center;font-size:1.2rem}.logo{font-size:20px}.theme-btn, .admin-btn{padding:6px 12px;font-size:12px;}}
+__BRAND_CSS__
 </style>
 </head>
 <body>
 <div class="hero-bg"></div>
 <header class="navbar">
-    <a href="/" class="logo"><span class="nf-icon">F</span> FAST FINDER</a>
+    <a href="/" class="logo" aria-label="FastFinder home">__BRAND_MARKUP__</a>
     <div class="header-actions">
         <button class="theme-btn" id="theme-btn">Theme</button>
         <a href="/login" class="admin-btn">Sign In</a>
@@ -108,7 +109,7 @@ document.getElementById('searchInput').addEventListener('keydown',e=>{
 });
 </script>
 </body>
-</html>""".replace("BOT_USERNAME_PLACEHOLDER", bot_username)
+</html>""".replace("BOT_USERNAME_PLACEHOLDER", bot_username).replace("__BRAND_CSS__", BRAND_CSS).replace("__BRAND_MARKUP__", BRAND_MARKUP)
 
     return web.Response(text=html_content, content_type='text/html')
 

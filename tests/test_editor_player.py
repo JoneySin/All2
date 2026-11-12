@@ -518,6 +518,30 @@ class EditorPlayerTests(unittest.IsolatedAsyncioTestCase):
         body = post.build_post_editor({'category': 'Legacy & Other'}, post_id=str(ObjectId()))
         self.assertIn('<option value="Legacy &amp; Other" selected>', body)
 
+    async def test_shared_brand_renders_on_landing_and_watch_page(self):
+        from web.utils import render_template
+        info = SimpleNamespace(mime_type='video/mp4', file_name='Video.mp4')
+        with patch.object(render_template, 'get_media_info', AsyncMock(return_value=info)):
+            watch = await render_template.media_watch(123)
+        self.assertIn('brand-mark', watch)
+        self.assertIn('brand-word', watch)
+        self.assertNotIn('__BRAND_', watch)
+        self.assertIn('Video.mp4', watch)
+        with patch.object(stream, 'get_auth', AsyncMock(return_value=(None, None))):
+            response = await self.client.get('/')
+            landing = await response.text()
+        self.assertIn('brand-mark', landing)
+        self.assertNotIn('__BRAND_', landing)
+
+    def test_navigation_icons_keep_admin_permissions_and_labels(self):
+        admin = build_page('Home', '', active_tab='dash', role='admin').text
+        user = build_page('Home', '', active_tab='dash', role='user').text
+        for icon in ('🏠', '📝', '🎭', '📊', '⚙️', '🚪'):
+            self.assertIn(icon, admin)
+        self.assertNotIn('href="/stats"', user)
+        self.assertIn('href="/dashboard" class="sb-link active"', user)
+        self.assertIn('aria-label="FastFinder home"', admin)
+
     def test_shared_page_title_is_escaped_and_player_only_for_authenticated_users(self):
         admin = build_page('<script>bad</script>', '', role='admin').text
         guest = build_page('Guest', '', role=None).text

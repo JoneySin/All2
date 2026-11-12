@@ -34,6 +34,7 @@ from database.users_chats_db import db
 # post_routes तीनों में इसकी अलग-अलग copy थी)।
 from web.web_assets import get_auth as web_get_auth, fast_json, DEFAULT_MEDIA_MODE
 from web.media_cards import MEDIA_CARD_JS
+from web.brand import BRAND_MARKUP, BRAND_CSS
 from web.grouping import (AUTO_QUALITY_MAX, AUTO_SERIES_MAX, GROUP_TYPES,
                           auto_group_plan, duration_seconds, episode_identity, group_type,
                           order_series, quality_title_key, series_key, series_title)
@@ -2918,5 +2919,6 @@ async def miniapp_page(req):
     # 🎛️ Centralized default view mode inject (DEFAULT_MEDIA_MODE — web_assets.py)
     with open(html_path, "r", encoding="utf-8") as f:
         html_src = f.read()
-    html_src = html_src.replace("__DEFAULT_MEDIA_MODE__", DEFAULT_MEDIA_MODE).replace("__MEDIA_CARD_JS__", MEDIA_CARD_JS)
+    html_src = (html_src.replace("__DEFAULT_MEDIA_MODE__", DEFAULT_MEDIA_MODE).replace("__MEDIA_CARD_JS__", MEDIA_CARD_JS)
+                .replace("__BRAND_CSS__", BRAND_CSS).replace("__BRAND_MARKUP__", BRAND_MARKUP))
     return web.Response(text=html_src, content_type="text/html", charset="utf-8")

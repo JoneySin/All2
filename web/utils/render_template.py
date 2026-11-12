@@ -1,6 +1,7 @@
 import urllib.parse, html, logging
 from info import URL
 from web.utils.media_info import get_media_info
+from web.brand import BRAND_MARKUP, BRAND_CSS
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,6 @@ body{{background:linear-gradient(to bottom,var(--bg1),var(--bg2));font-family:'D
 .navbar{{width:100%;padding:16px 4%;display:flex;align-items:center;justify-content:space-between;position:fixed;top:0;z-index:999;background:linear-gradient(to bottom,var(--nav1),var(--nav2),transparent);backdrop-filter:blur(6px);transition:background .3s;}}
 .logo{{font-size:24px;font-weight:900;letter-spacing:1px;color:var(--red);display:flex;align-items:center;gap:8px;text-decoration:none;transition:.3s;}}
 .logo:hover{{transform:scale(1.02);}}
-.nf-icon{{background:var(--red);color:#fff;padding:2px 7px;border-radius:3px;font-size:24px;line-height:1;}}
 .theme-btn{{background:transparent;border:1px solid var(--box-bd);color:var(--txt);padding:7px 16px;border-radius:4px;font-family:'DM Sans',sans-serif;font-weight:700;font-size:13px;cursor:pointer;transition:.3s;}}
 .theme-btn:hover{{background:var(--btn-c);}}
 .hero-container{{width:100%;max-width:1350px;margin:auto;padding:110px 20px 40px;}}
@@ -57,12 +57,13 @@ html.light .skip-ripple{{background:rgba(0,0,0,.1);}}
 #toast{{visibility:hidden;min-width:220px;background:var(--red);color:#fff;text-align:center;border-radius:6px;padding:15px;position:fixed;right:30px;bottom:30px;z-index:9999;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.45);}}
 #toast.show{{visibility:visible;animation:fi .4s,fo .4s 2.6s;}}
 @keyframes fi{{from{{opacity:0;bottom:0;}}to{{opacity:1;bottom:30px;}}}} @keyframes fo{{from{{opacity:1;bottom:30px;}}to{{opacity:0;bottom:0;}}}}
-@media(max-width:768px){{.hero-container{{padding-top:95px;}} .logo{{font-size:20px;}} .nf-icon{{font-size:20px;padding:2px 6px;}} .title{{font-size:1.3rem;}} .controls-row{{flex-direction:column;}} .btn{{width:100%;justify-content:center;}}}}
+@media(max-width:768px){{.hero-container{{padding-top:95px;}} .logo{{font-size:20px;}} .title{{font-size:1.3rem;}} .controls-row{{flex-direction:column;}} .btn{{width:100%;justify-content:center;}}}}
+__BRAND_CSS__
 </style>
 </head>
 <body>
 <div class="navbar">
-    <a href="/" class="logo"><span class="nf-icon">F</span> FAST FINDER</a>
+    <a href="/" class="logo" aria-label="FastFinder home">__BRAND_MARKUP__</a>
     <button class="theme-btn" id="theme-btn">Theme</button>
 </div>
 <div class="hero-container">
@@ -146,7 +147,8 @@ async def media_watch(message_id, query=""):
 
         if mime.split('/')[0].strip() == 'video':
             fn = html.escape(info.file_name or "Fast Finder Movie")   # None => crash fix
-            return watch_tmplt.format(heading=f"Watch {fn}", file_name=fn, src=src, mime_type=html.escape(mime))
+            return (watch_tmplt.format(heading=f"Watch {fn}", file_name=fn, src=src, mime_type=html.escape(mime))
+                    .replace("__BRAND_CSS__", BRAND_CSS).replace("__BRAND_MARKUP__", BRAND_MARKUP))
         
         return f'<body style="background:#000;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:\'DM Sans\',sans-serif;"><div style="text-align:center;background:#141414;padding:40px;border-radius:12px;border:1px solid rgba(255,255,255,.08);"><h2>⚠️ Unsupported File</h2><br><a href="{src}" style="background:#e50914;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Download Direct</a></div></body>'
 
