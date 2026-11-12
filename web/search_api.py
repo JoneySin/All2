@@ -2121,6 +2121,46 @@ def _episode_updates(data, members):
 
 
 SCAN_STATE = {"running": False}
+_SCAN_TASK = None
+
+
+def start_group_scan():
+    """Reserve and launch one in-process scan, shared by startup and admin UI."""
+    global _SCAN_TASK
+    if SCAN_STATE.get("running"):
+        return None
+    SCAN_STATE.update(running=True, phase="starting", scanned=0, total=0, created=0,
+                      added=0, skipped_big=0, skipped_keys=[], fixed_marks=0, existing_groups=0,
+                      multi_buckets=0, error="", started=time.time(), finished=0)
+    try:
+        task = asyncio.create_task(_scan_all_groups())
+    except BaseException:
+        SCAN_STATE.update(running=False, phase="error", error="Could not start group scan", finished=time.time())
+        raise
+    _SCAN_TASK = task
+
+    def completed(done):
+        global _SCAN_TASK
+        if _SCAN_TASK is done:
+            _SCAN_TASK = None
+            # Cancellation can happen before the coroutine starts its own finally.
+            if SCAN_STATE.get("running"):
+                SCAN_STATE.update(running=False, phase="cancelled", error="Scan stopped", finished=time.time())
+
+    task.add_done_callback(completed)
+    return task
+
+
+async def stop_group_scan():
+    """Stop a scan before database and event loop shutdown; next scan can repair partial marks."""
+    task = _SCAN_TASK
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
 
 
 async def _scan_all_groups():
@@ -2195,8 +2235,8 @@ async def _scan_all_groups():
                                             {"$addToSet": {"auto_keys": {"$each": keys}}})
                     await asyncio.sleep(0)
 
-        # A single compatible file may join an existing group; the three-file
-        # threshold only applies when creating a new automatic group.
+        # A single compatible file may join an existing group; new groups
+        # require at least two distinct compatible files.
         joins = []
         for fid, row in canonical.items():
             if fid in owner or fid in excluded_ids:
@@ -2309,13 +2349,18 @@ async def _scan_all_groups():
                     await FILE_COLLECTIONS[cname].bulk_write(ops[start:start + 500], ordered=False)
             st["fixed_marks"] = sum(len(set(ids)) for ids in fix_set.values()) + sum(len(ids) for ids in fix_unset.values())
 
-        _invalidate_search_caches()
         st["phase"] = "complete"
+    except asyncio.CancelledError:
+        st["error"] = "Scan stopped"
+        st["phase"] = "cancelled"
+        raise
     except Exception as exc:
         logger.error(f"group scan failed: {exc}")
         st["error"] = str(exc)
         st["phase"] = "error"
     finally:
+        # Partial writes are possible even on failure or shutdown.
+        _invalidate_search_caches()
         st["running"] = False
         st["finished"] = time.time()
         logger.info(f"🗂️ Group scan done: scanned={st.get('scanned')}/{st.get('total')} "
@@ -2330,10 +2375,8 @@ async def api_group_scan_all(req):
     role, _ = await get_user_role(req)
     if role != "admin":
         return web.json_response({"error": "Core Admin Authorization Required!"}, status=403, dumps=fast_json)
-    if SCAN_STATE.get("running"):
+    if not start_group_scan():
         return web.json_response({"started": False, "running": True}, dumps=fast_json)
-    SCAN_STATE["running"] = True  # reserve before scheduling so concurrent clicks cannot start two scans
-    asyncio.create_task(_scan_all_groups())
     return web.json_response({"started": True}, dumps=fast_json)
 
 

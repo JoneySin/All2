@@ -78,7 +78,7 @@ CARD_CSS = """
 .grp-card:not(.open):active{transform:scale(.96);transition:transform .1s}
 .grp-card:not(.open) .grp-title{transition:color .18s;text-decoration:none}
 .grp-card:not(.open) .grp-title:hover{color:var(--accent);text-decoration:underline;text-decoration-color:var(--accent);text-underline-offset:2px}
-.grp-card:hover .fc-poster{transform:scale(1.08)}
+.grp-card:not(.open):hover .grp-master .fc-poster{transform:scale(1.08)}
 .grp-card.open{grid-column:1/-1;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:default}
 .poster-top{flex-wrap:wrap;align-content:flex-start}
 .group-id-chip{display:inline-flex;align-items:center;gap:3px;background:#39230b;color:#ffd58a;border:1px solid #d99b3b;border-radius:6px;padding:3px 7px;font-size:10px;font-weight:800;letter-spacing:.3px;line-height:1.4;white-space:nowrap}
@@ -116,7 +116,12 @@ CARD_CSS = """
 .grp-variants{display:none;border-top:1px solid var(--border)}
 .grp-card.open .grp-variants{display:grid;grid-template-columns:1fr;gap:8px;padding:10px}
 @media(min-width:600px){.grp-card.open .grp-variants{grid-template-columns:repeat(3,1fr)}}
-.grp-variants .file-card:hover{transform:none}
+/* Animate only the hovered file, not every poster in the open group. */
+@keyframes groupFileEnter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.grp-card.open .grp-variants .file-card:nth-child(-n+12){animation:groupFileEnter .24s ease-out}
+@media(hover:hover){.grp-variants .file-card:hover{transform:translateY(-3px) scale(1.01)}}
+.grp-variants .file-card:active{transform:scale(.98)}
+@media(prefers-reduced-motion:reduce){.grp-card.open .grp-variants .file-card:nth-child(-n+12){animation:none}.grp-variants .file-card,.grp-variants .fc-poster{transition:none}.grp-variants .file-card:hover,.grp-variants .file-card:active,.grp-variants .file-card:hover .fc-poster{transform:none}}
 /* ── Group select mode + modal (admin) ── */
 .sel-mode .file-card{cursor:pointer}
 .sel-mode .file-card::after{content:'';position:absolute;top:8px;right:8px;width:22px;height:22px;border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.55);z-index:7;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:900}
@@ -261,7 +266,7 @@ var isAdminView=false;
 var openGroups={};
 
 /* 📄 Ek file ka card (pehle doSearch ke andar forEach me tha — bina badle yahan aa gaya).
-   nested=true: group ke andar wala variant card (card-enter animation nahi). */
+   nested=true: group variants animate on opening, independently of page entrance. */
 function dashboardFileAction(button, action){
     var card=button.closest('.file-card'), f=card&&FILE_DATA[card.dataset.fid];
     if(!f)return;

@@ -6,7 +6,10 @@ thumbnail revisions, partial failures, and preservation of post/profile data;
 they do not connect to Telegram or require a running MongoDB server. Grouping
 checks cover the two-distinct-file group threshold, runtime/episode matching,
 legacy/manual groups, exclusions, live joins, full scans and pagination across
-collections. Removing, moving or deleting a member can dissolve its affected group
+collections. Bot startup schedules the full scan in the background after database
+indexes and the web server are ready; the admin Scan button shares its status and
+cannot start another scan while it runs. Shutdown, interrupted-write repair and
+subsequent restart scans are covered with mocked services. Removing, moving or deleting a member can dissolve its affected group
 if fewer than two files remain; the surviving files are not deleted. Untouched
 legacy singleton records are preserved for repair but displayed as individual
 files, not groups. Actual media playback still depends on Telegram access and
@@ -42,7 +45,7 @@ stale requests, changed targets, empty-page navigation and a 320px layout. It
 also checks that dashboard and actor thumbnails reveal admin editing controls,
 file names play, group names open groups, and text-mode controls start hidden and
 can be revealed by clicking the card or using the keyboard. It also checks
-outside-click dismissal, nested cards, selection mode and non-admin behavior.
+outside-click dismissal, nested-card hover and reduced-motion behavior, selection mode and non-admin behavior.
 The file-editor test checks quality overrides, current membership, destination
 preview and confirmation, changed destinations, and moves from dashboard and
 actor cards. The ungrouped-view test covers the All, Group and UnGroup filter

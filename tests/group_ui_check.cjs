@@ -62,6 +62,17 @@ const assert = require('node:assert/strict');
  assert.equal(await quality.locator('.grp-title-button').evaluate(e=>document.activeElement===e),true);
  await series.locator('.grp-title-button').click();assert.equal(await series.locator('.grp-variants .file-card').count(),2);
  const nested=series.locator('.grp-variants .file-card').first();
+ // Moving over one file must not zoom every poster in its expanded group.
+ await nested.hover();await page.waitForTimeout(650);
+ const ownPoster=await nested.locator('.fc-poster').evaluate(e=>getComputedStyle(e).transform);
+ const otherPoster=await series.locator('.grp-variants .file-card').nth(1).locator('.fc-poster').evaluate(e=>getComputedStyle(e).transform);
+ assert.notEqual(ownPoster,'none');assert.equal(otherPoster,'none');
+ assert.notEqual(await nested.evaluate(e=>getComputedStyle(e).transform),'none');
+ await page.emulateMedia({reducedMotion:'reduce'});await page.waitForTimeout(50);
+ assert.equal(await nested.evaluate(e=>getComputedStyle(e).animationName),'none');
+ assert.equal(await nested.evaluate(e=>getComputedStyle(e).transform),'none');
+ assert.equal(await nested.locator('.fc-poster').evaluate(e=>getComputedStyle(e).transform),'none');
+ await page.emulateMedia({reducedMotion:'no-preference'});
  assert.equal(await nested.locator('.file-actions-toggle').count(),0);
  await nested.locator('.file-poster-trigger').click();
  assert.equal(await nested.locator('.poster-admin').isVisible(),true);

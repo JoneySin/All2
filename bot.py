@@ -38,6 +38,7 @@ from hydrogram import Client, types, StopPropagation, idle
 from hydrogram.errors import FloodWait 
 from hydrogram.handlers import MessageHandler 
 from web import web_app
+from web.search_api import start_group_scan, stop_group_scan
 from info import (
     API_ID, API_HASH, BOT_TOKEN, PORT, ADMINS, 
     LOG_CHANNEL, TIME_ZONE
@@ -178,6 +179,14 @@ class Bot(Client):
         await web.TCPSite(self._runner, "0.0.0.0", PORT).start()
         logger.info(f"🌐 Web Server & Mini App Stream Live on Port {PORT}")
 
+        # Run the existing safe full-library scan in the background on every start.
+        # The admin scan button shares this reservation and status.
+        try:
+            if start_group_scan():
+                logger.info("🗂️ Startup group scan scheduled in background")
+        except Exception as e:
+            logger.error(f"Could not schedule startup group scan: {e}")
+
         # 8. Start Background Automation Tasks (Premium Engine & Auto-Delete Sync)
         self._premium_task = asyncio.create_task(check_premium_expired(self))
         self._delete_task = asyncio.create_task(auto_delete_worker(self)) 
@@ -213,7 +222,9 @@ class Bot(Client):
         if getattr(self, '_runner', None):
             await self._runner.cleanup()
             logger.info("✅ Web App Runner Cleaned Up")
-        
+
+        await stop_group_scan()
+
         if getattr(self, '_premium_task', None):
             self._premium_task.cancel()
             try: await self._premium_task 

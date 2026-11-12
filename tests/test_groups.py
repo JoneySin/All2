@@ -7,6 +7,7 @@ import re
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 # info.py validates configuration at import time; these are test-only values.
@@ -706,6 +707,123 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([r['file_id'] for r in data['results'][1:]], ['c'])
         self.assertNotIn('group_id', await self.cols['cloud'].find_one({'_id':'c'}))
         self.assertEqual((await self.groups.find_one({'_id':'7'}))['members'], ['a','b'])
+
+    async def test_bot_start_schedules_scan_without_waiting_and_restarts_it(self):
+        import bot as bot_module
+
+        await self.insert_files(doc("a", "Film 720p"), doc("b", "Film 1080p", "cloud"))
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_scan = api._scan_all_groups
+        async def delayed_scan():
+            entered.set()
+            await release.wait()
+            await original_scan()
+        async def background(_bot):
+            await asyncio.Event().wait()
+
+        runner = SimpleNamespace(setup=AsyncMock(), cleanup=AsyncMock())
+        site = SimpleNamespace(start=AsyncMock())
+        me = SimpleNamespace(id=1, username="test", first_name="Test", mention="Test")
+        instance = bot_module.Bot.__new__(bot_module.Bot)
+        with (patch.object(bot_module.Client, "start", AsyncMock()),
+              patch.object(bot_module.Client, "stop", AsyncMock()),
+              patch.object(bot_module.Bot, "add_handler"),
+              patch.object(bot_module.Bot, "get_me", AsyncMock(return_value=me)),
+              patch.object(bot_module.Bot, "send_message", AsyncMock()),
+              patch.object(bot_module, "ensure_indexes", AsyncMock()),
+              patch.object(bot_module.db, "_ensure_indexes", AsyncMock()),
+              patch.object(bot_module.db, "get_banned", AsyncMock(return_value=([], []))),
+              patch.object(bot_module.web, "AppRunner", return_value=runner),
+              patch.object(bot_module.web, "TCPSite", return_value=site),
+              patch.object(bot_module, "check_premium_expired", background),
+              patch.object(bot_module, "auto_delete_worker", background),
+              patch.object(bot_module, "ADMINS", []), patch.object(bot_module, "LOG_CHANNEL", None),
+              patch.object(api, "_scan_all_groups", delayed_scan)):
+            await asyncio.wait_for(instance.start(), 2)
+            await asyncio.wait_for(entered.wait(), 2)
+            self.assertTrue(api.SCAN_STATE["running"])
+            self.assertEqual(await self.groups.count_documents({}), 0)
+            release.set()
+            await api._SCAN_TASK
+            first = await self.groups.find_one({})
+            self.assertEqual(set(first["members"]), {"a", "b"})
+            await instance.stop()
+            await self.insert_files(doc("c", "Film 480p", "archive"))
+            await instance.start()
+            await api._SCAN_TASK
+            self.assertEqual(set((await self.groups.find_one({"_id": first["_id"]}))["members"]), {"a", "b", "c"})
+            self.assertEqual(await self.groups.count_documents({}), 1)
+            await instance.stop()
+
+    async def test_startup_scan_reservation_shutdown_and_restart(self):
+        # Startup and the manual button must share a reservation even before
+        # the background coroutine gets its first event-loop turn.
+        await self.insert_files(doc("a", "Film 720p"), doc("b", "Film 1080p", "cloud"))
+        task = api.start_group_scan()
+        self.assertIsNotNone(task)
+        self.assertIsNone(api.start_group_scan())
+        await task
+        self.assertEqual(api.SCAN_STATE["phase"], "complete")
+        original = await self.groups.find_one({})
+        self.assertEqual(set(original["members"]), {"a", "b"})
+        await self.insert_files(doc("c", "Film 480p", "archive"),
+                                doc("d", "New Show S01E01"), doc("e", "New Show S01E02"))
+        task = api.start_group_scan()
+        await task
+        self.assertEqual(await self.groups.count_documents({}), 2)
+        self.assertEqual(set((await self.groups.find_one({"_id": original["_id"]}))["members"]), {"a", "b", "c"})
+        self.assertEqual(api.SCAN_STATE["phase"], "complete")
+        # Shutdown before the worker has even begun must free the reservation.
+        api.start_group_scan()
+        await api.stop_group_scan()
+        await asyncio.sleep(0)
+        self.assertFalse(api.SCAN_STATE["running"])
+        self.assertEqual(api.SCAN_STATE["phase"], "cancelled")
+        await api.start_group_scan()
+        self.assertEqual(api.SCAN_STATE["phase"], "complete")
+        self.assertEqual(await self.groups.count_documents({}), 2)
+
+    async def test_scan_cancellation_while_running_and_manual_retry(self):
+        entered = asyncio.Event()
+        async def blocked_scan():
+            entered.set()
+            await asyncio.Event().wait()
+        with patch.object(api, "_scan_all_groups", blocked_scan):
+            task = api.start_group_scan()
+            await asyncio.wait_for(entered.wait(), 2)
+            status, body = await self.post("/api/group/scan_all", {})
+            self.assertEqual(status, 200)
+            self.assertEqual(body, {"started": False, "running": True})
+            await api.stop_group_scan()
+            self.assertTrue(task.cancelled())
+            await asyncio.sleep(0)
+            self.assertFalse(api.SCAN_STATE["running"])
+        status, body = await self.post("/api/group/scan_all", {})
+        self.assertEqual(status, 200)
+        self.assertTrue(body["started"])
+        task = api._SCAN_TASK
+        await task
+        self.assertEqual(api.SCAN_STATE["phase"], "complete")
+
+    async def test_cancelled_partial_startup_scan_is_repaired_on_next_run(self):
+        await self.insert_files(doc("a", "Film 720p"), doc("b", "Film 1080p", "cloud"))
+        entered = asyncio.Event()
+        async def interrupted_mark(*args, **kwargs):
+            entered.set()
+            await asyncio.Event().wait()
+        with patch.object(api, "_mark_files", interrupted_mark):
+            task = api.start_group_scan()
+            await asyncio.wait_for(entered.wait(), 2)
+            await api.stop_group_scan()
+            self.assertTrue(task.cancelled())
+        self.assertEqual(api.SCAN_STATE["phase"], "cancelled")
+        group = await self.groups.find_one({})
+        self.assertIsNotNone(group)
+        await api.start_group_scan()
+        self.assertEqual(api.SCAN_STATE["phase"], "complete")
+        self.assertEqual(await self.groups.count_documents({}), 1)
+        for fid, source in (("a", "primary"), ("b", "cloud")):
+            self.assertEqual((await self.cols[source].find_one({"_id": fid}))["group_id"], group["_id"])
 
     async def test_scan_counts_unique_files_across_collections(self):
         await self.insert_files(doc("same", "Film 720p.mkv"), doc("same", "Film 720p.mkv", "cloud"))
