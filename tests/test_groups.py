@@ -1102,7 +1102,11 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
              patch.object(self.cols["primary"], "find", side_effect=find):
             rows, _, _, _ = await db.get_search_results("Example", 10, collection_type="primary",
                                                        grouped_only=True, bypass_count=True)
-        self.assertEqual([row["_id"] for row in rows], ["a"])
+            self.assertEqual([row["_id"] for row in rows], ["a"])
+            rows, _, _, _ = await db.get_search_results("Example", 10, collection_type="primary",
+                                                       grouped_only=True, exclude_grouped=True,
+                                                       bypass_count=True)
+            self.assertEqual([row["_id"] for row in rows], ["b"])
 
     async def test_cross_collection_text_pages_have_stable_score_tiebreaks(self):
         class Cursor:

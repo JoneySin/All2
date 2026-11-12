@@ -569,9 +569,13 @@ def build_query_filter(raw_query: str, regex, lang=None):
 
     return None, False
 
-def _not_grouped(flt):
-    """Filter me jodo: file kisi Quality-group me nahi hai (group_id field nahi)."""
-    return {"$and": [flt, {"group_id": {"$exists": False}}]}
+def _apply_group_filter(flt, exclude_grouped=False, grouped_only=False):
+    """Apply group membership filtering, with exclusion taking precedence."""
+    if exclude_grouped:
+        return {"$and": [flt, {"group_id": {"$exists": False}}]}
+    if grouped_only:
+        return {"$and": [flt, {"group_id": {"$exists": True}}]}
+    return flt
 
 
 def _tag_docs(docs, col_name: str):
@@ -588,10 +592,7 @@ async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None
     flt, is_text = build_query_filter(raw_query, regex, lang)
     if not flt:
         return [], 0
-    if exclude_grouped:
-        flt = _not_grouped(flt)
-    elif grouped_only:
-        flt = {"$and": [flt, {"group_id": {"$exists": True}}]}
+    flt = _apply_group_filter(flt, exclude_grouped, grouped_only)
 
     col_name = col.name.lower()
 
@@ -611,10 +612,7 @@ async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None
         flt, is_text = build_query_filter("", regex, lang)
         if not flt:
             return [], 0
-        if exclude_grouped:
-            flt = _not_grouped(flt)
-        elif grouped_only:
-            flt = {"$and": [flt, {"group_id": {"$exists": True}}]}
+        flt = _apply_group_filter(flt, exclude_grouped, grouped_only)
 
     cursor = col.find(flt, FILE_PROJECTION).sort('_id', -1)
     cursor.skip(offset).limit(limit)
@@ -641,10 +639,7 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
     flt, is_text = build_query_filter(raw_query, regex, lang)
     if not flt:
         return [], "", 0, collection_type
-    if exclude_grouped:
-        flt = _not_grouped(flt)
-    elif grouped_only:                       # sirf wo files jo kisi group me hain (group dhundhne ke liye)
-        flt = {"$and": [flt, {"group_id": {"$exists": True}}]}
+    flt = _apply_group_filter(flt, exclude_grouped, grouped_only)
 
     results, total, actual_src = [], 0, collection_type
 

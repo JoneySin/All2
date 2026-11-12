@@ -15,6 +15,7 @@ from database.ia_filterdb import posts as posts_col
 from web.web_assets import build_page, get_auth, require_active_plan, fast_json, DIRECTORY_CSS, DEFAULT_CATALOG_MODE
 from web.post_editor import build_post_editor, post_image_src
 from web.catalog_cards import render_catalog_card
+from web.catalog_search import CATALOG_PAGE_SIZE, catalog_page
 
 post_routes = web.RouteTableDef()
 
@@ -232,9 +233,7 @@ async def posts_directory_page(req):
     if not role: return web.HTTPFound('/login')
     if not await require_active_plan(role, tg_id): return web.HTTPFound('/premium_expired')
     
-    all_posts = await posts_col.find({}).sort("created_at", -1).limit(21).to_list(length=21)
-    has_next_init = len(all_posts) > 20
-    all_posts = all_posts[:20]
+    all_posts, has_next_init = await catalog_page(posts_col, {})
     
     admin_btn = '''<button onclick="window.location.href='/admin/create_post'" style="background:var(--accent); color:#fff; border:none; padding:10px 15px; border-radius:8px; font-weight:800; cursor:pointer; font-size:13px; flex:1; min-width:130px; box-shadow:0 4px 15px rgba(229,9,20,0.3); transition:0.2s;">➕ Create</button>''' if role == 'admin' else ""
     
@@ -285,7 +284,7 @@ async def posts_directory_page(req):
     </div>
 
     <script>
-    var pOff = 0, pLim = 20, pPage = 1;
+    var pOff = 0, pLim = {CATALOG_PAGE_SIZE}, pPage = 1;
     var postReqId = 0;
     var pNext = {has_nxt_str};
     var currentPCat = 'All'; var currentPView = MediaView.get('{DEFAULT_CATALOG_MODE}');
@@ -363,9 +362,10 @@ async def posts_directory_page(req):
         }}, 150);
         try {{
             var res = await fetch(`/api/posts/search?q=${{encodeURIComponent(q)}}&offset=${{pOff}}&category=${{encodeURIComponent(currentPCat)}}`);
-            if (myReq !== postReqId) {{ clearTimeout(loadTimer); if (row) row.classList.remove('loading'); return; }}
+            if (myReq !== postReqId) {{ clearTimeout(loadTimer); return; }}
             clearTimeout(loadTimer);
             if (row) row.classList.remove('loading');
+            if (!res.ok) throw new Error("HTTP " + res.status);
             var data = await res.json();
             if (myReq !== postReqId) return;
             grid.innerHTML = data.html;
@@ -373,7 +373,7 @@ async def posts_directory_page(req):
             pNext = data.has_next;
             applyPostViewMode();
             updatePgUI();
-        }} catch(e) {{ clearTimeout(loadTimer); if (row) row.classList.remove('loading'); grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--accent);">Error loading posts!</div>'; }}
+        }} catch(e) {{ clearTimeout(loadTimer); if (myReq !== postReqId) return; if (row) row.classList.remove('loading'); lastPQ = null; grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--accent);">Error loading posts! Please retry.</div>'; }}
     }}
     function updatePgUI() {{ var box = document.getElementById('post_pg_box'); box.style.display = (pOff === 0 && !pNext) ? 'none' : 'flex'; document.getElementById('post_pBtn').disabled = (pOff === 0); document.getElementById('post_nBtn').disabled = !pNext; document.getElementById('post_pgInfo').innerText = 'Page ' + pPage; }}
     function resetPost() {{ pOff = 0; pPage = 1; }}
@@ -391,14 +391,13 @@ async def posts_directory_page(req):
 
 @post_routes.get('/api/posts/search')
 async def api_posts_search(req):
-    role, _ = await get_auth(req)
-    if not role: return web.json_response({"html": ""}, dumps=fast_json)
+    role, tg_id = await get_auth(req)
+    if not role or not await require_active_plan(role, tg_id):
+        return web.json_response({"error": "Access denied."}, status=403, dumps=fast_json)
     q = req.query.get("q", "").strip()
     category = req.query.get("category", "All").strip()
     
-    try: offset = int(req.query.get("offset", 0))
-    except: offset = 0
-    lim = 20
+    offset = req.query.get("offset", 0)
     
     query = {}
     if q: 
@@ -408,9 +407,10 @@ async def api_posts_search(req):
     if category and category != "All":
         query["category"] = category
         
-    docs = await posts_col.find(query).sort("created_at", -1).skip(offset).limit(lim + 1).to_list(length=lim + 1)
-    has_next = len(docs) > lim
-    docs = docs[:lim]
+    try:
+        docs, has_next = await catalog_page(posts_col, query, offset)
+    except Exception:
+        return web.json_response({"error": "Post search temporarily unavailable."}, status=503, dumps=fast_json)
     
     if not docs: return web.json_response({"html": '<div style="grid-column:1/-1; text-align:center; color:var(--muted); padding:40px;">No posts matching your search.</div>', "has_next": False}, dumps=fast_json)
         

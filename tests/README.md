@@ -11,7 +11,8 @@ if fewer than two files remain; the surviving files are not deleted. Untouched
 legacy singleton records are preserved for repair but displayed as individual
 files, not groups. Actual media playback still depends on Telegram access and
 browser-supported codecs. MongoDB text-index behavior still requires a real-service test.
-MP4 probe tests cover the shared header/tail fallback for both magic bytes and
+Catalogue tests cover stable timestamp ties and page boundaries, filters, access,
+invalid offsets and database failures. MP4 probe tests cover the shared header/tail fallback for both magic bytes and
 filename hints, including error and short-tail cases.
 
 For grouped `/api/search` requests, treat `next_offset` as an opaque continuation
@@ -47,6 +48,7 @@ recent-view test covers raw collection order, older group members, standalone fi
 forward/back navigation without changing group membership and verifies next-page
 prefetch reuse. Shared-view checks cover the All labels, common text/poster
 preference across dashboard, posts, profiles and miniapp, including another tab.
+The catalog search check covers error handling, same-query retry and stale-response races.
 The prefetch check verifies navigation retries when a speculative request fails.
 The home search-panel check compares its shared style with posts/profiles and tests
 responsive layout, themes, dropdowns and search on 320px through desktop widths.
@@ -71,6 +73,7 @@ NODE_PATH=/tmp/all2-playwright/node_modules node tests/file_editor_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/ungrouped_view_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/ungrouped_recent_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/shared_view_ui_check.cjs
+NODE_PATH=/tmp/all2-playwright/node_modules node tests/catalog_search_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/prefetch_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/search_panel_ui_check.cjs
 NODE_PATH=/tmp/all2-playwright/node_modules node tests/brand_ui_check.cjs
