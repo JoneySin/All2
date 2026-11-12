@@ -845,11 +845,65 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             # A legacy unmarked member can match a caption/name even when the
             # group lookup did not find the group. Its siblings must still show.
             with patch.object(api, '_group_hits', AsyncMock(return_value=[])):
+                first = await self.client.get('/api/search', params=params)
+                first_data = await first.json()
+                self.assertEqual({row['file_id'] for row in first_data['results']}, set(members[:5]))
                 discovered = await collect(params)
                 self.assertEqual(set(discovered), set(actual))
                 self.assertEqual(len(discovered), len(actual))
         self.assertEqual((await self.groups.find_one({'_id': '11'}))['members'], members)
         self.assertNotIn('group_id', await self.cols['primary'].find_one({'_id': 'm00'}))
+
+    async def test_recent_ungroup_flattens_visible_groups_without_losing_any_files(self):
+        # Only one group member is recent; its siblings are much older. A plain
+        # recent-file page showed mostly standalone files while All showed the
+        # entire group card, creating the impression its members were missing.
+        members = [f'g{i:02d}' for i in range(18)]
+        for i, fid in enumerate(members):
+            await self.insert_files(doc(fid, f'Group member {i}', ('primary', 'cloud', 'archive')[i % 3],
+                                        added_on=1000 if i == 0 else 1, group_id='11' if i % 2 else None))
+        singles = [f's{i:02d}' for i in range(8)]
+        await self.insert_files(*(doc(fid, f'Standalone {i}', added_on=1100+i) for i, fid in enumerate(singles)))
+        group = {'_id': '11', 'num': 11, 'name': 'Saved Group', 'members': members, 'group_type': 'series',
+                 'files': [{'id': fid, 'name': f'Group member {i}'} for i, fid in enumerate(members)]}
+        await self.groups.insert_one(group)
+        with patch.object(api, 'MAX_WEB_RESULTS', 5), patch.object(db, 'COLLECTIONS', self.cols):
+            first = await self.client.get('/api/search', params={'group': '1', 'gf': 'single', 'mode': 'none'})
+            data = await first.json()
+            self.assertEqual(first.status, 200, data)
+            self.assertEqual({row['file_id'] for row in data['results']}, set(members[:5]))
+            collected = [row['file_id'] for row in data['results']]
+            token = data['next_offset']
+            self.assertTrue(str(token).startswith(('g1_', 'g2_')))
+            for _ in range(40):
+                if not token:
+                    break
+                response = await self.client.get('/api/search', params={'group': '1', 'gf': 'single',
+                                                                         'mode': 'none', 'offset': token})
+                data = await response.json()
+                self.assertEqual(response.status, 200, data)
+                self.assertTrue(all(not row.get('group') for row in data['results']))
+                collected.extend(row['file_id'] for row in data['results'])
+                token = data['next_offset']
+            else:
+                self.fail('recent ungrouped view did not finish')
+            self.assertEqual(set(collected), set(members + singles))
+            self.assertEqual(len(collected), len(members) + len(singles))
+            # Collection filters must never introduce other collections' files.
+            offset, cloud = 0, []
+            for _ in range(40):
+                response = await self.client.get('/api/search', params={'group': '1', 'gf': 'single',
+                                                                         'col': 'cloud', 'offset': offset})
+                data = await response.json()
+                self.assertEqual(response.status, 200, data)
+                cloud.extend(row['file_id'] for row in data['results'])
+                offset = data['next_offset']
+                if not offset:
+                    break
+            self.assertEqual(set(cloud), {members[i] for i in range(18) if i % 3 == 1})
+            self.assertEqual(len(cloud), len(set(cloud)))
+        self.assertEqual((await self.groups.find_one({'_id': '11'}))['members'], members)
+        self.assertEqual(await self.groups.count_documents({}), 1)
 
     async def test_search_partitions_durations_and_series_and_is_idempotent(self):
         docs = [

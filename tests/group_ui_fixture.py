@@ -110,6 +110,31 @@ async def seed_automatic_examples(_req):
     return web.json_response({"ok": True})
 
 
+async def seed_mixed_recent(_req):
+    # Large enough that a naive first raw page contains mostly standalone files,
+    # even though grouped view can expand the recent anchor's older siblings.
+    now = int(time.time()) + 10000
+    members = [f'oldgroup{i:02}' for i in range(27)]
+    for i, fid in enumerate(members):
+        source = ('primary', 'cloud', 'archive')[i % 3]
+        doc = {'_id': fid, 'file_ref': fid, 'file_name': f'Mixed Group Member {i:02}',
+               'file_type': 'video', 'file_size': 1000, 'duration': 3,
+               'added_on': now if i == 0 else 1}
+        if i % 2:
+            doc['group_id'] = '19'
+        await cols[source].insert_one(doc)
+    for i in range(12):
+        await cols['primary'].insert_one({'_id': f'standalone{i:02}', 'file_ref': f'standalone{i:02}',
+                                          'file_name': f'Standalone {i:02}', 'file_type': 'video',
+                                          'file_size': 1000, 'duration': 3, 'added_on': now + i + 1})
+    await store.QualityGroups.insert_one({'_id': '19', 'num': 19, 'name': 'Mixed Recent Group',
+        'group_type': 'series', 'members': members,
+        'files': [{'id': fid, 'name': f'Mixed Group Member {i:02}'} for i, fid in enumerate(members)],
+        'auto_keys': [], 'excluded': [], 'scanned_at': now, 'updated_at': now})
+    api._invalidate_search_caches()
+    return web.json_response({'members': members, 'singles': [f'standalone{i:02}' for i in range(12)]})
+
+
 async def dashboard(_req):
     return build_page("Mock Dashboard", DASHBOARD_BODY, "", "dash", "admin")
 
@@ -138,6 +163,7 @@ app = web.Application()
 app.router.add_get("/dashboard", dashboard)
 app.router.add_get("/fixture/actor-cards", actor_cards)
 app.router.add_post("/fixture/seed_auto", seed_automatic_examples)
+app.router.add_post("/fixture/seed_mixed_recent", seed_mixed_recent)
 app.router.add_get("/api/thumb", thumb)
 app.add_routes(api.search_routes)
 app.on_startup.append(seed)

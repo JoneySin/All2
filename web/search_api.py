@@ -1314,9 +1314,9 @@ def _cursor_context(q, col, gf):
 
 
 def _validate_group_cursor(state, context):
-    # _group_hits() takes at most 600 direct hits and 600 member-file hits.
+    # Group hits and flat-view anchor groups share the same bounded snapshot.
     if (not isinstance(state, dict) or state.get("v") != 1 or state.get("ctx") != context
-            or not isinstance(state.get("groups"), list) or len(state["groups"]) > 1200
+            or not isinstance(state.get("groups"), list) or len(state["groups"]) > _GROUP_CURSOR_SEEN_LIMIT
             or not isinstance(state.get("seen"), list) or len(state["seen"]) > _GROUP_CURSOR_SEEN_LIMIT
             or any(not isinstance(item, str) or len(item) > 256 for item in state["groups"] + state["seen"])
             or not isinstance(state.get("gp"), int) or not 0 <= state["gp"] <= len(state["groups"])
@@ -1502,12 +1502,30 @@ async def _grouped_cursor_page(q, col, offset, lim, mode, gf):
     return cards, ""
 
 
-async def _flat_group_search_page(q, col, offset, lim, mode):
-    """Show group-name/member matches as individual files, plus ordinary matches.
+async def _flat_group_ids_for_docs(docs):
+    """Find saved groups represented by the ordered file-search window."""
+    order = {doc['_id']: i for i, doc in enumerate(docs) if doc.get('_id')}
+    if not order:
+        return []
+    try:
+        found = []
+        async for group in groups.find({'members': {'$in': list(order)}}, {'members': 1}):
+            members = group.get('members') or []
+            if len(set(members)) >= 2:
+                anchor = min((order[fid] for fid in members if fid in order), default=len(order))
+                found.append((anchor, str(group['_id'])))
+        return [gid for _, gid in sorted(found)]
+    except Exception as exc:
+        logger.warning(f"ungrouped membership lookup failed: {exc}")
+        raise _GroupCursorStorageError from exc
 
-    Unlike grouped search this does not create or modify groups. Keep separate
-    member and raw-stream positions, and deduplicate across both, so even a
-    large series can be paged without losing its remaining members.
+
+async def _flat_group_search_page(q, col, offset, lim, mode):
+    """Show every file separately, including members represented by group cards.
+
+    Recent groups are discovered from the same window as grouped view. Searches
+    also include group-title matches. No grouping writes are performed. Separate
+    member/raw positions and a seen set prevent skipped or duplicate files.
     """
     context = _cursor_context(q, col, "single")
     value = str(offset or "0")
@@ -1518,8 +1536,17 @@ async def _flat_group_search_page(q, col, offset, lim, mode):
             legacy_offset = max(0, int(value))
         except (ValueError, TypeError) as exc:
             raise ValueError("Invalid file pagination offset.") from exc
-        hits = await _group_hits(q) or []
-        ids = list(dict.fromkeys(str(g["_id"]) for g in hits if g.get("_id")))
+        if q:
+            hits = await _group_hits(q) or []
+            ids = list(dict.fromkeys(str(g["_id"]) for g in hits if g.get("_id")))
+        else:
+            ids = []
+        # Seed from the same window that grouped view uses. This exposes the
+        # older siblings of a visible group immediately, even if only one member
+        # is recent or matches by caption and has no group_id mark.
+        if not legacy_offset:
+            anchors, _ = await _fetch_page(q, col, 0, max(lim * 2, 16), False)
+            ids = list(dict.fromkeys(ids + await _flat_group_ids_for_docs(anchors)))
         # Legacy numeric offsets still address the ordinary raw stream.
         state = {"v": 1, "ctx": context, "groups": ids,
                  "gp": len(ids) if legacy_offset else 0, "mp": 0,
@@ -1536,6 +1563,7 @@ async def _flat_group_search_page(q, col, offset, lim, mode):
         # not the number of available files, so missing records cannot stall paging.
         chunk = members[state["mp"]:state["mp"] + max(lim - len(rows), 1)]
         if not chunk:
+            seen.add('g:' + state['groups'][state['gp']])
             state["gp"] += 1
             state["mp"] = 0
             continue
@@ -1552,9 +1580,15 @@ async def _flat_group_search_page(q, col, offset, lim, mode):
                 seen.add(token)
                 rows.append(row)
         if state["mp"] >= len(members):
+            seen.add('g:' + state['groups'][state['gp']])
             state["gp"] += 1
             state["mp"] = 0
 
+    # Completed groups no longer need to stay in the pending queue. Remember
+    # them in seen so their raw members cannot enqueue them repeatedly.
+    if state['gp']:
+        del state['groups'][:state['gp']]
+        state['gp'] = 0
     if state["gp"] < len(state["groups"]):
         state["seen"] = sorted(seen)
         return await _annotate_raw_groups(rows), await _encode_group_cursor(state)
@@ -1580,7 +1614,7 @@ async def _flat_group_search_page(q, col, offset, lim, mode):
             ids = [doc["_id"] for doc in docs if doc.get("_id")]
             async for group in groups.find({"members": {"$in": ids}}, {"members": 1}):
                 gid = str(group["_id"])
-                if gid not in known and len(set(group.get("members") or [])) >= 2:
+                if gid not in known and ('g:' + gid) not in seen and len(set(group.get("members") or [])) >= 2:
                     state["groups"].append(gid)
                     known.add(gid)
                     discovered = True
@@ -1626,12 +1660,9 @@ async def api_search(req):
     gf = req.query.get("gf", "all").lower()
     gf = {"ungroup": "single", "single": "single", "group": "group",
           "quality": "quality", "series": "series"}.get(gf, "all") if want_group else "all"
-    # The ungrouped view is a presentation choice, not a filter that removes
-    # grouped members. For searches, include files from matching group titles as
-    # well as individual file matches. Recent files already include everything.
-    flat_view = want_group and gf == "single" and bool(q)
-    if want_group and gf == "single" and not q:
-        want_group, gf = False, "all"
+    # Ungroup is a presentation choice: every file remains visible individually,
+    # including files represented by recent or search-matched group cards.
+    flat_view = want_group and gf == "single"
     gflag = ("g1" + gf) if want_group else "g0"
 
     if want_group:
