@@ -18,9 +18,14 @@ CARD_CSS = """
 .home-search-panel{margin-bottom:0}
 @media(min-width:768px){
   .search-zone{padding:24px 24px 10px}
-  .home-search-panel{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:nowrap}
-  .search-row1{flex:1;max-width:650px;margin-bottom:0}
-  .search-row2{margin-bottom:0;justify-content:flex-start;flex-shrink:0}
+  /* Keep the mobile markup/order but place every desktop filter below search. */
+  .home-search-panel{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-areas:'search search search' 'group collection mode';gap:10px}
+  .home-search-panel .search-row1,.home-search-panel .search-row2{display:contents}
+  .home-search-panel #qWrap{grid-area:search}
+  .home-search-panel #cddGfWrap{grid-area:group}
+  .home-search-panel #cddColWrap{grid-area:collection}
+  .home-search-panel #cddModeWrap{grid-area:mode}
+  .home-search-panel .cdd-btn,.home-search-panel #cddGfBtn{width:100%!important}
 }
 @media(max-width:767px){.search-row2 .cdd-wrap{flex:1 1 0}.search-row2 .cdd-btn{width:100%}}
 
