@@ -182,6 +182,7 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(db, "primary", self.cols["primary"]),
             patch.object(db, "cloud", self.cols["cloud"]), patch.object(db, "archive", self.cols["archive"]),
             patch.object(db, "groups", self.groups),
+            patch.object(self.groups, "aggregate", AsyncMock(wraps=self.groups.aggregate)),
         ]
         for p in patches:
             p.start()

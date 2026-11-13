@@ -67,17 +67,32 @@ async def api_register_step1(req):
         
     otp = str(secrets.randbelow(900000) + 100000)
     now = time.time()
+    # Discard expired registrations so abandoned OTPs and passwords do not
+    # stay in memory indefinitely when new users register.
+    for key, pending in list(temp.REG_PENDING.items()):
+        if pending.get('expiry', 0) <= now:
+            temp.REG_PENDING.pop(key, None)
+    if len(temp.REG_PENDING) >= 2000 and tg_id not in temp.REG_PENDING:
+        return web.HTTPFound('/register?err=Too many pending registrations. Please try again later.')
     temp.REG_PENDING[tg_id] = {'email': email, 'password': password, 'otp': otp, 'expiry': now + 300}
     try: 
         await temp.BOT.send_message(tg_id, f"🔐 **Web Registration Verification**\n\nSomeone is trying to link your Telegram ID to this email: `{email}`\n\n**Your OTP is:** `{otp}`\n\n_Valid for 5 mins._")
-    except Exception: 
+    except Exception:
+        # Do not retain plaintext password/OTP if delivery failed. Preserve a
+        # newer registration that may have started during the send.
+        if temp.REG_PENDING.get(tg_id, {}).get('otp') == otp:
+            temp.REG_PENDING.pop(tg_id, None)
         return web.HTTPFound('/register?err=Failed to send OTP. Please start the Bot first in Telegram PM.')
     return web.HTTPFound(f'/verify_registration?tg_id={tg_id}')
 
 @login_routes.get('/verify_registration')
 async def verify_registration_page(req):
-    tg_id = req.query.get('tg_id', '')
-    if not tg_id: return web.HTTPFound('/register')
+    try:
+        tg_id = int(req.query.get('tg_id', ''))
+        if tg_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return web.HTTPFound('/register')
     content = f'<p style="color:var(--muted); margin-bottom:15px; font-size:14px;">We sent a 6-digit OTP to your Telegram bot PM.</p><form action="/api/register_step2" method="post"><input type="hidden" name="tg_id" value="{tg_id}"><input type="text" name="otp" placeholder="Enter 6-digit OTP" required><button class="submit-btn" type="submit">Verify & Create Account</button></form>'
     return build_page("Verify Registration", form_wrapper("Verify OTP", content, req.query.get('err','')), "login-bg")
 
@@ -97,8 +112,13 @@ async def api_register_step2(req):
         temp.REG_PENDING.pop(tg_id, None)
         return web.HTTPFound('/register?err=Too many wrong attempts. Please start again.')
     if not secrets.compare_digest(str(pending['otp']).encode(), otp.encode()): return web.HTTPFound(f'/verify_registration?tg_id={tg_id}&err=Invalid OTP')
-    success, msg = await web_db.create_user(tg_id, pending['email'], pending['password'])
-    del temp.REG_PENDING[tg_id]
+    # Consume before awaiting the database so parallel correct submissions
+    # cannot both create an account or delete a newer pending registration.
+    temp.REG_PENDING.pop(tg_id, None)
+    try:
+        success, msg = await web_db.create_user(tg_id, pending['email'], pending['password'])
+    except Exception:
+        return web.HTTPFound('/register?err=Could not complete registration. Please try again.')
     if success:
         return web.HTTPFound('/login?msg=Account created successfully! Please login.')
     return web.HTTPFound(f'/register?err={msg}')

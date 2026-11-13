@@ -1,12 +1,15 @@
+import asyncio
 import logging
 import hashlib
 import hmac
 import secrets
 import time
+import weakref
 from datetime import datetime, timedelta, timezone
 from pymongo import ReturnDocument
-import pytz
-from motor.motor_asyncio import AsyncIOMotorClient
+from zoneinfo import ZoneInfo
+from pymongo import AsyncMongoClient
+from pymongo.errors import DuplicateKeyError
 from info import (DATABASE_URL, DATABASE_NAME, FILE_CAPTION, 
                   SPELL_CHECK, PROTECT_CONTENT, AUTO_DELETE, TIME_ZONE)
 
@@ -17,7 +20,7 @@ logger = logging.getLogger(__name__)
 # =========================================
 def get_local_now():
     """info.py के TIME_ZONE के अनुसार लाइव लोकल टाइम देता है"""
-    tz = pytz.timezone(TIME_ZONE)
+    tz = ZoneInfo(TIME_ZONE)
     return datetime.now(tz)
 
 # =========================================
@@ -46,8 +49,48 @@ DEFAULT_PLAN_STATUS = {
 # =========================================
 # 🌐 WEB AUTHENTICATION DATABASE (RAM Protected)
 # =========================================
+# New passwords use per-user salts and a deliberately expensive KDF. Legacy
+# SHA-256 hashes are verified once and upgraded on a successful login.
+PASSWORD_ITERATIONS = 600_000
+_PASSWORD_GATES = weakref.WeakKeyDictionary()
+
+
 def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), bytes.fromhex(salt), PASSWORD_ITERATIONS).hex()
+    return f'pbkdf2_sha256${PASSWORD_ITERATIONS}${salt}${digest}'
+
+
+def verify_password(password, stored):
+    if not isinstance(password, str) or not isinstance(stored, str):
+        return False
+    if '$' not in stored:
+        # Legacy accounts used an unsalted sha256 hex string.
+        try:
+            return hmac.compare_digest(hashlib.sha256(password.encode('utf-8')).hexdigest(), stored)
+        except TypeError:
+            return False
+    try:
+        algorithm, rounds, salt, digest = stored.split('$')
+        rounds = int(rounds)
+        if (algorithm != 'pbkdf2_sha256' or not 1 <= rounds <= 2_000_000
+                or len(salt) != 32 or len(digest) != 64):
+            return False
+        computed = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), bytes.fromhex(salt), rounds).hex()
+        return hmac.compare_digest(computed, digest)
+    except (ValueError, TypeError):
+        return False
+
+
+async def _password_work(func, *args):
+    # Keep password hashing off the event loop and bound CPU-heavy work on the
+    # small Koyeb instance. The gate is per loop (tests create multiple loops).
+    loop = asyncio.get_running_loop()
+    gate = _PASSWORD_GATES.get(loop)
+    if gate is None:
+        gate = _PASSWORD_GATES[loop] = asyncio.Semaphore(2)
+    async with gate:
+        return await asyncio.to_thread(func, *args)
 
 # ── 🔐 OTP / Session सेटिंग्स ──
 OTP_TTL = 600          # OTP 10 मिनट वैध
@@ -72,20 +115,38 @@ class WebAuthDB:
         user_data = {
             "tg_id": tg_id,
             "email": email,
-            "password": hash_password(password),
+            "password": await _password_work(hash_password, password),
             "joined_date": get_local_now() # सेंट्रलाइज्ड टाइमज़ोन सिंक
         }
         await self.col.insert_one(user_data)
         return True, "Account Created Successfully!"
 
     async def verify_login(self, email, password):
-        # वेबसाइट लॉगिन सिक्योरिटी ट्यूनिंग
-        return await self.col.find_one({"email": email, "password": hash_password(password)})
+        if not isinstance(email, str) or not isinstance(password, str):
+            return None
+        user = await self.col.find_one({"email": email})
+        if not user or not await _password_work(verify_password, password, user.get("password")):
+            return None
+        old_hash = user["password"]
+        if '$' not in old_hash:
+            new_hash = await _password_work(hash_password, password)
+            result = await self.col.update_one(
+                {"_id": user["_id"], "password": old_hash}, {"$set": {"password": new_hash}}
+            )
+            if not result.matched_count:
+                # Another login may have upgraded the same legacy hash, or a
+                # reset may have changed it. Authenticate against current data.
+                user = await self.col.find_one({"_id": user["_id"], "email": email})
+                if not user or not await _password_work(verify_password, password, user.get("password")):
+                    return None
+            else:
+                user["password"] = new_hash
+        return user
 
     async def update_profile(self, tg_id, new_email, new_password=None):
         update_data = {"email": new_email}
         if new_password:
-            update_data["password"] = hash_password(new_password)
+            update_data["password"] = await _password_work(hash_password, new_password)
         await self.col.update_one({"tg_id": tg_id}, {"$set": update_data})
 
     # ───────────── 🔐 PASSWORD-RESET OTP ─────────────
@@ -93,21 +154,29 @@ class WebAuthDB:
     # वापस पढ़ा जाता था और दोनों की तुलना TypeError देती थी — यानी सही OTP डालने पर भी
     # रीसेट 500 एरर से क्रैश होता था। अब समय epoch (संख्या) में सेव होता है, कोई टाइमज़ोन गड़बड़ नहीं।
     async def generate_otp(self, tg_id):
-        user = await self.col.find_one({"tg_id": tg_id}, {"otp_win": 1, "otp_sends": 1})
-        if not user:
-            return None
-        now = time.time()
-        win, sends = user.get("otp_win", 0), user.get("otp_sends", 0)
-        if now - win > OTP_TTL:                       # नई 10-मिनट की विंडो
-            win, sends = now, 0
-        if sends >= OTP_MAX_SENDS:
-            raise OTPRateLimited()
-        otp = str(secrets.randbelow(900000) + 100000)
-        await self.col.update_one({"tg_id": tg_id}, {
-            "$set": {"otp": otp, "otp_exp": now + OTP_TTL, "otp_tries": 0,
-                     "otp_win": win, "otp_sends": sends + 1},
-            "$unset": {"otp_expiry": ""}})
-        return otp
+        # Compare-and-set the send counter: concurrent requests must not all
+        # observe the same count and bypass the per-user rate limit.
+        for _ in range(12):
+            user = await self.col.find_one({"tg_id": tg_id}, {"otp_win": 1, "otp_sends": 1})
+            if not user:
+                return None
+            now = time.time()
+            win, sends = user.get("otp_win", 0), user.get("otp_sends", 0)
+            if now - win > OTP_TTL:
+                win, sends = now, 0
+            if sends >= OTP_MAX_SENDS:
+                raise OTPRateLimited()
+            otp = str(secrets.randbelow(900000) + 100000)
+            condition = {"_id": user["_id"]}
+            for field in ("otp_win", "otp_sends"):
+                condition[field] = user[field] if field in user else {"$exists": False}
+            result = await self.col.update_one(condition, {
+                "$set": {"otp": otp, "otp_exp": now + OTP_TTL, "otp_tries": 0,
+                         "otp_win": win, "otp_sends": sends + 1},
+                "$unset": {"otp_expiry": ""}})
+            if result.matched_count:
+                return otp
+        raise OTPRateLimited()
 
     async def verify_otp_and_reset(self, tg_id, otp, new_password):
         otp = str(otp or "").strip()
@@ -122,16 +191,23 @@ class WebAuthDB:
         if not user:
             return False
         clear = {"$unset": {"otp": "", "otp_exp": "", "otp_tries": "", "otp_expiry": ""}}
+        # Only act on the exact OTP observed above: a concurrent request may
+        # already have consumed it or issued a newer one.
+        current_otp = {"tg_id": tg_id, "otp": user.get("otp"), "otp_exp": user.get("otp_exp")}
         if user.get("otp_exp", 0) <= time.time() or user.get("otp_tries", 0) > OTP_MAX_TRIES:
-            await self.col.update_one({"tg_id": tg_id}, clear)
+            await self.col.update_one(current_otp, clear)
             return False
         if not hmac.compare_digest(str(user.get("otp", "")).encode(), otp.encode()):
-            if user.get("otp_tries", 0) >= OTP_MAX_TRIES:     # आख़िरी प्रयास भी गलत → OTP रद्द
-                await self.col.update_one({"tg_id": tg_id}, clear)
+            if user.get("otp_tries", 0) >= OTP_MAX_TRIES:
+                await self.col.update_one(current_otp, clear)
             return False
-        await self.col.update_one({"tg_id": tg_id},
-                                  {"$set": {"password": hash_password(new_password)}, **clear})
-        return True
+        new_hash = await _password_work(hash_password, new_password)
+        result = await self.col.update_one(
+            {"tg_id": tg_id, "otp": user.get("otp"),
+             "otp_exp": {"$eq": user.get("otp_exp"), "$gt": time.time()},
+             "otp_tries": {"$lte": OTP_MAX_TRIES}},
+            {"$set": {"password": new_hash}, **clear})
+        return bool(result.matched_count)
 
     # ───────────── 🍪 LOGIN SESSIONS (DB में, ताकि रीस्टार्ट/री-डिप्लॉय पर लॉगआउट न हो) ─────────────
     async def create_session(self, sid, tg_id, expiry):
@@ -159,8 +235,8 @@ class WebAuthDB:
 # =========================================
 class Database:
     def __init__(self):
-        # ✅ MOTOR ENGINE: कोएब आइडल थ्रॉटलिंग और कनेक्शन DROP से सुरक्षित ट्यूनिंग
-        self.client = AsyncIOMotorClient(
+        # ✅ PYMONGO ASYNC ENGINE: कोएब आइडल थ्रॉटलिंग और कनेक्शन DROP से सुरक्षित ट्यूनिंग
+        self.client = AsyncMongoClient(
             DATABASE_URL, 
             minPoolSize=0,            # आइडल टाइम पर 0 कनेक्शन (RAM 100% सेफ)
             maxPoolSize=15,           # हैवी ट्रैफिक के लिए 15 कनेक्शंस पूल
@@ -291,6 +367,35 @@ class Database:
     async def update_plan(self, uid, data): 
         await self.premium.update_one({"id": int(uid)}, {"$set": {"status": data}}, upsert=True)
         
+    async def decide_payment(self, uid, chat_id, message_id, action, admin_id, status=None):
+        """Atomically record one decision per receipt alongside any plan activation.
+
+        The existing unique Premiums.id index makes concurrent first-time account
+        creation safe. The decision and status update are one MongoDB document write,
+        so a duplicate callback cannot activate or reject the receipt twice.
+        """
+        uid = int(uid)
+        key = f"{int(chat_id)}_{int(message_id)}"
+        field = f"payment_decisions.{key}"
+        # Fail closed if the unique index is missing or cannot be built; without
+        # it simultaneous first-time approvals could create duplicate user docs.
+        await self.premium.create_index("id", unique=True)
+        try:
+            await self.premium.update_one(
+                {"id": uid}, {"$setOnInsert": {"status": dict(self.df_prm)}}, upsert=True
+            )
+        except DuplicateKeyError:
+            # Another handler created this user's Premiums record concurrently.
+            pass
+        decision = {"action": action, "admin_id": int(admin_id), "at": datetime.now(timezone.utc)}
+        changes = {field: decision}
+        if status is not None:
+            changes["status"] = status
+        result = await self.premium.update_one(
+            {"id": uid, field: {"$exists": False}}, {"$set": changes}
+        )
+        return bool(result.matched_count)
+
     async def get_premium_users(self): 
         # प्रीमियम लिस्ट एक्सपोर्ट करते समय केवल काम के फील्ड्स प्रोजेक्ट करें (Zero RAM Overhead)
         return self.premium.find({}, {"id": 1, "status": 1})
@@ -306,7 +411,8 @@ class Database:
         if not chat_id or not message_id:
             return False 
             
-        delete_at = get_local_now() + timedelta(seconds=delay_seconds) # ग्लोबल टाइमज़ोन सिंक
+        # Elapsed time is measured in UTC so DST transitions cannot shift the deadline.
+        delete_at = get_local_now().astimezone(timezone.utc) + timedelta(seconds=delay_seconds)
         
         # चैट आईडी और मैसेज आईडी का एकदम यूनिक कॉम्बो स्ट्रिंग बनाओ ताकि 'id: null' का लफड़ा हमेशा के लिए खत्म हो जाए!
         task_id = f"{int(chat_id)}_{int(message_id)}"
@@ -370,7 +476,8 @@ class Database:
             # स्टोर करता है, पर naive datetime को ज्यों-का-त्यों UTC मान लेता है —
             # नतीजा IST में करीब साढ़े 5 घंटे का mismatch (गलत count) आता था।
             # अब write और read दोनों जगह वही get_local_now() इस्तेमाल हो रहा है।
-            today_start = get_local_now() - timedelta(days=1)
+            # This is a rolling 24-hour window, including across DST transitions.
+            today_start = get_local_now().astimezone(timezone.utc) - timedelta(days=1)
             db_cursor = self.db["web_users"].find({"last_login": {"$gte": today_start}}, {"tg_id": 1})
             async for user in db_cursor:
                 ram_users.add(user.get("tg_id"))

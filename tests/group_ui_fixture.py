@@ -33,6 +33,7 @@ for name, col in cols.items():
     setattr(db, name, col)
 db.COLLECTIONS = api.COLLECTIONS = {**cols, "actors": store.Actors}
 db.groups = api.groups = store.QualityGroups
+db.groups.aggregate = AsyncMock(wraps=db.groups.aggregate)
 api.group_seq = store.QualityGroupSeq
 api.group_search_cursors = store.GroupSearchCursors
 api.FILE_COLLECTIONS = cols

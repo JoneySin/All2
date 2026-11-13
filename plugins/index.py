@@ -4,7 +4,7 @@ import asyncio
 import logging
 import gc
 from hydrogram import Client, filters, enums
-from hydrogram.errors import FloodWait
+from hydrogram.errors import FloodWait, ListenerTimeout
 from info import ADMINS, LOG_CHANNEL
 from database.ia_filterdb import save_file, file_already_indexed
 from media_probe import probe_telegram_file, should_probe_media
@@ -57,16 +57,35 @@ def index_status_text(collection_type, time_taken, current, saved, duplicate,
         f"📁 Saved Files: <code>{saved}</code>\n"
         f"🔄 Duplicates: <code>{duplicate}</code>\n"
         f"🗑 Deleted: <code>{deleted}</code>\n"
-        f"❌ No Media: <code>{no_media + unsupported}</code>\n"
+        f"❌ No Media: <code>{no_media}</code>\n"
         f"⚠️ Unsupported: <code>{unsupported}</code>\n"
         f"❗ Errors: <code>{errors}</code>\n"
         f"🚫 Bad Files: <code>{badfiles}</code>"
     )
 
-@Client.on_callback_query(filters.regex(r'^index'))
+@Client.on_callback_query(filters.regex(r'^index#'))
 async def index_files(bot, query):
-    data_parts = query.data.split("#")
+    if not query.from_user or query.from_user.id not in ADMINS:
+        return await query.answer('❌ Admin access required.', show_alert=True)
+    data_parts = query.data.split('#')
+    if len(data_parts) < 2 or data_parts[1] not in ('yes', 'ask_skip', 'start', 'cancel'):
+        return await query.answer('❌ Invalid indexing request.', show_alert=True)
     ident = data_parts[1]
+    expected = {'yes': 5, 'ask_skip': 4, 'start': 6}
+    if ident in expected:
+        try:
+            if len(data_parts) != expected[ident] or not data_parts[2]:
+                raise ValueError
+            last = int(data_parts[3])
+            if last <= 0:
+                raise ValueError
+            if ident in ('yes', 'start') and not 0 <= int(data_parts[4]) <= last:
+                raise ValueError
+            if ident == 'start' and data_parts[5] not in ('primary', 'cloud', 'archive'):
+                raise ValueError
+        except ValueError:
+            return await query.answer('❌ Invalid indexing request.', show_alert=True)
+    await query.answer()
     
     if ident == 'yes':
         chat = data_parts[2]
@@ -84,10 +103,15 @@ async def index_files(bot, query):
         try:
             msg = await bot.listen(chat_id=query.message.chat.id, user_id=query.from_user.id, timeout=60)
             skip = int(msg.text)
-            await msg.delete()
-        except:
+            if not 0 <= skip <= int(lst_msg_id):
+                raise ValueError
+        except (ValueError, TypeError, asyncio.TimeoutError, ListenerTimeout):
             return await query.message.edit("❌ Invalid number or Timeout. Try again.")
-            
+        try:
+            await msg.delete()
+        except Exception:
+            logger.debug("Could not delete indexing skip reply", exc_info=True)
+
         await show_collection_picker(query, chat, lst_msg_id, skip)
 
     

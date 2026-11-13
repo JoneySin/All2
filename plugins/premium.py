@@ -1,26 +1,12 @@
 import io
 import qrcode
+from qrcode.image.pure import PyPNGImage
 import asyncio
 import logging
 from datetime import timedelta
 
-# ─────────────────────────────────────────────────────────
-# 🔥 CRITICAL EXPLICIT PATCH: Forced Event Loop for Pyromod & uvloop Sync
-# ─────────────────────────────────────────────────────────
-try:
-    asyncio.get_running_loop()
-except RuntimeError:
-    try:
-        import uvloop
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-    except ImportError:
-        pass
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-# Ab pyromod bina kisi thread crash ke safely load hoga
-import pyromod.listen  # noqa: F401  (side-effect import: Client.listen() isi se aata hai)
 from hydrogram import Client, filters
+from hydrogram.errors import ListenerTimeout, MessageNotModified
 from hydrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 # डेटाबेस इम्पोर्ट्स
@@ -45,6 +31,8 @@ from utils import (
 
 logger = logging.getLogger(__name__)
 VERIFY_CACHE = {}
+# One active purchase conversation per user within this bot instance.
+ACTIVE_PURCHASES = set()
 
 ADMIN_MSG = "👑 <b>You are the Admin!</b>\nYou have Lifetime Premium access."
 ADMIN_ALERT = "👑 You are the Admin! You have Lifetime Premium access."
@@ -212,58 +200,116 @@ async def myplan_cb(client, query):
     left = f"{(exp - now).days} days, {(exp - now).seconds//3600} hours" if exp else "Unknown"
     await query.message.edit_caption(f"💎 <b>Premium Subscription Status</b>\n\n📦 Plan Model: {mp.get('plan')}\n⏳ Expires: {format_plan_expiry(exp)}\n⏱ Duration Left: {left}\n\nUse /plan to extend duration.", reply_markup=InlineKeyboardMarkup(btn))
 
+def _payment_qr(upi_url):
+    """Render a PNG without Pillow. Call off the event loop (pure Python work)."""
+    img = qrcode.make(upi_url, image_factory=PyPNGImage)
+    bio = io.BytesIO()
+    img.save(bio)
+    bio.seek(0)
+    return bio
+
 @Client.on_callback_query(filters.regex(r"^(buy_prem|activate_plan)$"))
 async def buy_callback(c, q):
     if q.from_user.id in ADMINS: return await q.answer(ADMIN_ALERT, show_alert=True)
 
-    prm_msg = await q.message.edit(f"💎 <b>Select Plan Duration Mode</b>\n\nReply to this message with total days (e.g. <code>30</code>).\nPrice: ₹{PRE_DAY_AMOUNT} / Per Day\n\n⏳ Timeout Session: 60s")
+    uid = q.from_user.id
+    if uid in ACTIVE_PURCHASES:
+        return await q.answer("A payment session is already active. Please finish it first.", show_alert=True)
+    ACTIVE_PURCHASES.add(uid)
     try:
-        resp = await c.listen(q.message.chat.id, timeout=60)
+        try:
+            await q.answer()
+        except Exception:
+            logger.warning("Could not acknowledge purchase callback", exc_info=True)
+        try:
+            prm_msg = await q.message.edit(f"💎 <b>Select Plan Duration Mode</b>\n\nReply to this message with total days (e.g. <code>30</code>).\nPrice: ₹{PRE_DAY_AMOUNT} / Per Day\n\n⏳ Timeout Session: 60s") or q.message
+        except MessageNotModified:
+            # The prompt was already shown (e.g. retry after a timeout).
+            prm_msg = q.message
+        resp = await c.listen(chat_id=q.message.chat.id, user_id=q.from_user.id, timeout=60)
         await safe_del(c, q.message.chat.id, [prm_msg.id, resp.id])
         days = int(resp.text)
         
         if days <= 0: return await q.message.reply("❌ <b>Invalid Duration Selection!</b> Days must be at least 1.")
         amount = days * int(PRE_DAY_AMOUNT)
         
-        img = qrcode.make(f"upi://pay?pa={UPI_ID}&pn={UPI_NAME}&am={amount}&cu=INR")
-        bio = io.BytesIO()
-        img.save(bio, format="PNG")
-        bio.seek(0)
+        upi_url = f"upi://pay?pa={UPI_ID}&pn={UPI_NAME}&am={amount}&cu=INR"
+        bio = await asyncio.to_thread(_payment_qr, upi_url)
         
         qr_msg = await q.message.reply_photo(photo=bio, caption=f"💳 <b>UPI SECURE PAYMENT INSTANT GENERATED</b>\n\n» Amount To Pay: <code>₹{amount}</code>\n» Subscription Pack: <code>{days} Days</code>\n\nScan QR & pay. Then send payment screenshot here within 5 mins 👇\n\n⏳ Timeout Session: 5 mins")
-        receipt = await c.listen(q.message.chat.id, timeout=300)
+        receipt = await c.listen(chat_id=q.message.chat.id, user_id=q.from_user.id, timeout=300)
         
         if not receipt.photo: return await q.message.reply("❌ <b>Invalid Asset Sent!</b> Please send valid transaction receipt photo only.")
         
         await safe_del(c, q.message.chat.id, [qr_msg.id])
-        VERIFY_CACHE[q.from_user.id] = (await q.message.reply("✅ <b>Transaction Sent to Admin Panel for Verification!</b>\nYour premium pack will activate shortly.")).id
-        
+        # Only tell the user it was submitted after the receipt reaches the admin.
         await receipt.copy(RECEIPT_SEND_USERNAME, caption=f"#Payment\n👤 Profile: {q.from_user.mention} (<code>{q.from_user.id}</code>)\n💰 Amount: ₹{amount} ({days} days)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Approve Payment", callback_data=f"pay_confirm_{q.from_user.id}_{days}"), InlineKeyboardButton("❌ Reject Invoice", callback_data=f"pay_reject_{q.from_user.id}")]]))
+        VERIFY_CACHE[q.from_user.id] = (await q.message.reply("✅ <b>Transaction Sent to Admin Panel for Verification!</b>\nYour premium pack will activate shortly.")).id
     except ValueError: await q.message.reply("❌ Invalid Numeric Entry!")
-    except asyncio.TimeoutError:
-        VERIFY_CACHE.pop(q.from_user.id, None)
+    except (asyncio.TimeoutError, ListenerTimeout):
         await q.message.reply("⏳ <b>Transaction Window Timeout!</b> Process cancelled.")
-    except Exception as e: await q.message.reply(f"❌ <b>Execution Error:</b> <code>{e}</code>")
+    except Exception:
+        logger.exception("Payment session failed for user %s", uid)
+        await q.message.reply("❌ Could not complete the payment session. Please try again or contact an admin.")
+    finally:
+        ACTIVE_PURCHASES.discard(uid)
 
 @Client.on_callback_query(filters.regex(r"^pay_(confirm|reject)_"))
 async def pay_action(c, q):
-    if q.from_user.id not in ADMINS: return await q.answer("❌ Verification Access Denied!", show_alert=True)
-    
-    tokens = q.data.split("_")
-    act = tokens[1]
-    uid = int(tokens[2])
+    if q.from_user.id not in ADMINS:
+        return await q.answer("❌ Verification Access Denied!", show_alert=True)
 
+    tokens = q.data.split("_")
+    try:
+        act, uid = tokens[1], int(tokens[2])
+        if uid <= 0 or act not in ("confirm", "reject"):
+            raise ValueError
+        days = int(tokens[3]) if act == "confirm" else None
+        if act == "confirm" and (len(tokens) != 4 or days <= 0):
+            raise ValueError
+        if act == "reject" and len(tokens) != 3:
+            raise ValueError
+        chat_id, message_id = int(q.message.chat.id), int(q.message.id)
+        ex = get_local_now() + timedelta(days=days) if days is not None else None
+    except (ValueError, IndexError, OverflowError, AttributeError, TypeError):
+        return await q.answer("❌ Invalid payment action.", show_alert=True)
+
+    # An old receipt already edited by an earlier deployment has no buttons.
+    # Do not apply a stale callback merely because it predates our decision ledger.
+    if hasattr(q.message, "reply_markup") and q.message.reply_markup is None:
+        return await q.answer("This payment has already been processed.", show_alert=True)
+
+    status = ({**RESET_PLAN_STATUS, "expire": ex.strftime("%Y-%m-%d %H:%M:%S"),
+               "plan": f"{days} Days", "premium": True} if ex else None)
+    try:
+        applied = await db.decide_payment(uid, chat_id, message_id, act, q.from_user.id, status)
+    except Exception:
+        logger.exception("Could not record payment decision for receipt %s/%s", chat_id, message_id)
+        return await q.answer("❌ Could not save the decision. Please retry.", show_alert=True)
+
+    if not applied:
+        return await q.answer("This payment has already been processed.", show_alert=True)
+
+    # Database decision is already durable; Telegram display errors must not
+    # prevent notifying the user or reapply a plan on a subsequent click.
+    try:
+        await q.answer("Payment approved." if act == "confirm" else "Payment rejected.")
+    except Exception:
+        logger.warning("Could not acknowledge payment callback", exc_info=True)
+    try:
+        label = "✅ <b>Approved by:</b>" if act == "confirm" else "❌ <b>Rejected by:</b>"
+        await q.message.edit_caption(caption=(q.message.caption or "") + f"\n\n{label} {q.from_user.mention}", reply_markup=None)
+    except MessageNotModified:
+        pass
+    except Exception:
+        logger.warning("Payment decision saved, but receipt display could not be updated", exc_info=True)
     if act == "confirm":
-        days = int(tokens[3])
-        ex = get_local_now() + timedelta(days=days)
-        await db.update_plan(uid, {**RESET_PLAN_STATUS, "expire": ex.strftime("%Y-%m-%d %H:%M:%S"), "plan": f"{days} Days", "premium": True})
-        await q.message.edit_caption(caption=q.message.caption + f"\n\n✅ <b>Approved by:</b> {q.from_user.mention}", reply_markup=None)
-        try: await c.send_message(uid, f"🎉 <b>Congratulations Member!</b>\n\n✅ Your premium plan of <b>{days} Days</b> is successfully Active.\n📅 <b>Expires On:</b> {format_plan_expiry(ex)}\n\nEnjoy our lightning fast search, streaming & download benefits! ❤️")
-        except: pass
+        notice = f"🎉 <b>Congratulations Member!</b>\n\n✅ Your premium plan of <b>{days} Days</b> is successfully Active.\n📅 <b>Expires On:</b> {format_plan_expiry(ex)}\n\nEnjoy our lightning fast search, streaming & download benefits! ❤️"
     else:
-        await q.message.edit_caption(caption=q.message.caption + f"\n\n❌ <b>Rejected by:</b> {q.from_user.mention}", reply_markup=None)
-        try: await c.send_message(uid, "❌ <b>Subscription Invoice Verification Rejected!</b>\nPlease check screenshot or contact admin manually.")
-        except: pass
-        
+        notice = "❌ <b>Subscription Invoice Verification Rejected!</b>\nPlease check screenshot or contact admin manually."
+    try:
+        await c.send_message(uid, notice)
+    except Exception:
+        logger.warning("Payment decision saved, but user notification failed for %s", uid, exc_info=True)
     if uid in VERIFY_CACHE:
         await safe_del(c, uid, [VERIFY_CACHE.pop(uid)])

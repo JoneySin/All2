@@ -1,7 +1,7 @@
 import logging
 import re
 import time
-import pytz
+from zoneinfo import ZoneInfo
 from datetime import datetime
 from hydrogram import enums
 
@@ -75,7 +75,7 @@ async def is_check_admin(bot, chat_id, user_id):
 # tz-aware datetime compare करने पर Python TypeError देता है। इसलिए दोनों को
 # जानबूझकर अलग रखा गया है, मर्ज मत करना।
 def get_local_now():
-    tz = pytz.timezone(TIME_ZONE)
+    tz = ZoneInfo(TIME_ZONE)
     return datetime.now(tz).replace(tzinfo=None)
 
 # ─────────────────────────────────────────────
@@ -191,7 +191,7 @@ def get_duration_str(seconds):
 
 def get_wish():
     # ✅ FIX: कचरा टेक्स्ट और अशुद्धियों को हटाकर कस्टमाइज्ड टाइमज़ोन विश इंजन सिंक किया गया
-    tz = pytz.timezone(TIME_ZONE)
+    tz = ZoneInfo(TIME_ZONE)
     h = datetime.now(tz).hour
     return "ɢᴏᴏᴅ ᴍᴏʀɴɪɴɢ 🌞" if h < 12 else "ɢᴏᴏᴅ ᴀꜰᴛᴇʀɴᴏᴏɴ 🌗" if h < 18 else "ɢᴏᴏᴅ ᴇᴠᴇɴɪɴɢ 🌘"
 

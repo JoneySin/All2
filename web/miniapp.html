@@ -6,7 +6,7 @@
 <title>Fast Finder</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/plyr@3.8.5/dist/plyr.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#141414;--bg2:#000;--bg3:#2b2b2b;--bg4:#1f1f1f;--card:#181818;--ac:#e50914;--txt:#fff;--mu:#808080;--br:rgba(128,128,128,.2)}
@@ -421,7 +421,7 @@ function openSheet(url,title,downloadUrl){
   Q1('#playerSheet').classList.add('open');
   document.body.style.overflow='hidden';
   if(typeof Plyr==='function'){
-    plyr=new Plyr('#pv2',{controls:['play-large','play','progress','current-time','mute','settings','fullscreen'],settings:['speed'],autoplay:true});
+    plyr=new Plyr('#pv2',{iconUrl:'https://cdn.jsdelivr.net/npm/plyr@3.8.5/dist/plyr.svg',controls:['play-large','play','progress','current-time','mute','settings','fullscreen'],settings:['speed'],autoplay:true});
     plyr.on('enterfullscreen',()=>screen.orientation?.lock?.('landscape').catch(()=>{}));
     plyr.on('exitfullscreen',()=>screen.orientation?.unlock?.());
   }else{let play=video.play();if(play&&play.catch)play.catch(()=>{});}
@@ -452,6 +452,6 @@ if(ID){
 
 
 </script>
-<script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/plyr@3.8.5/dist/plyr.min.js"></script>
 </body>
 </html>

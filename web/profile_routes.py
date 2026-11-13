@@ -1,6 +1,8 @@
+import html
+
 from aiohttp import web
 from web.web_assets import build_page, get_auth
-from database.users_chats_db import db as user_db, web_db, hash_password
+from database.users_chats_db import db as user_db, web_db, hash_password, _password_work
 
 profile_routes = web.RouteTableDef()
 
@@ -74,8 +76,11 @@ async def profile_page(req):
         st_txt, exp_txt, st_clr = "💎 Premium User", (mp.get('expire') or 'Unknown'), "#3399ff"
     else:
         st_txt, exp_txt, st_clr = "🆓 Free Account (No Active Plan)", "Use /plan in Bot PM to activate", "#808080"
-    err_h = f'<div class="err-box">{req.query.get("err", "")}</div>' if req.query.get('err') else ''
-    msg_h = f'<div class="success-box">{req.query.get("msg", "")}</div>' if req.query.get('msg') else ''
+    err_h = f'<div class="err-box">{html.escape(req.query.get("err", ""))}</div>' if req.query.get('err') else ''
+    msg_h = f'<div class="success-box">{html.escape(req.query.get("msg", ""))}</div>' if req.query.get('msg') else ''
+    email = html.escape(str(email or ''), quote=True)
+    exp_txt = html.escape(str(exp_txt), quote=True)
+    tg_id = html.escape(str(tg_id), quote=True)
 
     b = f'''{_PROFILE_CSS}<div class="main" style="padding-top:40px; max-width:700px;"><div class="scard">{err_h}{msg_h}<h2 style="margin-bottom:24px;">Account Settings</h2>
     <div class="prof-status" style="border-left:4px solid {st_clr};"><div style="font-size:12px;color:var(--muted);margin-bottom:5px;">Account Status</div><div style="font-size:18px;font-weight:700;color:{st_clr};margin-bottom:8px;">{st_txt}</div><div style="font-size:12px;color:var(--muted);margin-bottom:2px;">Subscription expires:</div><div style="font-size:15px;font-weight:500;">{exp_txt}</div></div>
@@ -113,7 +118,7 @@ async def api_update_profile(req):
         return web.HTTPFound('/profile?err=This email is already in use by another account!')
 
     update_data = {"email": new_email}
-    if new_pass: update_data["password"] = hash_password(new_pass)
+    if new_pass: update_data["password"] = await _password_work(hash_password, new_pass)
 
     try:
         await web_db.col.update_one({"tg_id": tg_id}, {"$set": update_data})

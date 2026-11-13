@@ -64,11 +64,15 @@ async def start_auto_delete_timer(client, chat_id, message_id, delay=300):
         try:
             await asyncio.sleep(delay)
             await client.delete_messages(chat_id, message_id)
-            ACTIVE_DELETE_TASKS.pop(task_key, None)
         except asyncio.CancelledError:
             pass # टाइमर रिसेट होने पर बिना डिलीट किए बंद हो जाएगा
         except Exception as e:
             logger.error(f"Auto-delete runtime error: {e}")
+        finally:
+            # A cancelled timer can finish after its replacement was registered.
+            # Never remove the replacement, but do clean up failures and cancels.
+            if ACTIVE_DELETE_TASKS.get(task_key) is asyncio.current_task():
+                ACTIVE_DELETE_TASKS.pop(task_key, None)
 
     # नया 5 मिनट का फ्रेश टाइमर टास्क सेट करें
     task = asyncio.create_task(_delete_task())

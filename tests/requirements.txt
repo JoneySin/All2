@@ -1,2 +1,5 @@
 # Additional dependency for the in-memory MongoDB integration tests.
 mongomock-motor>=0.0.36
+
+# Exercises the actual PyMongo async wire protocol with a test-only mock server.
+mockupdb==1.8.1

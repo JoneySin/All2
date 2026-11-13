@@ -6,7 +6,7 @@ import time
 import uuid
 from struct import pack
 from bson.objectid import ObjectId
-import motor.motor_asyncio
+from pymongo import AsyncMongoClient
 from hydrogram.file_id import FileId
 from hydrogram.errors import FloodWait
 from info import DATABASE_URL, DATABASE_NAME, USE_CAPTION_FILTER, DELETE_CHANNEL
@@ -16,9 +16,9 @@ from media_probe import should_probe_media
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────
-# ⚙️ MOTOR CONNECTION — Memory-Leak & RAM Guard Optimized
+# ⚙️ PYMONGO ASYNC CONNECTION — Memory-Leak & RAM Guard Optimized
 # ─────────────────────────────────────────────────────────
-client = motor.motor_asyncio.AsyncIOMotorClient(
+client = AsyncMongoClient(
     DATABASE_URL,
     maxPoolSize=15,             
     minPoolSize=0,              
@@ -164,7 +164,7 @@ async def get_saved_group_counts():
     }}]
     counts = {"quality": 0, "series": 0}
     try:
-        async for row in groups.aggregate(pipeline):
+        async for row in await groups.aggregate(pipeline):
             counts[row["_id"]] = row["count"]
     except Exception:
         logger.exception("Could not count saved groups")
@@ -206,7 +206,7 @@ async def get_post_category_counts():
     try:
         pipeline = [{"$group": {"_id": {"$ifNull": ["$category", "Uncategorized"]},
                                 "count": {"$sum": 1}}}]
-        async for doc in posts.aggregate(pipeline):
+        async for doc in await posts.aggregate(pipeline):
             counts[doc["_id"]] = doc["count"]
     except Exception as e:
         logger.error(f"Post Stats Error: {e}")

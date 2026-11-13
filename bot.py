@@ -5,7 +5,7 @@ import os
 import time
 from typing import Union, AsyncGenerator
 from datetime import datetime, timezone
-import pytz
+from zoneinfo import ZoneInfo
 
 # ==========================================================
 # 🔥 UVLOOP (High Performance C-Based Event Loop Engine)
@@ -140,7 +140,7 @@ class Bot(Client):
         logger.info("🛡️ Premium Global Security Guard Activated")
 
         # 5. Persistent Hard Restart Logic Sync
-        local_tz = pytz.timezone(TIME_ZONE)
+        local_tz = ZoneInfo(TIME_ZONE)
 
         def build_status_msg():
             now = datetime.now(local_tz)
@@ -241,18 +241,20 @@ class Bot(Client):
         logger.info("System Halted Gracefully. All Memory Freed ✅")
 
     async def iter_messages(self, chat_id: Union[int, str], limit: int, offset: int = 0) -> AsyncGenerator["types.Message", None]:
+        """Yield message IDs offset+1 through limit, including deleted placeholders."""
         current = offset
         while current < limit:
             diff = min(200, limit - current)
             try:
-                messages = await self.get_messages(chat_id, list(range(current, current + diff)))
-                for message in messages:
-                    if message and not message.empty: 
-                        yield message
-                current += diff
-            except Exception as e:
-                logger.error(f"Error fetching messages: {e}")
-                return
+                messages = await self.get_messages(chat_id, list(range(current + 1, current + diff + 1)))
+            except Exception:
+                # The indexing UI must report an interrupted scan, not success.
+                logger.exception("Error fetching indexing messages")
+                raise
+            for message in messages:
+                if message is not None:
+                    yield message
+            current += diff
 
 # ==========================================================
 # KICKSTART LIFE-CYCLE LOOP
