@@ -4,6 +4,9 @@ import base64
 import asyncio
 import time
 import uuid
+import unicodedata
+import weakref
+from difflib import SequenceMatcher
 from struct import pack
 from bson.objectid import ObjectId
 from pymongo import AsyncMongoClient
@@ -767,106 +770,143 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
 
 
 # ─────────────────────────────────────────────────────────
-# 🧠 DB-BASED SPELL SUGGESTIONS (Google Suggest के बजाय अपने ही
-# catalog से "Did you mean" सुझाव — इसलिए सुझाया गया नाम हमेशा
-# वाकई मौजूद कंटेंट से जुड़ा होता है, Google जैसा "फिर भी नहीं मिला"
-# वाला case नहीं आता, और कोई external API call भी नहीं लगती)
+# Database-only, bounded spelling suggestions for bot PM and group search
 # ─────────────────────────────────────────────────────────
-def _clean_title_guess(file_name: str) -> str:
-    """✅ FIX: पहले यहाँ quality/resolution/year/extension जैसे tokens को
-    ढूंढकर काट दिया जाता था और फिर casing भी बदली जाती थी — इससे suggestion
-    का टेक्स्ट DB में save असली file_name से अलग दिखता था (जैसे "l" की जगह
-    "L", या "1080p l Test" वाला हिस्सा पूरी तरह गायब)। अब suggestion हमेशा
-    file_name जैसा DB में है बिल्कुल वैसा ही (सिर्फ extra/multiple spaces
-    normalize करके) दिखाया जाता है — कोई trimming, cleaning या case-change
-    नहीं।"""
-    if not file_name: return ""
-    return re.sub(r'\s+', ' ', file_name).strip()
+_SPELL_CANDIDATES_PER_COLLECTION = 50
+_SPELL_MAX_VERIFICATIONS = 12
+_SPELL_MAX_TIME_MS = 1200
+_SPELL_LOOKUP_GATES = weakref.WeakKeyDictionary()
 
 
-def _dedupe_titles(docs, limit: int, seen: set):
-    """docs से unique, non-empty titles निकालता है (case-insensitive dedupe)।
+def _spell_words(text, max_words):
+    # Preserve combining marks in scripts such as Hindi. Limit work for both
+    # arbitrary user input and unusually long filenames.
+    text = unicodedata.normalize("NFKC", text[:512]).casefold()
+    chars = (c if c.isalnum() or unicodedata.category(c).startswith("M") else " " for c in text)
+    return [word[:40] for word in "".join(chars).split()[:max_words]]
 
-    ✅ DRY: यह 8-लाइन वाला loop get_db_spell_suggestions() में दो बार हुबहू लिखा
-    था (text-search candidates और prefix-fallback candidates के लिए)। `seen` को
-    in-place update करता है ताकि दोनों चरणों में dedupe आपस में जुड़ा रहे।
-    """
-    out = []
-    for doc in docs:
-        title = _clean_title_guess(doc.get("file_name", ""))
-        key = title.lower()
-        if not title or key in seen:
-            continue
-        seen.add(key)
-        out.append(title)
-        if len(out) >= limit:
-            break
-    return out
+
+def _spell_score(words, title):
+    title_words = _spell_words(title, 32)
+    if not title_words:
+        return 0.0
+    scores = []
+    for word in words:
+        best = max(SequenceMatcher(None, word, token, autojunk=False).ratio()
+                   for token in title_words)
+        # A shared word like "the" alone should not make an unrelated movie
+        # a recommendation. Stop scoring obvious non-matches early.
+        if best < 0.65:
+            return 0.0
+        scores.append(best)
+    score = sum(scores) / len(scores)
+    return score if score >= 0.72 else 0.0
+
+
+def _spell_fragments(words):
+    # Adjacent 3-character fragments catch many single-character typos,
+    # including mistakes near the start. Restrict query size and never
+    # interpolate unescaped regex input. Short tokens use $text only.
+    fragments = []
+    for word in sorted((w for w in words if len(w) >= 4), key=len, reverse=True)[:3]:
+        for start in (0, (len(word) - 3) // 2, len(word) - 3):
+            fragment = word[start:start + 3]
+            if fragment not in fragments:
+                fragments.append(fragment)
+    return fragments
+
 
 async def get_db_spell_suggestions(query, limit=5, collection_type="all"):
-    q = str(query or "").strip()
-    if not q: return []
-
-    cols = [primary, cloud, archive] if collection_type == "all" else [COLLECTIONS.get(collection_type, primary)]
-    seen = {q.lower()}
-    candidates = []
-
-    try:
-        # ✅ unquoted $text search जानबूझकर लगाया — get_search_results वाला strict
-        # (हर शब्द quoted, phrase-जैसा) search typo पर कुछ नहीं देगा। यहाँ ढीला
-        # OR-style stemmed match चाहिए ताकि छोटी spelling गलतियों पर भी करीबी
-        # titles मिल जाएँ।
-        tasks = [
-            col.find(
-                {"$text": {"$search": q}},
-                {"file_name": 1, "score": {"$meta": "textScore"}}
-            ).sort([("score", {"$meta": "textScore"})]).limit(15).to_list(length=15)
-            for col in cols
-        ]
-        results_lists = await asyncio.gather(*tasks, return_exceptions=True)
-    except Exception as e:
-        logger.debug(f"DB spell suggestion text-search failed: {e}")
+    # Bound expensive fuzzy scans per bot instance. Under load, fail closed
+    # rather than accumulating an unbounded queue of pending searches.
+    loop = asyncio.get_running_loop()
+    gate = _SPELL_LOOKUP_GATES.get(loop)
+    if gate is None:
+        gate = _SPELL_LOOKUP_GATES[loop] = asyncio.Semaphore(2)
+    if gate.locked():
         return []
-
-    for res in results_lists:
-        if isinstance(res, Exception):
-            continue
-        candidates.extend(res)
-
-    candidates.sort(key=lambda d: d.get("score", 0), reverse=True)
-
-    suggestions = _dedupe_titles(candidates, limit, seen)
-
-    # ✅ FIX: पूरी तरह अनजान/बिगड़ा हुआ query (जैसे "Hootx") पर ऊपर वाला
-    # stemmed $text search भी कभी-कभी कुछ नहीं देता (कोई शब्द match ही नहीं
-    # होता), और तब पहले suggestions पूरी तरह खाली रह जाते थे। अब उस case में
-    # query के पहले 3 अक्षरों से एक ढीला "prefix" regex fallback चलाया जाता है
-    # — ताकि कम से कम मिलते-जुलते शुरुआती अक्षरों वाले titles तो सुझाए जा सकें।
-    if not suggestions and len(q) >= 3:
-        prefix = re.escape(q[:3])
-        prefix_regex = re.compile(r'(\b|[\s.\-_])' + prefix, re.IGNORECASE)
+    async with gate:
         try:
-            tasks = [
-                col.find(
-                    {"file_name": prefix_regex},
-                    {"file_name": 1}
-                ).limit(15).to_list(length=15)
-                for col in cols
-            ]
-            prefix_results = await asyncio.gather(*tasks, return_exceptions=True)
-        except Exception as e:
-            logger.debug(f"DB spell suggestion prefix-fallback failed: {e}")
-            prefix_results = []
+            return await asyncio.wait_for(_find_db_spell_suggestions(query, limit, collection_type), timeout=8)
+        except asyncio.TimeoutError:
+            logger.warning("Spell suggestion lookup timed out")
+            return []
 
-        prefix_candidates = []
-        for res in prefix_results:
-            if isinstance(res, Exception):
+
+async def _find_db_spell_suggestions(query, limit, collection_type):
+    q = str(query or "").strip()
+    words = _spell_words(q, 8)
+    if not words or len(q) > 120 or limit <= 0:
+        return []
+    limit = min(limit, 5)
+    cols = [primary, cloud, archive] if collection_type == "all" else [COLLECTIONS.get(collection_type, primary)]
+    text_query = " ".join(words)
+    fragments = _spell_fragments(words)
+
+    async def candidates_from(col, use_text):
+        try:
+            if use_text:
+                cursor = col.find({"$text": {"$search": text_query}},
+                                  {"file_name": 1, "score": {"$meta": "textScore"}})
+                cursor = cursor.sort([("score", {"$meta": "textScore"})])
+            else:
+                cursor = col.find({"$or": [{"file_name": re.compile(re.escape(part), re.IGNORECASE)}
+                                            for part in fragments]}, {"file_name": 1})
+            return await cursor.limit(_SPELL_CANDIDATES_PER_COLLECTION).max_time_ms(_SPELL_MAX_TIME_MS).to_list(
+                length=_SPELL_CANDIDATES_PER_COLLECTION)
+        except Exception as exc:
+            # A broken index or a timeout should not send the query to a third
+            # party or turn unrelated matches into suggestions.
+            logger.warning("Spell candidate lookup failed in %s: %s", col.name, exc)
+            return []
+
+    tasks = [candidates_from(col, True) for col in cols]
+    if fragments:
+        tasks.extend(candidates_from(col, False) for col in cols)
+    rows = await asyncio.gather(*tasks)
+    ranked, seen = [], set()
+    examined = 0
+    for row in rows:
+        for doc in row:
+            examined += 1
+            if examined % 5 == 0:
+                # Do not monopolize the bot's event loop during fuzzy ranking;
+                # this also lets the overall lookup timeout cancel CPU work.
+                await asyncio.sleep(0)
+            name = doc.get("file_name")
+            if not isinstance(name, str):
                 continue
-            prefix_candidates.extend(res)
+            title = re.sub(r'\s+', ' ', name).strip()
+            key = title.casefold()
+            if not title or key in seen or key == q.casefold():
+                continue
+            seen.add(key)
+            score = _spell_score(words, title)
+            if score:
+                ranked.append((score, title))
+    ranked.sort(key=lambda item: (-item[0], item[1].casefold()))
 
-        suggestions.extend(_dedupe_titles(prefix_candidates, limit - len(suggestions), seen))
+    # A database filename alone does not guarantee the bot's normal search
+    # will find it (tokenization and punctuation differ). Verify with exactly
+    # the same all/single-collection search path the button will later use.
+    # Do not display unverifiable candidates on database errors.
+    async def searchable(title):
+        try:
+            files, _, _, _ = await get_search_results(title, 1, 0, collection_type=collection_type, bypass_count=True)
+            return bool(files)
+        except Exception as exc:
+            logger.warning("Spell suggestion verification failed: %s", exc)
+            return False
 
-    return suggestions
+    verified = []
+    candidates = [title for _, title in ranked[:_SPELL_MAX_VERIFICATIONS]]
+    for offset in range(0, len(candidates), 3):
+        batch = candidates[offset:offset + 3]
+        checks = await asyncio.gather(*(searchable(title) for title in batch))
+        verified.extend(title for title, ok in zip(batch, checks) if ok)
+        if len(verified) >= limit:
+            break
+    return verified[:limit]
 
 
 # ─────────────────────────────────────────────────────────
