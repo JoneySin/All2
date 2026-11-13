@@ -27,18 +27,26 @@ scans, completion, failures and status retry with the in-memory fixture. Saved-g
 changes, admin access and database failures. Counts represent stored records,
 including preserved legacy singletons, not the number of visible search cards.
 
-Opening a file in the web player now lists its saved quality versions or series
-episodes below the video, with a chip for the file being played. `/api/file/switches`
-requires an authenticated web session, resolves the live saved group that owns that
-database file ID, and returns at most 300 ordered items (a very long series keeps the
-playing item visible and is marked truncated). Membership is never guessed from the
-title: standalone files, deleted members and groups left with fewer than two live
-files show no switcher. A stale loose `group_id` mark cannot expose another group's
-members; the saved members list decides. Switching reuses the same signed inline
-stream and keeps the playback position and play/pause state. Tests cover quality
-ordering, admin episode order/labels, stale marks, dissolved groups, the cap, access
-errors, and both player UIs. They do not cover real Telegram media or a real browser,
-so actual codec support and mobile layout still need manual checks.
+Opening a file in the web player lists its saved group below the video, with a chip
+for the file being played. `/api/file/switches` requires an authenticated web
+session and resolves the live saved group that owns that database file ID. Series
+groups are nested for display only: episodes come from explicit filename markers
+(`S01E02`), an admin's `episode_labels` rename the episode for all its qualities, and
+quality versions are grouped inside their episode. Files without an episode marker
+stay in their own bucket, so nothing is hidden or wrongly merged. This is derived on
+read from the existing flat `members` list, so saved groups, scans, deletes and
+merges keep one source of truth and need no migration. Quality groups keep one sorted
+row and are capped at 300 items; series are capped at 100 episodes with the playing
+episode always kept and marked truncated. Membership is never guessed from the title:
+standalone files, deleted members and groups left with fewer than two live files show
+no switcher. A stale loose `group_id` mark cannot expose another group's members; the
+saved members list decides. Changing quality reuses the signed inline stream and
+keeps the playback position and play/pause state. Changing episode prefers the same
+quality label in the new episode, otherwise the best available one, and starts from
+the beginning. Tests cover episode/quality ordering, admin labels, unlabelled files,
+stale marks, dissolved groups, both caps, access errors and both player UIs. They do
+not cover real Telegram media or a real browser, so actual codec support and mobile
+layout still need manual checks.
 
 For grouped `/api/search` requests, treat `next_offset` as an opaque continuation
 value and send it back unchanged, including when a selective filter returns an

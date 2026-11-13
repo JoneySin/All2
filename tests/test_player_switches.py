@@ -84,9 +84,58 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
             "episode_labels": [{"id": "s1", "label": "S01E01"}, {"id": "s3", "label": "Finale"}]})
         _, data = await self.get("s1")
         self.assertEqual(data["group"]["type"], "series")
-        self.assertEqual([item["file_id"] for item in data["items"]], ["s3", "s1", "s2"])
-        self.assertEqual([item["label"] for item in data["items"]], ["Finale", "S01E01", "S01E02"])
+        self.assertEqual([episode["label"] for episode in data["episodes"]],
+                         ["Finale", "S01E01", "S01E02"])
+        self.assertEqual([episode["items"][0]["file_id"] for episode in data["episodes"]],
+                         ["s3", "s1", "s2"])
+        self.assertEqual([episode["current"] for episode in data["episodes"]], [False, True, False])
+        self.assertEqual(data["current_episode"], data["episodes"][1]["key"])
+        self.assertNotIn("items", data)
         self.assertEqual(data["group"]["name"], "The Long Way Home <b>")
+
+    async def test_series_nests_quality_versions_under_each_episode(self):
+        members = []
+        for episode in (1, 2, 3):
+            for suffix, height in (("480", 480), ("720", 720), ("1080", 1080)):
+                fid = f"e{episode}-{suffix}"
+                members.append(fid)
+                await self.add("cloud", fid, f"Show S01E0{episode} {suffix}p.mkv", height)
+        await self.groups.insert_one({"_id": "70", "name": "Show", "group_type": "series",
+                                      "members": members})
+        _, data = await self.get("e2-720")
+        self.assertEqual([episode["label"] for episode in data["episodes"]],
+                         ["S01E01", "S01E02", "S01E03"])
+        self.assertEqual([len(episode["items"]) for episode in data["episodes"]], [3, 3, 3])
+        self.assertEqual([item["label"] for item in data["episodes"][1]["items"]],
+                         ["480p", "720p", "1080p"])
+        self.assertEqual([item["current"] for item in data["episodes"][1]["items"]],
+                         [False, True, False])
+        self.assertEqual([episode["current"] for episode in data["episodes"]], [False, True, False])
+        self.assertEqual(data["current_episode"], data["episodes"][1]["key"])
+        self.assertEqual((data["group"]["episode_count"], data["group"]["count"]), (3, 9))
+
+    async def test_unlabelled_series_files_are_not_hidden_or_merged(self):
+        await self.add("primary", "u1", "Show Extras.mkv", 720)
+        await self.add("primary", "u2", "Show Behind the Scenes.mkv", 720)
+        await self.add("primary", "e1a", "Show S01E01 720p.mkv", 720)
+        await self.add("primary", "e1b", "Show S01E01 1080p.mkv", 1080)
+        await self.groups.insert_one({"_id": "71", "name": "Show", "group_type": "series",
+                                      "members": ["u1", "u2", "e1a", "e1b"]})
+        _, data = await self.get("u1")
+        self.assertEqual(len(data["episodes"]), 3)
+        self.assertEqual(sum(len(episode["items"]) for episode in data["episodes"]), 4)
+        self.assertEqual(sorted(len(episode["items"]) for episode in data["episodes"]), [1, 1, 2])
+
+    async def test_admin_episode_label_covers_all_qualities_of_that_episode(self):
+        await self.add("primary", "l1", "Show S01E01 720p.mkv", 720)
+        await self.add("primary", "l2", "Show S01E01 1080p.mkv", 1080)
+        await self.add("primary", "l3", "Show S01E02 720p.mkv", 720)
+        await self.groups.insert_one({"_id": "72", "name": "Show", "group_type": "series",
+                                      "members": ["l1", "l2", "l3"],
+                                      "episode_labels": [{"id": "l2", "label": "Pilot"}]})
+        _, data = await self.get("l1")
+        self.assertEqual(data["episodes"][0]["label"], "Pilot")
+        self.assertEqual([item["file_id"] for item in data["episodes"][0]["items"]], ["l1", "l2"])
 
     async def test_quality_override_wins_over_resolution_label(self):
         await self.add("primary", "o1", "Movie.mkv", 480)
@@ -131,16 +180,18 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         _, data = await self.get("ghost")
         self.assertEqual(data, {"group": None, "items": []})
 
-    async def test_huge_series_is_bounded_and_keeps_current_item(self):
-        members = [f"e{index}" for index in range(api.SWITCH_ITEM_LIMIT + 3)]
+    async def test_huge_series_is_bounded_and_keeps_the_current_episode(self):
+        members = [f"e{index:03d}" for index in range(api.SWITCH_EPISODE_LIMIT + 2)]
         for index, fid in enumerate(members):
-            await self.add("primary", fid, f"Daily Show Episode {index}.mp4", 720)
+            await self.add("primary", fid, f"Daily Show Episode {index + 1}.mp4", 720)
         await self.groups.insert_one({"_id": "50", "name": "Daily Show", "group_type": "series",
                                       "members": members})
         _, data = await self.get(members[-1])
         self.assertTrue(data["group"]["truncated"])
-        self.assertEqual(len(data["items"]), api.SWITCH_ITEM_LIMIT)
-        self.assertTrue(data["items"][-1]["current"])
+        self.assertEqual(data["group"]["episode_count"], api.SWITCH_EPISODE_LIMIT + 2)
+        self.assertEqual(len(data["episodes"]), api.SWITCH_EPISODE_LIMIT)
+        self.assertTrue(data["episodes"][-1]["current"])
+        self.assertEqual([item["file_id"] for item in data["episodes"][-1]["items"]], [members[-1]])
 
     async def test_access_and_error_responses(self):
         self.role = (None, None)
@@ -161,6 +212,8 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('id="inlinePlayerSwitcher"', PLAYER_UI)
         self.assertIn('/api/file/switches?file_id=', PLAYER_UI)
         self.assertIn("switchInlinePlayer", PLAYER_UI)
+        self.assertIn("inlinePlayerPickEpisode", PLAYER_UI)
+        self.assertIn("inlinePlayerQualityItem", PLAYER_UI)
         self.assertIn("loadedmetadata", PLAYER_UI)
         video = PLAYER_UI.index('<video id="inlinePlayerVideo"')
         self.assertGreater(PLAYER_UI.index('id="inlinePlayerSwitcher"'), video)
@@ -169,6 +222,8 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('id="psSwitch"', mini)
         self.assertIn('/api/file/switches?file_id=', mini)
         self.assertIn("miniSwitchFile", mini)
+        self.assertIn("miniPickEpisode", mini)
+        self.assertIn("miniQualityItem", mini)
         self.assertGreater(mini.index('id="psSwitch"'), mini.index('<div class="ppl"'))
         self.assertIn("openStream(f.file_id,f.name)", mini)
 

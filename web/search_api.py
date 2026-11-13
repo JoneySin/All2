@@ -1830,12 +1830,67 @@ async def get_telegram_thumb(req):
 # mark is only a hint, so a stale mark can never expose another group's files.
 # ─────────────────────────────────────────────────────────
 SWITCH_ITEM_LIMIT = 300
+# A long-running daily show can have hundreds of episodes. Keep the payload
+# bounded, but always keep the episode the viewer is currently watching.
+SWITCH_EPISODE_LIMIT = 100
 
 
 def _switch_item(fid, doc, label):
     # The player renders these with textContent, so filenames stay plain text.
     return {"file_id": fid, "name": str(doc.get("file_name") or "Untitled"),
             "label": str(label or ""), "duration": get_duration_str(duration_seconds(doc))}
+
+
+def _switch_quality(doc):
+    """Return (sort_height, quality label) for a file inside its group."""
+    label, height = _quality_label(doc_resolution_text(doc),
+                                   "" if doc.get("quality_override") else str(doc.get("file_name") or ""))
+    return height if height > 0 else 10 ** 9, str(doc.get("quality_override") or label)
+
+
+def _series_episodes(rows, member_docs, current_id):
+    """Nest quality versions under their episode, without touching stored groups.
+
+    A filename without an explicit episode marker becomes its own bucket, so
+    unknown files are never hidden or wrongly merged with another episode.
+    """
+    buckets, order = {}, []
+    for row in rows:
+        member = row["file_id"]
+        doc = member_docs[member]
+        detected = episode_identity(str(doc.get("file_name") or ""))
+        key = f"episode:{detected}" if detected else f"file:{member}"
+        if key not in buckets:
+            buckets[key] = {"key": key, "label": "", "custom": "", "items": []}
+            order.append(key)
+        bucket = buckets[key]
+        # An admin's per-file label wins over the detected episode marker.
+        if row.get("episode_custom_label") and not bucket["custom"]:
+            bucket["custom"] = str(row["episode_custom_label"])
+        if row.get("episode_label") and not bucket["label"]:
+            bucket["label"] = str(row["episode_label"])
+        height, quality = _switch_quality(doc)
+        bucket["items"].append((height, str(doc.get("file_name") or "").lower(), member, quality))
+
+    episodes = []
+    for position, key in enumerate(order, 1):
+        bucket = buckets[key]
+        bucket["items"].sort(key=lambda entry: (entry[0], entry[1]))
+        items = [_switch_item(member, member_docs[member], quality)
+                 for _, _, member, quality in bucket["items"]]
+        for item in items:
+            item["current"] = item["file_id"] == current_id
+        episodes.append({"key": key, "label": bucket["custom"] or bucket["label"] or f"#{position}",
+                         "current": any(item["current"] for item in items), "items": items})
+
+    current_episode = next((episode["key"] for episode in episodes if episode["current"]), "")
+    total = len(episodes)
+    if total > SWITCH_EPISODE_LIMIT:
+        current = next((episode for episode in episodes if episode["key"] == current_episode), None)
+        episodes = episodes[:SWITCH_EPISODE_LIMIT]
+        if current and current["key"] not in {episode["key"] for episode in episodes}:
+            episodes[-1] = current
+    return episodes, current_episode, total
 
 
 async def _switches_for(fid):
@@ -1860,39 +1915,34 @@ async def _switches_for(fid):
         return None
 
     gtype = group_type(group)
-    labels = {}
+    group_info = {"id": str(group["_id"]), "num": str(group.get("num") or group["_id"]),
+                  "name": str(group.get("name") or ""), "type": gtype, "count": len(live)}
+
     if gtype == "series":
         ordered = order_series([{"file_id": member, "name": str(member_docs[member].get("file_name") or "")}
                                 for member in live], group)
-        items = []
-        for row in ordered:
-            member = row["file_id"]
-            labels[member] = row.get("episode_label") or f"#{row.get('episode_position', '')}"
-            items.append(_switch_item(member, member_docs[member], labels[member]))
-    else:
-        variants = []
-        for member in live:
-            member_doc = member_docs[member]
-            label, height = _quality_label(doc_resolution_text(member_doc),
-                                           "" if member_doc.get("quality_override") else str(member_doc.get("file_name") or ""))
-            labels[member] = str(member_doc.get("quality_override") or label)
-            variants.append((height if height > 0 else 10 ** 9,
-                             str(member_doc.get("file_name") or "").lower(), member))
-        variants.sort(key=lambda row: (row[0], row[1]))
-        items = [_switch_item(member, member_docs[member], labels[member]) for _, _, member in variants]
+        episodes, current_episode, total = _series_episodes(ordered, member_docs, fid)
+        group_info.update({"episode_count": total, "truncated": total > SWITCH_EPISODE_LIMIT})
+        return {"group": group_info, "episodes": episodes, "current_episode": current_episode}
+
+    variants = []
+    for member in live:
+        member_doc = member_docs[member]
+        height, quality = _switch_quality(member_doc)
+        variants.append((height, str(member_doc.get("file_name") or "").lower(), member, quality))
+    variants.sort(key=lambda row: (row[0], row[1]))
+    items = [_switch_item(member, member_docs[member], quality) for _, _, member, quality in variants]
 
     truncated = len(items) > SWITCH_ITEM_LIMIT
     if truncated:
         items = items[:SWITCH_ITEM_LIMIT]
         if fid not in {item["file_id"] for item in items}:
-            # Keep the file the user is watching selectable even in a huge series.
-            items[-1] = _switch_item(fid, member_docs[fid], labels.get(fid, ""))
+            height, quality = _switch_quality(member_docs[fid])
+            items[-1] = _switch_item(fid, member_docs[fid], quality)
     for item in items:
         item["current"] = item["file_id"] == fid
-    return {"group": {"id": str(group["_id"]), "num": str(group.get("num") or group["_id"]),
-                      "name": str(group.get("name") or ""), "type": gtype,
-                      "count": len(live), "truncated": truncated},
-            "items": items}
+    group_info["truncated"] = truncated
+    return {"group": group_info, "items": items}
 
 
 @search_routes.get("/api/file/switches")

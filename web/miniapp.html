@@ -407,14 +407,15 @@ async function doSearch(off,allowEmpty){
 function miniPlayFile(card){let f=miniMediaFiles[card.dataset.fid];if(f)openStream(f.file_id,f.name);}
 
 // player
-let miniCurrentFileId='';
+// player
+let miniCurrentFileId='',miniSwitchData=null,miniSwitchEpisode='';
 async function openStream(id,name){
   let request=++playerReq;if(playerAbort)playerAbort.abort();playerAbort=new AbortController();
   toast('⏳ Loading...');
   try{
     let prepared=await miniStream(id);
     if(request!==playerReq)return;
-    miniCurrentFileId=id;
+    miniCurrentFileId=id;miniSwitchData=null;miniSwitchEpisode='';
     openSheet(prepared.src,name||id,prepared.download);
     loadMiniSwitches(id);
   }catch(e){if(e.name!=='AbortError'&&request===playerReq)toast('❌ '+(e.message||'Connection fail'));}
@@ -429,35 +430,82 @@ async function miniStream(id){
   let dl=new URL(url);dl.searchParams.delete('inline');
   return {src:url.href,download:dl.href};
 }
-function miniMarkCurrent(id){
-  document.querySelectorAll('#psSwitch .pswc').forEach(function(chip){chip.setAttribute('aria-current',chip.dataset.fid===id?'true':'false');});
+function miniHead(label,detail){
+  let head=document.createElement('div');head.className='pswh';
+  let left=document.createElement('span');left.textContent=label;
+  let right=document.createElement('span');right.textContent=detail||'';
+  head.append(left,right);return head;
+}
+function miniRow(label){
+  let row=document.createElement('div');row.className='pswr';row.setAttribute('role','group');row.setAttribute('aria-label',label);return row;
+}
+function miniChip(row,label,duration,current,title,onClick){
+  let chip=document.createElement('button');chip.type='button';chip.className='pswc';
+  let text=document.createElement('span');text.textContent=label||'Version';chip.append(text);
+  if(duration){let small=document.createElement('small');small.textContent=duration;chip.append(small);}
+  chip.title=title||'';
+  if(current)chip.setAttribute('aria-current','true');
+  else if(onClick)chip.addEventListener('click',onClick);
+  row.append(chip);return chip;
+}
+function miniQualityItem(episode,preferredLabel){
+  let items=(episode&&episode.items)||[];if(!items.length)return null;
+  if(preferredLabel){for(let i=0;i<items.length;i++){if(items[i].label===preferredLabel)return items[i];}}
+  return items[items.length-1];
+}
+function miniQualityLabelForFile(id,data){
+  let episodes=(data&&data.episodes)||[];
+  for(let i=0;i<episodes.length;i++){let items=episodes[i].items||[];
+    for(let j=0;j<items.length;j++){if(items[j].file_id===id)return items[j].label||'';}}
+  return '';
+}
+function miniPaintSwitches(){
+  let box=Q1('#psSwitch');if(!box)return;
+  box.innerHTML='';let data=miniSwitchData;
+  if(!data||!data.group){box.hidden=true;return;}
+  let group=data.group,name=group.name?group.name+' · ':'';
+  if(group.type==='series'&&data.episodes&&data.episodes.length){
+    let episodes=data.episodes,current=null,i;
+    if(!miniSwitchEpisode)miniSwitchEpisode=data.current_episode||episodes[0].key;
+    for(i=0;i<episodes.length;i++){if(episodes[i].key===miniSwitchEpisode){current=episodes[i];break;}}
+    if(!current){current=episodes[0];miniSwitchEpisode=current.key;}
+    box.append(miniHead('Episodes',name+episodes.length+(group.truncated?' of '+group.episode_count:'')+' episodes'));
+    let episodeRow=miniRow('Episodes');
+    for(i=0;i<episodes.length;i++){
+      let episode=episodes[i],key=episode.key;
+      miniChip(episodeRow,episode.label,'',key===miniSwitchEpisode,episode.label,function(){miniPickEpisode(key);});
+    }
+    box.append(episodeRow);
+    box.append(miniHead('Quality',current.label||''));
+    let qualityRow=miniRow('Quality versions of this episode'),items=current.items||[];
+    for(i=0;i<items.length;i++){
+      let item=items[i];
+      miniChip(qualityRow,item.label,item.duration,item.file_id===miniCurrentFileId,item.name,function(){miniSwitchFile(item.file_id,item.name,false);});
+    }
+    box.append(qualityRow);
+    if(group.truncated){let note=document.createElement('div');note.className='pswn';note.textContent='Only the first '+episodes.length+' episodes are listed here.';box.append(note);}
+  }else{
+    let items=data.items||[];
+    if(items.length<2){box.hidden=true;return;}
+    box.append(miniHead('Quality versions',name+items.length+(group.truncated?' of '+group.count:'')));
+    let row=miniRow('Quality versions');
+    for(let i=0;i<items.length;i++){
+      let item=items[i];
+      miniChip(row,item.label,item.duration,item.file_id===miniCurrentFileId,item.name,function(){miniSwitchFile(item.file_id,item.name,false);});
+    }
+    box.append(row);
+    if(group.truncated){let note=document.createElement('div');note.className='pswn';note.textContent='Only the first '+items.length+' files are listed here.';box.append(note);}
+  }
+  box.hidden=false;
 }
 function miniRenderSwitches(data){
-  let box=Q1('#psSwitch');if(!box)return;
-  box.innerHTML='';
-  let group=data&&data.group,items=data&&data.items;
-  if(!group||!items||items.length<2){box.hidden=true;return;}
-  let head=document.createElement('div');head.className='pswh';
-  let label=document.createElement('span');label.textContent=group.type==='series'?'Episodes':'Quality versions';
-  let count=document.createElement('span');count.textContent=(group.name?group.name+' · ':'')+items.length+(group.truncated?' of '+group.count:'');
-  head.append(label,count);box.append(head);
-  let row=document.createElement('div');row.className='pswr';row.setAttribute('role','group');
-  items.forEach(function(item){
-    let chip=document.createElement('button');chip.type='button';chip.className='pswc';
-    chip.dataset.fid=String(item.file_id);chip.dataset.name=String(item.name||'');
-    let text=document.createElement('span');text.textContent=item.label||(group.type==='series'?'Episode':'Version');chip.append(text);
-    if(item.duration){let small=document.createElement('small');small.textContent=item.duration;chip.append(small);}
-    if(item.current){chip.setAttribute('aria-current','true');}
-    else{chip.addEventListener('click',function(){miniSwitchFile(chip.dataset.fid,chip.dataset.name);});}
-    row.append(chip);
-  });
-  box.append(row);
-  if(group.truncated){let note=document.createElement('div');note.className='pswn';note.textContent='Only the first '+items.length+' items are listed here.';box.append(note);}
-  box.hidden=false;
+  miniSwitchData=data&&data.group?data:null;
+  miniSwitchEpisode=miniSwitchData?String(miniSwitchData.current_episode||''):'';
+  miniPaintSwitches();
 }
 async function loadMiniSwitches(id){
   let box=Q1('#psSwitch');if(box){box.hidden=true;box.innerHTML='';}
-  let request=playerReq;
+  miniSwitchData=null;let request=playerReq;
   try{
     let r=await fetch('/api/file/switches?file_id='+encodeURIComponent(id),{cache:'no-store',signal:playerAbort.signal});
     if(!r.ok)return;
@@ -466,18 +514,33 @@ async function loadMiniSwitches(id){
     miniRenderSwitches(d);
   }catch(e){}
 }
-async function miniSwitchFile(id,name){
-  if(!id||id===miniCurrentFileId)return;
-  let video=Q1('#pv2'),resume=video&&isFinite(video.currentTime)?video.currentTime:0;
+async function miniPickEpisode(key){
+  let data=miniSwitchData,episodes=(data&&data.episodes)||[],target=null,previous=miniSwitchEpisode;
+  for(let i=0;i<episodes.length;i++){if(episodes[i].key===key){target=episodes[i];break;}}
+  if(!target||key===previous)return;
+  let item=miniQualityItem(target,miniQualityLabelForFile(miniCurrentFileId,data));
+  if(!item)return;
+  miniSwitchEpisode=key;miniPaintSwitches();
+  let switched=await miniSwitchFile(item.file_id,item.name,true);
+  if(!switched&&miniSwitchEpisode===key){miniSwitchEpisode=previous;miniPaintSwitches();}
+}
+async function miniSwitchFile(id,name,reset){
+  if(!id)return false;
+  if(id===miniCurrentFileId)return true;
+  let video=Q1('#pv2'),resume=reset?0:(video&&isFinite(video.currentTime)?video.currentTime:0);
   let request=++playerReq;if(playerAbort)playerAbort.abort();playerAbort=new AbortController();
-  toast('⏳ Switching...');
+  toast(reset?'⏳ Loading episode...':'⏳ Switching...');
   try{
     let prepared=await miniStream(id);
-    if(request!==playerReq)return;
+    if(request!==playerReq)return false;
     miniCurrentFileId=id;
     openSheet(prepared.src,name||id,prepared.download,resume);
-    miniMarkCurrent(id);
-  }catch(e){if(e.name!=='AbortError'&&request===playerReq)toast('❌ '+(e.message||'Connection fail'));}
+    miniPaintSwitches();
+    return true;
+  }catch(e){
+    if(e.name!=='AbortError'&&request===playerReq)toast('❌ '+(e.message||'Connection fail'));
+    return false;
+  }
 }
 function openSheet(url,title,downloadUrl,resume){
   streamUrl=url;
@@ -503,7 +566,7 @@ function closePlayer(){
   if(plyr){try{plyr.pause();plyr.destroy();}catch{}plyr=null;}
   let video=Q1('#pv2');if(video){video.pause();video.removeAttribute('src');video.load();}
   Q1('#ppl').innerHTML='<video id="pv2" playsinline controls></video>';
-  miniCurrentFileId='';
+  miniCurrentFileId='';miniSwitchData=null;miniSwitchEpisode='';
   let box=Q1('#psSwitch');if(box){box.hidden=true;box.innerHTML='';}
 }
 Q1('#pbd').addEventListener('click',function(e){if(e.target===this)closePlayer();});
