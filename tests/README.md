@@ -42,6 +42,27 @@ python -m venv .venv
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
+## Bot spelling suggestions
+
+PM and group searches use only the Primary, Cloud and Archive catalogue; no
+Google request is made. When a search returns nothing, candidates are ranked
+by approximate word similarity, then each displayed filename is checked with
+the bot's normal search before its button is shown. Results can disappear if a
+file is removed or access changes between showing and clicking a button.
+
+Candidate searches are capped to 50 per collection per retrieval strategy,
+12 verifications, 1.2 seconds server time per candidate query and 8 seconds
+per lookup. Only two suggestion lookups run per process; extra requests receive
+no suggestions. The fuzzy substring fallback may still scan file names, so
+measure it on the production dataset. The bounds mean suggestions can be
+incomplete, especially for very short queries, busy databases, large catalogues
+or changes to the first few characters. Suggestions are deduplicated by exact
+filename (case/whitespace-insensitive), not by movie or quality group.
+
+The Python tests include mongomock regex fallback and a real PyMongo client
+against a mock wire server. MongoDB's actual text tokenization/ranking and
+Telegram button delivery still need testing against live services.
+
 ## Dependency compatibility
 
 Production dependencies are pinned in `requirements.txt`; the MongoDB driver is
