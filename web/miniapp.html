@@ -158,6 +158,15 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt);min-
 .pab:active{opacity:.8}
 .dl{background:var(--ac);color:#fff}
 .cp{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.15)}
+.psw{padding:11px 14px 0;border-top:1px solid rgba(255,255,255,.12);flex-shrink:0}
+.psw[hidden]{display:none}
+.pswh{display:flex;align-items:baseline;justify-content:space-between;gap:10px;color:var(--mu);font-size:10px;letter-spacing:1px;text-transform:uppercase;font-weight:800;margin-bottom:8px}
+.pswh span:last-child{letter-spacing:0;text-transform:none;font-size:11px;font-weight:600}
+.pswr{display:flex;gap:7px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
+.pswc{flex:none;border:1px solid var(--br);background:var(--bg3);color:var(--txt);padding:7px 11px;border-radius:8px;font-size:12px;font-weight:800;font-family:inherit;line-height:1.25;cursor:pointer;text-align:center;white-space:nowrap}
+.pswc[aria-current="true"]{background:var(--ac);border-color:var(--ac);color:#fff;cursor:default}
+.pswc small{display:block;font-size:9px;font-weight:600;opacity:.75;margin-top:2px}
+.pswn{color:var(--mu);font-size:10px;margin-top:5px}
 /* 🖥️ desktop: bottom-sheet ki jagah center modal, full-width video na lage */
 @media(min-width:900px){
   .ps{justify-content:center;align-items:center}
@@ -220,6 +229,7 @@ __BRAND_CSS__
     <button class="px" onclick="closePlayer()">✕</button>
     <div class="ptl" id="ptl"></div>
     <div class="ppl" id="ppl"><video id="pv2" playsinline controls></video></div>
+    <div class="psw" id="psSwitch" aria-label="Other versions in this group" hidden></div>
     <div class="pa">
       <a id="dlBtn" href="#" class="pab dl">⬇ Download</a>
       <button onclick="copyLink()" class="pab cp">🔗 Copy Link</button>
@@ -394,30 +404,90 @@ async function doSearch(off,allowEmpty){
 }
 
 // Playback uses the same shared card data without embedding filenames in handlers.
-function miniPlayFile(card){let f=miniMediaFiles[card.dataset.fid];if(f)openStream(f.stream_id||f.file_id,f.name);}
+function miniPlayFile(card){let f=miniMediaFiles[card.dataset.fid];if(f)openStream(f.file_id,f.name);}
 
 // player
+let miniCurrentFileId='';
 async function openStream(id,name){
   let request=++playerReq;if(playerAbort)playerAbort.abort();playerAbort=new AbortController();
   toast('⏳ Loading...');
   try{
-    let r=await fetch('/setup_stream',{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({file_id:id,mode:'inline'}),signal:playerAbort.signal});
-    let d=await r.json().catch(()=>({}));if(request!==playerReq)return;
-    if(r.status===403)return toast('🔒 Access denied');
-    if(!r.ok||d.error)return toast('❌ '+(d.error||'Server error'));
-    let url=new URL(d.url,location.origin);
-    if(url.origin!==location.origin||!/^\/download\/\d+$/.test(url.pathname))return toast('❌ Invalid stream URL');
-    let dl=new URL(url);dl.searchParams.delete('inline');
-    openSheet(url.href,name||id,dl.href);
-  }catch(e){if(e.name!=='AbortError'&&request===playerReq)toast('❌ Connection fail');}
+    let prepared=await miniStream(id);
+    if(request!==playerReq)return;
+    miniCurrentFileId=id;
+    openSheet(prepared.src,name||id,prepared.download);
+    loadMiniSwitches(id);
+  }catch(e){if(e.name!=='AbortError'&&request===playerReq)toast('❌ '+(e.message||'Connection fail'));}
 }
-function openSheet(url,title,downloadUrl){
+async function miniStream(id){
+  let r=await fetch('/setup_stream',{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({file_id:id,mode:'inline'}),signal:playerAbort.signal});
+  let d=await r.json().catch(()=>({}));
+  if(r.status===403)throw new Error('🔒 Access denied');
+  if(!r.ok||d.error)throw new Error(d.error||'Server error');
+  let url=new URL(d.url,location.origin);
+  if(url.origin!==location.origin||!/^\/download\/\d+$/.test(url.pathname))throw new Error('Invalid stream URL');
+  let dl=new URL(url);dl.searchParams.delete('inline');
+  return {src:url.href,download:dl.href};
+}
+function miniMarkCurrent(id){
+  document.querySelectorAll('#psSwitch .pswc').forEach(function(chip){chip.setAttribute('aria-current',chip.dataset.fid===id?'true':'false');});
+}
+function miniRenderSwitches(data){
+  let box=Q1('#psSwitch');if(!box)return;
+  box.innerHTML='';
+  let group=data&&data.group,items=data&&data.items;
+  if(!group||!items||items.length<2){box.hidden=true;return;}
+  let head=document.createElement('div');head.className='pswh';
+  let label=document.createElement('span');label.textContent=group.type==='series'?'Episodes':'Quality versions';
+  let count=document.createElement('span');count.textContent=(group.name?group.name+' · ':'')+items.length+(group.truncated?' of '+group.count:'');
+  head.append(label,count);box.append(head);
+  let row=document.createElement('div');row.className='pswr';row.setAttribute('role','group');
+  items.forEach(function(item){
+    let chip=document.createElement('button');chip.type='button';chip.className='pswc';
+    chip.dataset.fid=String(item.file_id);chip.dataset.name=String(item.name||'');
+    let text=document.createElement('span');text.textContent=item.label||(group.type==='series'?'Episode':'Version');chip.append(text);
+    if(item.duration){let small=document.createElement('small');small.textContent=item.duration;chip.append(small);}
+    if(item.current){chip.setAttribute('aria-current','true');}
+    else{chip.addEventListener('click',function(){miniSwitchFile(chip.dataset.fid,chip.dataset.name);});}
+    row.append(chip);
+  });
+  box.append(row);
+  if(group.truncated){let note=document.createElement('div');note.className='pswn';note.textContent='Only the first '+items.length+' items are listed here.';box.append(note);}
+  box.hidden=false;
+}
+async function loadMiniSwitches(id){
+  let box=Q1('#psSwitch');if(box){box.hidden=true;box.innerHTML='';}
+  let request=playerReq;
+  try{
+    let r=await fetch('/api/file/switches?file_id='+encodeURIComponent(id),{cache:'no-store',signal:playerAbort.signal});
+    if(!r.ok)return;
+    let d=await r.json().catch(()=>null);
+    if(request!==playerReq||miniCurrentFileId!==id)return;
+    miniRenderSwitches(d);
+  }catch(e){}
+}
+async function miniSwitchFile(id,name){
+  if(!id||id===miniCurrentFileId)return;
+  let video=Q1('#pv2'),resume=video&&isFinite(video.currentTime)?video.currentTime:0;
+  let request=++playerReq;if(playerAbort)playerAbort.abort();playerAbort=new AbortController();
+  toast('⏳ Switching...');
+  try{
+    let prepared=await miniStream(id);
+    if(request!==playerReq)return;
+    miniCurrentFileId=id;
+    openSheet(prepared.src,name||id,prepared.download,resume);
+    miniMarkCurrent(id);
+  }catch(e){if(e.name!=='AbortError'&&request===playerReq)toast('❌ '+(e.message||'Connection fail'));}
+}
+function openSheet(url,title,downloadUrl,resume){
   streamUrl=url;
   Q1('#ptl').textContent=title;
   Q1('#dlBtn').href=downloadUrl;
   if(plyr){try{plyr.destroy();}catch{}plyr=null;}
   let c=Q1('#ppl');c.innerHTML='<video id="pv2" playsinline controls></video>';
-  let video=Q1('#pv2');video.src=url;
+  let video=Q1('#pv2');
+  if(resume>0.5)video.addEventListener('loadedmetadata',function(){if(isFinite(video.duration)&&video.duration>0)video.currentTime=Math.min(resume,Math.max(0,video.duration-1));},{once:true});
+  video.src=url;
   Q1('#playerSheet').classList.add('open');
   document.body.style.overflow='hidden';
   if(typeof Plyr==='function'){
@@ -433,6 +503,8 @@ function closePlayer(){
   if(plyr){try{plyr.pause();plyr.destroy();}catch{}plyr=null;}
   let video=Q1('#pv2');if(video){video.pause();video.removeAttribute('src');video.load();}
   Q1('#ppl').innerHTML='<video id="pv2" playsinline controls></video>';
+  miniCurrentFileId='';
+  let box=Q1('#psSwitch');if(box){box.hidden=true;box.innerHTML='';}
 }
 Q1('#pbd').addEventListener('click',function(e){if(e.target===this)closePlayer();});
 function copyLink(){

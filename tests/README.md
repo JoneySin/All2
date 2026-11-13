@@ -27,6 +27,19 @@ scans, completion, failures and status retry with the in-memory fixture. Saved-g
 changes, admin access and database failures. Counts represent stored records,
 including preserved legacy singletons, not the number of visible search cards.
 
+Opening a file in the web player now lists its saved quality versions or series
+episodes below the video, with a chip for the file being played. `/api/file/switches`
+requires an authenticated web session, resolves the live saved group that owns that
+database file ID, and returns at most 300 ordered items (a very long series keeps the
+playing item visible and is marked truncated). Membership is never guessed from the
+title: standalone files, deleted members and groups left with fewer than two live
+files show no switcher. A stale loose `group_id` mark cannot expose another group's
+members; the saved members list decides. Switching reuses the same signed inline
+stream and keeps the playback position and play/pause state. Tests cover quality
+ordering, admin episode order/labels, stale marks, dissolved groups, the cap, access
+errors, and both player UIs. They do not cover real Telegram media or a real browser,
+so actual codec support and mobile layout still need manual checks.
+
 For grouped `/api/search` requests, treat `next_offset` as an opaque continuation
 value and send it back unchanged, including when a selective filter returns an
 empty page. Large continuations are stored in `GroupSearchCursors` and expire after

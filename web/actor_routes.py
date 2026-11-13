@@ -15,7 +15,7 @@ actor_routes = web.RouteTableDef()
 
 ACTOR_MEDIA_SCRIPT = r'''<script>
 var actorMediaFiles={};
-function actorPlayFile(card){var f=actorMediaFiles[card.dataset.fid];if(f)openInlinePlayer(f.stream_id||f.file_id,f.name);}
+function actorPlayFile(card){var f=actorMediaFiles[card.dataset.fid];if(f)openInlinePlayer(f.file_id,f.name);}
 function actorEditFile(card){var f=actorMediaFiles[card.dataset.fid];if(f)editFile(f.file_id,f.raw_collection||'primary',encodeURIComponent(f.name||'').replace(/'/g,'%27'),encodeURIComponent(f.caption||'').replace(/'/g,'%27'));}
 function actorDeleteFile(card){var f=actorMediaFiles[card.dataset.fid];if(f)deleteFile(f.file_id,f.raw_collection||'primary');}
 function renderActorMediaCard(f,mode,isAdmin){

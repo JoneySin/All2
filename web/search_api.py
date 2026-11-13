@@ -1824,6 +1824,98 @@ async def get_telegram_thumb(req):
 
 
 # ─────────────────────────────────────────────────────────
+# 🔀 IN-PLAYER SWITCHING — quality versions / series episodes below the video
+# A player can only switch inside the group that actually owns the opened file.
+# Saved membership (groups.members) is authoritative; the loose file.group_id
+# mark is only a hint, so a stale mark can never expose another group's files.
+# ─────────────────────────────────────────────────────────
+SWITCH_ITEM_LIMIT = 300
+
+
+def _switch_item(fid, doc, label):
+    # The player renders these with textContent, so filenames stay plain text.
+    return {"file_id": fid, "name": str(doc.get("file_name") or "Untitled"),
+            "label": str(label or ""), "duration": get_duration_str(duration_seconds(doc))}
+
+
+async def _switches_for(fid):
+    """Resolve one file's live group, ordered for a switcher. Bounded queries only."""
+    # The saved members list decides membership, never a loose file.group_id mark
+    # (or a title guess), so a stale mark cannot expose another group's files.
+    candidates = []
+    async for candidate in groups.find({"members": fid}):
+        candidates.append(candidate)
+        if len(candidates) == 2:
+            break
+    if not candidates:
+        return None
+    # If legacy data left a file in two records, prefer the explicit series.
+    group = next((g for g in candidates if group_type(g) == "series"), candidates[0])
+
+    members = list(dict.fromkeys(str(member) for member in (group.get("members") or []) if member))
+    member_docs = {d["_id"]: d for d in await get_files_by_ids(members)}
+    # A saved record whose members were deleted (including this file) is not playable.
+    live = [member for member in members if member in member_docs]
+    if fid not in member_docs or len(live) < 2:
+        return None
+
+    gtype = group_type(group)
+    labels = {}
+    if gtype == "series":
+        ordered = order_series([{"file_id": member, "name": str(member_docs[member].get("file_name") or "")}
+                                for member in live], group)
+        items = []
+        for row in ordered:
+            member = row["file_id"]
+            labels[member] = row.get("episode_label") or f"#{row.get('episode_position', '')}"
+            items.append(_switch_item(member, member_docs[member], labels[member]))
+    else:
+        variants = []
+        for member in live:
+            member_doc = member_docs[member]
+            label, height = _quality_label(doc_resolution_text(member_doc),
+                                           "" if member_doc.get("quality_override") else str(member_doc.get("file_name") or ""))
+            labels[member] = str(member_doc.get("quality_override") or label)
+            variants.append((height if height > 0 else 10 ** 9,
+                             str(member_doc.get("file_name") or "").lower(), member))
+        variants.sort(key=lambda row: (row[0], row[1]))
+        items = [_switch_item(member, member_docs[member], labels[member]) for _, _, member in variants]
+
+    truncated = len(items) > SWITCH_ITEM_LIMIT
+    if truncated:
+        items = items[:SWITCH_ITEM_LIMIT]
+        if fid not in {item["file_id"] for item in items}:
+            # Keep the file the user is watching selectable even in a huge series.
+            items[-1] = _switch_item(fid, member_docs[fid], labels.get(fid, ""))
+    for item in items:
+        item["current"] = item["file_id"] == fid
+    return {"group": {"id": str(group["_id"]), "num": str(group.get("num") or group["_id"]),
+                      "name": str(group.get("name") or ""), "type": gtype,
+                      "count": len(live), "truncated": truncated},
+            "items": items}
+
+
+@search_routes.get("/api/file/switches")
+async def api_file_switches(req):
+    """Return the opened file's playable siblings for the in-player switcher."""
+    def respond(data, status=200):
+        return web.json_response(data, status=status, dumps=fast_json, headers={"Cache-Control": "no-store"})
+
+    role, _ = await get_user_role(req)
+    if not role:
+        return respond({"error": "Unauthorized Web Access!"}, status=403)
+    fid = str(req.query.get("file_id") or "").strip()
+    if not fid or len(fid) > 200:
+        return respond({"error": "Enter a valid file."}, status=400)
+    try:
+        result = await _switches_for(fid)
+    except Exception:
+        logger.warning("in-player switch lookup failed", exc_info=True)
+        return respond({"error": "Could not load other versions. Please try again."}, status=503)
+    return respond(result or {"group": None, "items": []})
+
+
+# ─────────────────────────────────────────────────────────
 # 🎥 STREAM SETUP PIPELINE
 # ✅ DRY: GET और POST दोनों versions में वही 4-step tunnel logic (send_cached_media
 # → delete-queue → play-count → URL बनाना) दो बार लिखा था। अब सिर्फ़ input parsing
