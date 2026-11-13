@@ -1,3 +1,5 @@
+from pathlib import Path
+
 class script(object):
 
     # 🍿 आपके लाइव फीचर्स और प्रीमियम मॉडल के अनुसार स्टार्ट टेक्स्ट (DM locked logic ready)
@@ -89,9 +91,7 @@ Choose a category below. 👇</b>"""
 • /rm_prm - Remove premium
 • /prm_list - Premium users
 • /web_users - Web users
-• /warmup_thumbs - Refresh thumbnails
-• /migrate_meta - Probe true resolution, fill missing meta &amp; fix file types
-• /restart - Restart bot
+{repair_command}• /restart - Restart bot
 • /users - Export users.txt backup
 • /chats - Export chats.txt backup
 
@@ -108,8 +108,12 @@ Choose a category below. 👇</b>"""
 
 • /search - Auto Filter
 • /settings - Group settings
-• /button_style - Result style"""
-    
+• /button_style - Result style""".replace(
+        "{repair_command}",
+        "• /repair_library - Refresh thumbnails and migrate metadata (temporary)\n"
+        if (Path(__file__).parent / "plugins" / "repair_library_TEMP.py").is_file() else "",
+    )
+
     PLAN_TXT = """💎 <b>Fast Finder Premium Plans</b> 💎
 
 Activate a premium plan to unlock exclusive, high-speed features!

@@ -200,3 +200,28 @@ The backfill queue is bounded and falls back to inline work under saturation.
 Grouped search tests check that repeated batches reuse request-local query plans.
 These tests use mocks; real MongoDB query timing and Telegram throughput/flood
 limits must be measured in the deployment environment.
+
+## Temporary library repair
+
+`plugins/repair_library_TEMP.py` is an optional, admin-only one-off tool.
+After deploying and restarting the bot, run `/repair_library` in Telegram. It
+combines metadata migration and thumbnail warmup in a single scan of Primary,
+Cloud and Archive. Existing `TG_ID:`, `NO_THUMB`, and web-custom posters are
+preserved; metadata still gets migrated when needed. It reads Telegram media,
+probes eligible video bytes, writes MongoDB, and may upload posters to the
+configured thumbnail storage channel. Back up the database before running it.
+
+Use the run's Cancel button to stop after the current operation. A restart,
+cancellation or individual failure can leave pending work; rerun the command
+and inspect its error/cleanup counts before considering the job finished. Broken
+or inaccessible references are left unchanged so they can be retried. A group
+cover revision failure is reported separately: the thumbnail may already be saved,
+so refresh the affected group cover manually (the bot log records the file ID).
+Some probes fall back to Telegram metadata if byte probing fails. Only one repair can
+run **per bot instance**; don't run it simultaneously from multiple instances.
+
+After checking the results, remove `plugins/repair_library_TEMP.py` and redeploy
+or restart the bot. The admin help entry disappears on restart; indexing, search,
+streaming and shared metadata/probe helpers remain installed. The regression
+tests for the plugin skip if it has been removed. Live Telegram and MongoDB
+behavior must still be verified separately.
