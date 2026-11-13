@@ -1,5 +1,5 @@
 import io, time, html, re
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 import asyncio
 import aiohttp
 from aiohttp import web
@@ -25,9 +25,20 @@ post_routes = web.RouteTableDef()
 async def fetch_direct_ibb_url(session, url):
     url = url.strip()
     if not url: return None
-    if "ibb.co" in url and "i.ibb.co" not in url:
+    # Only visit genuine ImgBB pages. Substring matching accepts URLs such as
+    # http://127.0.0.1/?ibb.co or https://ibb.co@internal-host/ (SSRF).
+    try:
+        parsed = urlsplit(url)
+        is_ibb_page = (parsed.scheme.lower() == "https" and
+                       parsed.hostname in ("ibb.co", "www.ibb.co") and
+                       parsed.username is None and parsed.password is None and
+                       parsed.port in (None, 443))
+    except ValueError:
+        is_ibb_page = False
+    if is_ibb_page:
         try:
-            async with session.get(url, timeout=10) as resp:
+            # Never follow redirects to untrusted/internal destinations.
+            async with session.get(url, timeout=10, allow_redirects=False) as resp:
                 if resp.status == 200:
                     html_content = await resp.text()
                     match = re.search(r'<meta property="og:image" content="([^"]+)"', html_content)

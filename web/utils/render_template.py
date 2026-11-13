@@ -13,7 +13,7 @@ watch_tmplt = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>{heading}</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/plyr@3.8.5/dist/plyr.css"/>
 <style>
 :root{{
 --red:#e50914; --bg1:#000; --bg2:#111; --txt:#fff; 
@@ -75,7 +75,7 @@ __BRAND_CSS__
 </div></div></div>
 <div id="toast">Link Copied!</div>
 
-<script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/plyr@3.8.5/dist/plyr.min.js"></script>
 <script>
 const docEl=document.documentElement, themeBtn=document.getElementById('theme-btn');
 if(localStorage.getItem('theme')==='light') docEl.classList.add('light');
@@ -84,7 +84,7 @@ themeBtn.addEventListener('click',()=>{{
     localStorage.setItem('theme', isLight ? 'light' : 'dark');
 }});
 
-const player=new Plyr('#player',{{controls:['play-large','play','progress','current-time','mute','settings','pip','fullscreen'],settings:['quality','speed'],autoplay:!1,doubleClick:{{togglesFullscreen:!1}}}});
+const player=new Plyr('#player',{{iconUrl:'https://cdn.jsdelivr.net/npm/plyr@3.8.5/dist/plyr.svg',controls:['play-large','play','progress','current-time','mute','settings','pip','fullscreen'],settings:['quality','speed'],autoplay:!1,doubleClick:{{togglesFullscreen:!1}}}});
 
 player.on('enterfullscreen', ()=>{{
     if(screen.orientation && screen.orientation.lock) {{

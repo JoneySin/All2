@@ -584,7 +584,7 @@ async function removeFromGroup(gid,fid){
     catch(e){showToast(e.message,'error');}
 }
 
-var GM={},gmCropper=null,gmSaveInProgress=false,gmPickRequest=0,gmPickAbort=null;
+var GM={},gmCropper=null,gmSaveInProgress=false,gmImageReading=false,gmPickRequest=0,gmPickAbort=null;
 function gmSetBusy(busy){
     var modal=document.getElementById('grpModal');if(!modal)return;
     modal.classList.toggle('gm-saving',busy);modal.setAttribute('aria-busy',busy?'true':'false');
@@ -598,6 +598,7 @@ function closeGroupModal(){if(gmSaveInProgress){showToast('Please wait for the s
 function gmThumbUrl(f){return '/api/thumb?file_id='+encodeURIComponent(f.file_id)+'&col='+encodeURIComponent(f.raw_collection||'primary')+'&v='+encodeURIComponent(GM.ts);}
 function openGroupModal(o){
     if(gmSaveInProgress)return;
+    gmImageReading=false;
     var mode0=o.custom?'custom':(o.thumbFid?'member':'auto');
     GM={mode:o.mode,gid:o.gid||'',num:o.num||'',members:(o.members||[]).map(function(f){return Object.assign({},f);}),
         type:o.groupType==='series'?'series':'quality',seriesOrdered:o.groupType==='series',thumbFid:o.thumbFid||'',thumbMode:mode0,
@@ -623,7 +624,7 @@ function openGroupModal(o){
        '<div class="gm-note">Automatic groups start as quality versions. Change the type anytime.</div></div>';
     h+='<div class="gm-label">COVER IMAGE</div><div class="gm-thumbs" id="gmThumbs"></div>'+
        '<input type="file" id="gmFile" accept="image/*" style="display:none" onchange="gmLocalPreview(this)">'+
-       '<div id="gmCropWrap" style="display:none;margin-top:10px"></div>';
+       '<div id="gmCropWrap" class="cropper-container-box" style="display:none;margin-top:10px"></div>';
     h+='<div class="gm-label" id="gmMembersLabel">FILES</div><div id="gmMemberHint" class="gm-note"></div><div id="gmMembers"></div>';
     h+='<div class="gm-row"><button class="gm-btn alt" onclick="closeGroupModal()">Cancel</button>'+
        (edit?'<button class="gm-btn" style="background:rgba(160,8,8,.85)" onclick="gmUngroup()">Ungroup</button>':'')+
@@ -659,6 +660,7 @@ function gmRenderThumbs(){
 function gmPickThumb(mode,fid){
     GM.thumbMode=mode;GM.thumbFid=(mode==='member')?fid:'';
     if(mode!=='newupload'){
+        gmImageReading=false;
         if(gmCropper){gmCropper.destroy();gmCropper=null;}
         var w=document.getElementById('gmCropWrap');if(w){w.style.display='none';w.innerHTML='';}
         var fi=document.getElementById('gmFile');if(fi)fi.value='';
@@ -667,17 +669,18 @@ function gmPickThumb(mode,fid){
 }
 function gmLocalPreview(input){
     if(!input.files||!input.files[0])return;
-    var selected=input.files[0],reader=new FileReader();
+    var selected=input.files[0],reader=new FileReader();gmImageReading=true;
     GM.thumbMode='newupload';GM.thumbFid='';gmRenderThumbs();
     reader.onload=function(e){
         if(!input.isConnected||!input.files||input.files[0]!==selected)return;
+        gmImageReading=false;
         if(gmCropper){gmCropper.destroy();gmCropper=null;}
         var w=document.getElementById('gmCropWrap');if(!w)return;
         var img=document.createElement('img');img.id='gmCropImg';img.alt='Selected group cover';img.style.maxWidth='100%';img.style.display='block';img.src=e.target.result;
         w.style.display='block';w.replaceChildren(img);
-        if(typeof Cropper==='function')gmCropper=new Cropper(img,{aspectRatio:16/9,viewMode:1,background:false,zoomable:true,movable:true});
+        if(window.Cropper&&typeof window.Cropper.Cropper==='function')gmCropper=createThumbCropper(img);
     };
-    reader.onerror=function(){if(input.isConnected){input.value='';GM.thumbMode='auto';gmRenderThumbs();showToast('Could not read the selected image.','error');}};
+    reader.onerror=function(){if(input.isConnected&&input.files&&input.files[0]===selected){gmImageReading=false;input.value='';GM.thumbMode='auto';gmRenderThumbs();showToast('Could not read the selected image.','error');}};
     reader.readAsDataURL(selected);
 }
 function gmRenderMembers(){
@@ -790,6 +793,7 @@ function gmConfirmPick(checked){GM.pickConfirmed=!!checked;gmSyncSaveButton();}
 
 async function saveGroupModal(){
     if(gmSaveInProgress)return;
+    if(gmImageReading){showToast('Please wait for the image to load.','error');return;}
     var btn=document.getElementById('gmSave');
     var name=(document.getElementById('gmName').value||'').trim();
     var create=(GM.mode==='create'),joining=create&&!!GM.pick;
@@ -804,8 +808,13 @@ async function saveGroupModal(){
         episode_labels:GM.members.filter(function(f){return (f.episode_custom_label||'').trim();}).map(function(f){return {id:f.file_id,label:f.episode_custom_label.trim()};})
     }:{};
     gmSaveInProgress=true;gmSetBusy(true);btn.textContent='Saving...';
-    var savedAny=false,gid=GM.gid,num=GM.num;
+    var savedAny=false,gid=GM.gid,num=GM.num,tm=GM.thumbMode,blob=null;
     try{
+        if(tm==='newupload'){
+            var fi=document.getElementById('gmFile'),file=fi&&fi.files&&fi.files[0];
+            blob=gmCropper?await exportThumbCrop(gmCropper):file;
+            if(!blob)throw new Error('Could not prepare the group cover');
+        }
         if(create){
             var body={items:GM.members.map(function(f){return {id:f.file_id,name:f.name};}),group_id:GM.pick||'',name:name};
             if(joining)body.expected_target=GM.pickTarget.signature;
@@ -813,7 +822,7 @@ async function saveGroupModal(){
             var d=await grpPost('/api/group/save',body);
             gid=d.group_id;num=d.num;GM.savedGid=gid;savedAny=true;
         }
-        var tm=GM.thumbMode,upd={group_id:gid};
+        var upd={group_id:gid};
         if(!joining){upd.name=name;upd.group_type=GM.type;Object.assign(upd,episodes);}
         if(tm==='member'){
             var tf=GM.members.filter(function(f){return f.file_id===GM.thumbFid;})[0];
@@ -825,13 +834,6 @@ async function saveGroupModal(){
         }
         await grpPost('/api/group/update',upd);savedAny=true;
         if(tm==='newupload'){
-            var fi=document.getElementById('gmFile'),file=fi&&fi.files&&fi.files[0],blob=null;
-            if(gmCropper){
-                var canvas=gmCropper.getCroppedCanvas({width:1280,height:720,imageSmoothingEnabled:true,imageSmoothingQuality:'high'});
-                if(!canvas)throw new Error('The cover is not ready to crop');
-                blob=await new Promise(function(r){canvas.toBlob(r,'image/jpeg',0.9);});
-            }else if(file){blob=file;}
-            if(!blob)throw new Error('Could not prepare the group cover');
             if(blob){
                 showToast('Thumbnail upload ho raha hai...');
                 var fd=new FormData();fd.append('group_id',gid);fd.append('image',blob,'group.jpg');

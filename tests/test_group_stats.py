@@ -21,8 +21,10 @@ class GroupStatsTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.mongo = AsyncMongoMockClient()
         self.store = self.mongo.stats_test
+        self.group_col = self.store.QualityGroups
         patches = [
-            patch.object(db, 'groups', self.store.QualityGroups),
+            patch.object(db, 'groups', self.group_col),
+            patch.object(self.group_col, 'aggregate', AsyncMock(wraps=self.group_col.aggregate)),
             patch.object(stats, 'get_auth', AsyncMock(return_value=('admin', 1))),
             patch.object(stats, 'db_count_documents', AsyncMock(return_value={})),
             patch.object(stats, '_get_total_plays', AsyncMock(return_value=0)),
