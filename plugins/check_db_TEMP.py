@@ -32,7 +32,7 @@ import asyncio
 import time
 from pymongo import AsyncMongoClient
 from pymongo.errors import BulkWriteError
-from pyrogram import Client, filters
+from pyrogram import Client, ContinuePropagation, filters
 from keyboards import ui_button, ui_keyboard
 from info import ADMINS, DATABASE_URL, DATABASE_NAME
 
@@ -242,7 +242,15 @@ async def _ask_existing_collection_decision(bot, chat_id, user_id, col_name, des
 async def receive_new_url(bot, message):
     pending = PENDING.get(message.from_user.id)
     if not pending:
-        return  # no pending action for this user — let other handlers process this message
+        # Returning normally would still swallow this update: Pyrogram breaks out
+        # of the handler group after a successful match. Let /start, searches and
+        # every other plugin see ordinary admin text.
+        raise ContinuePropagation
+
+    if message.text.startswith("/"):
+        # A new command while waiting for the destination URI — let the command
+        # plugins handle it (use /cancel to leave this flow).
+        raise ContinuePropagation
 
     parts = message.text.strip().split()
     if not parts or not parts[0].startswith("mongodb"):

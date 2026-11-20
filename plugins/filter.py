@@ -5,7 +5,7 @@ import random
 import logging
 import gc
 from lru import LRU  # ✅ LRU-Dict imported for Auto-Pilot RAM Management
-from pyrogram import Client, filters, enums
+from pyrogram import Client, ContinuePropagation, filters, enums
 from pyrogram.types import LinkPreviewOptions
 from keyboards import ui_button, ui_keyboard
 
@@ -207,7 +207,8 @@ async def search_toggle(client, message):
 # ─────────────────────────────────────────────
 @Client.on_message(filters.private & filters.text & filters.incoming)
 async def pm_search(client, message):
-    if not await is_valid_search(message): return
+    if not await is_valid_search(message):
+        raise ContinuePropagation
     uid = message.from_user.id
     
     if uid not in ADMINS and not await is_premium(uid, client):
@@ -222,7 +223,8 @@ async def pm_search(client, message):
 
 @Client.on_message(filters.group & filters.text & filters.incoming)
 async def group_search(client, message):
-    if not await is_valid_search(message): return
+    if not await is_valid_search(message):
+        raise ContinuePropagation
     chat_id, user_id = message.chat.id, message.from_user.id
 
     settings = await get_settings(chat_id)

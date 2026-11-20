@@ -3,7 +3,7 @@ import time
 import asyncio
 import logging
 import gc
-from pyrogram import Client, filters, enums
+from pyrogram import Client, ContinuePropagation, filters, enums
 from pyrogram.errors import FloodWait
 from input_waiter import wait_for_user_message
 from info import ADMINS, LOG_CHANNEL
@@ -139,7 +139,9 @@ async def index_files(bot, query):
 async def auto_index(bot, message):
     if message.text and not message.text.startswith("https://t.me"):
         if not message.forward_from_chat:
-            return
+            # This admin PM is not an indexing request. Returning alone would
+            # consume it, so hand it to the search/command handlers instead.
+            raise ContinuePropagation
     
     if lock.locked():
         return await message.reply('⏳ Wait until previous indexing process completes.')
@@ -158,7 +160,7 @@ async def auto_index(bot, message):
         except:
             return await message.reply('❌ Invalid message link!')
     else:
-        return
+        raise ContinuePropagation
     
     try:
         chat = await bot.get_chat(chat_id)
