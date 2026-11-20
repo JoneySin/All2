@@ -81,10 +81,13 @@ function inlinePlayerRow(label){
     var row=document.createElement('div');row.className='inline-player-switch-row';
     row.setAttribute('role','group');row.setAttribute('aria-label',label);return row;
 }
-function inlinePlayerChip(row,label,duration,current,title,onClick){
+function inlinePlayerItemMeta(item){
+    var parts=[];if(item.duration)parts.push(item.duration);if(item.size)parts.push(item.size);return parts.join(' · ');
+}
+function inlinePlayerChip(row,label,meta,current,title,onClick){
     var chip=document.createElement('button');chip.type='button';chip.className='inline-player-chip';
     var text=document.createElement('span');text.textContent=label||'Version';chip.appendChild(text);
-    if(duration){var small=document.createElement('small');small.textContent=duration;chip.appendChild(small);}
+    if(meta){var small=document.createElement('small');small.textContent=meta;chip.appendChild(small);}
     chip.title=title||'';
     if(current){chip.setAttribute('aria-current','true');chip.title='Currently playing';}
     else if(onClick)chip.addEventListener('click',onClick);
@@ -129,7 +132,7 @@ function inlinePlayerPaintSwitches(){
         var items=current.items||[];
         (function(){for(var k=0;k<items.length;k++){
             var item=items[k];
-            inlinePlayerChip(qualityRow,item.label,item.duration,item.file_id===inlinePlayerFileId,item.name,
+            inlinePlayerChip(qualityRow,item.label,inlinePlayerItemMeta(item),item.file_id===inlinePlayerFileId,item.name,
                 (function(target){return function(){switchInlinePlayer(target.file_id,target.name,false);};})(item));
         }})();
         box.appendChild(qualityRow);
@@ -140,7 +143,7 @@ function inlinePlayerPaintSwitches(){
         var row=inlinePlayerRow('Quality versions');
         (function(){for(var j=0;j<items.length;j++){
             var item=items[j];
-            inlinePlayerChip(row,item.label,item.duration,item.file_id===inlinePlayerFileId,item.name,
+            inlinePlayerChip(row,item.label,inlinePlayerItemMeta(item),item.file_id===inlinePlayerFileId,item.name,
                 (function(target){return function(){switchInlinePlayer(target.file_id,target.name,false);};})(item));
         }})();
         box.appendChild(row);

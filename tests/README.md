@@ -32,7 +32,8 @@ for the file being played. `/api/file/switches` requires an authenticated web
 session and resolves the live saved group that owns that database file ID. Series
 groups are nested for display only: episodes come from explicit filename markers
 (`S01E02`), an admin's `episode_labels` rename the episode for all its qualities, and
-quality versions are grouped inside their episode. Files without an episode marker
+quality versions are grouped inside their episode; each quality chip shows its
+duration and file size. Files without an episode marker
 stay in their own bucket, so nothing is hidden or wrongly merged. This is derived on
 read from the existing flat `members` list, so saved groups, scans, deletes and
 merges keep one source of truth and need no migration. Quality groups keep one sorted

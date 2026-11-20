@@ -1837,8 +1837,9 @@ SWITCH_EPISODE_LIMIT = 100
 
 def _switch_item(fid, doc, label):
     # The player renders these with textContent, so filenames stay plain text.
+    size = get_size(doc.get("file_size")) if doc.get("file_size") else ""
     return {"file_id": fid, "name": str(doc.get("file_name") or "Untitled"),
-            "label": str(label or ""), "duration": get_duration_str(duration_seconds(doc))}
+            "label": str(label or ""), "duration": get_duration_str(duration_seconds(doc)), "size": size}
 
 
 def _switch_quality(doc):

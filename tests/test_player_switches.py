@@ -60,9 +60,9 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         return response, await response.json()
 
     async def test_quality_versions_are_sorted_and_flagged(self):
-        await self.add("primary", "q480", "Aurora Rising 480p.mkv", 480)
-        await self.add("cloud", "q720", "Aurora Rising 720p.mkv", 720)
-        await self.add("archive", "q1080", "Aurora Rising 1080p.mkv", 1080)
+        await self.add("primary", "q480", "Aurora Rising 480p.mkv", 480, file_size=700 * 1024 * 1024)
+        await self.add("cloud", "q720", "Aurora Rising 720p.mkv", 720, file_size=1400 * 1024 * 1024)
+        await self.add("archive", "q1080", "Aurora Rising 1080p.mkv", 1080, file_size=3 * 1024 * 1024 * 1024)
         await self.groups.insert_one({"_id": "11", "num": 11, "name": "Aurora Rising", "group_type": "quality",
                                       "members": ["q1080", "q480", "q720"]})
         response, data = await self.get("q720")
@@ -74,6 +74,8 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["label"] for item in data["items"]], ["480p", "720p", "1080p"])
         self.assertEqual([item["current"] for item in data["items"]], [False, True, False])
         self.assertTrue(data["items"][0]["duration"])
+        self.assertEqual([item["size"] for item in data["items"]],
+                         ["700.00 MB", "1.37 GB", "3.00 GB"])
 
     async def test_series_uses_saved_episode_order_and_labels(self):
         for fid, episode in (("s1", "Episode 1"), ("s2", "S01E02"), ("s3", "Episode 3")):
@@ -113,6 +115,8 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([episode["current"] for episode in data["episodes"]], [False, True, False])
         self.assertEqual(data["current_episode"], data["episodes"][1]["key"])
         self.assertEqual((data["group"]["episode_count"], data["group"]["count"]), (3, 9))
+        self.assertTrue(all(item["duration"] and item["size"] for episode in data["episodes"]
+                            for item in episode["items"]))
 
     async def test_unlabelled_series_files_are_not_hidden_or_merged(self):
         await self.add("primary", "u1", "Show Extras.mkv", 720)
@@ -214,6 +218,7 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("switchInlinePlayer", PLAYER_UI)
         self.assertIn("inlinePlayerPickEpisode", PLAYER_UI)
         self.assertIn("inlinePlayerQualityItem", PLAYER_UI)
+        self.assertIn("inlinePlayerItemMeta", PLAYER_UI)
         self.assertIn("loadedmetadata", PLAYER_UI)
         video = PLAYER_UI.index('<video id="inlinePlayerVideo"')
         self.assertGreater(PLAYER_UI.index('id="inlinePlayerSwitcher"'), video)
@@ -224,6 +229,7 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("miniSwitchFile", mini)
         self.assertIn("miniPickEpisode", mini)
         self.assertIn("miniQualityItem", mini)
+        self.assertIn("miniItemMeta", mini)
         self.assertGreater(mini.index('id="psSwitch"'), mini.index('<div class="ppl"'))
         self.assertIn("openStream(f.file_id,f.name)", mini)
 

@@ -439,10 +439,13 @@ function miniHead(label,detail){
 function miniRow(label){
   let row=document.createElement('div');row.className='pswr';row.setAttribute('role','group');row.setAttribute('aria-label',label);return row;
 }
-function miniChip(row,label,duration,current,title,onClick){
+function miniItemMeta(item){
+  let parts=[];if(item.duration)parts.push(item.duration);if(item.size)parts.push(item.size);return parts.join(' · ');
+}
+function miniChip(row,label,meta,current,title,onClick){
   let chip=document.createElement('button');chip.type='button';chip.className='pswc';
   let text=document.createElement('span');text.textContent=label||'Version';chip.append(text);
-  if(duration){let small=document.createElement('small');small.textContent=duration;chip.append(small);}
+  if(meta){let small=document.createElement('small');small.textContent=meta;chip.append(small);}
   chip.title=title||'';
   if(current)chip.setAttribute('aria-current','true');
   else if(onClick)chip.addEventListener('click',onClick);
@@ -480,7 +483,7 @@ function miniPaintSwitches(){
     let qualityRow=miniRow('Quality versions of this episode'),items=current.items||[];
     for(i=0;i<items.length;i++){
       let item=items[i];
-      miniChip(qualityRow,item.label,item.duration,item.file_id===miniCurrentFileId,item.name,function(){miniSwitchFile(item.file_id,item.name,false);});
+      miniChip(qualityRow,item.label,miniItemMeta(item),item.file_id===miniCurrentFileId,item.name,function(){miniSwitchFile(item.file_id,item.name,false);});
     }
     box.append(qualityRow);
     if(group.truncated){let note=document.createElement('div');note.className='pswn';note.textContent='Only the first '+episodes.length+' episodes are listed here.';box.append(note);}
@@ -491,7 +494,7 @@ function miniPaintSwitches(){
     let row=miniRow('Quality versions');
     for(let i=0;i<items.length;i++){
       let item=items[i];
-      miniChip(row,item.label,item.duration,item.file_id===miniCurrentFileId,item.name,function(){miniSwitchFile(item.file_id,item.name,false);});
+      miniChip(row,item.label,miniItemMeta(item),item.file_id===miniCurrentFileId,item.name,function(){miniSwitchFile(item.file_id,item.name,false);});
     }
     box.append(row);
     if(group.truncated){let note=document.createElement('div');note.className='pswn';note.textContent='Only the first '+items.length+' files are listed here.';box.append(note);}
