@@ -49,6 +49,27 @@ stale marks, dissolved groups, both caps, access errors and both player UIs. The
 not cover real Telegram media or a real browser, so actual codec support and mobile
 layout still need manual checks.
 
+Telegram's Bot API supports coloured inline buttons through an optional `style`
+field (`primary`, `success`, `danger`); clients released before 9 February 2026
+ignore it. The bot runs on Kurigram 2.2.27, which exposes the field natively as
+`InlineKeyboardButton(style=enums.ButtonStyle.X)`, so no Bot API workaround is
+needed. `button_styles.py` colours every new `InlineKeyboardMarkup` when it is
+built, which covers all keyboards (file cards, search navigation, settings and
+premium screens), not just the main card. A row of up to three buttons never
+repeats a colour: when two actions want the same colour, the later one moves
+to the next unused colour; longer rows cycle while keeping neighbours
+different. An explicit `style=` at a call site always wins. Colours are semantic: red for close/cancel/delete/reject actions,
+green for watch/download/buy/approve/index actions, blue for navigation,
+settings and links. Tests cover the matching rules, toggle labels, explicit
+styles, automatic application, and the Kurigram pin. Actual colours still need
+a visual check on a current Telegram client; older clients show the default.
+
+Kurigram does not provide Hydrogram's `Client.listen()` used by the payment and
+indexing prompts, so `kurigram_compat.py` re-implements it with a temporary
+message handler (group `-1`, `StopPropagation`) and raises a local
+`ListenerTimeout` that subclasses `asyncio.TimeoutError`. Tests cover capture,
+timeout and handler cleanup.
+
 For grouped `/api/search` requests, treat `next_offset` as an opaque continuation
 value and send it back unchanged, including when a selective filter returns an
 empty page. Large continuations are stored in `GroupSearchCursors` and expire after

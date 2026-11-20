@@ -11,9 +11,9 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
-from hydrogram import Client, filters
-from hydrogram.errors import BadRequest, FloodWait, MessageNotModified
-from hydrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram import Client, filters
+from pyrogram.errors import BadRequest, FloodWait, MessageNotModified
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from database.ia_filterdb import (
     FILE_COLLECTIONS, META_SCHEMA_VERSION, apply_media_meta_update, groups,

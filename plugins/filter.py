@@ -5,8 +5,8 @@ import random
 import logging
 import gc
 from lru import LRU  # ✅ LRU-Dict imported for Auto-Pilot RAM Management
-from hydrogram import Client, filters, enums
-from hydrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram import Client, filters, enums
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LinkPreviewOptions
 
 from info import ADMINS, MAX_BOT_RESULTS, IS_PREMIUM, PICS, SPELL_CHECK
 from utils import is_premium, get_size, is_check_admin, temp, get_settings, save_group_settings
@@ -236,7 +236,7 @@ async def group_search(client, message):
             if not await is_check_admin(client, chat_id, user_id):
                 try: await message.delete()
                 except: pass
-                msg = await message.reply("❌ External Links not allowed in Premium Group!", quote=True)
+                msg = await message.reply("❌ External Links not allowed in Premium Group!")
                 await asyncio.sleep(5)
                 try: await msg.delete()
                 except: pass
@@ -266,7 +266,7 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
             suggestions = await get_spell_suggestions(search, limit=5)
             if suggestions:
                 try:
-                    m = await msg.reply("🤔 Checking spelling...", quote=True)
+                    m = await msg.reply("🤔 Checking spelling...")
                 except:
                     return
                 # ✅ FIX: callback_data में सीधे suggestion टेक्स्ट के बजाय सिर्फ
@@ -295,7 +295,7 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
                 return
 
         try:
-            m = await msg.reply(script.NOT_FILE_TXT.format(msg.from_user.mention, search), quote=True)
+            m = await msg.reply(script.NOT_FILE_TXT.format(msg.from_user.mention, search))
             asyncio.create_task(start_auto_delete_timer(client, m.chat.id, m.id, delay=15))
         except: pass
         return
@@ -307,7 +307,7 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
     cap, markup = get_filter_ui(search, files, total, act_src, 0, msg.chat.id, msg.from_user.id, key, next_offset, is_simple_mode, delay=300)
 
     try:
-        res = await msg.reply(cap, reply_markup=markup, disable_web_page_preview=True, quote=True)
+        res = await msg.reply(cap, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
         asyncio.create_task(start_auto_delete_timer(client, res.chat.id, res.id, delay=300))
     except Exception as e: 
         logger.error(f"Auto filter response error: {e}")
@@ -316,7 +316,7 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
 # 📤 CALLBACK HANDLERS
 # ─────────────────────────────────────────────
 # ✅ BUG FIX (duplicate handler): `^close_` regex पर दो अलग-अलग handlers रजिस्टर थे —
-# यहाँ close_callback और plugins/commands.py में close_cb। hydrogram दोनों को एक ही
+# यहाँ close_callback और plugins/commands.py में close_cb। pyrogram दोनों को एक ही
 # callback पर चलाता था, यानी हर "❌ Close" tap पर delete_messages दो बार चलता,
 # दूसरी बार हमेशा MessageDeleteForbidden/MessageIdInvalid exception देता, और दोनों
 # अपनी-अपनी सफाई करते थे (एक PM_FILES देखता, दूसरा auto-delete timer)।
@@ -404,7 +404,7 @@ async def spell_check_handler(client, query):
         is_simple_mode = settings.get("simple_mode", True)
 
         cap, markup = get_filter_ui(suggestion, files, total, act_src, 0, query.message.chat.id, query.from_user.id, key, next_offset, is_simple_mode, delay=300)
-        await query.message.edit_text(cap, reply_markup=markup, disable_web_page_preview=True)
+        await query.message.edit_text(cap, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
         
         asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))
             
@@ -458,7 +458,7 @@ async def pagination_handler(client, query):
     cap, markup = get_filter_ui(search, files, total, act_src, offset, query.message.chat.id, req, key, next_off, is_simple_mode, delay=300)
 
     try: 
-        await query.message.edit_text(cap, reply_markup=markup, disable_web_page_preview=True)
+        await query.message.edit_text(cap, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
         asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))
     except Exception as e:
         logger.error(f"Pagination delivery failure: {e}")

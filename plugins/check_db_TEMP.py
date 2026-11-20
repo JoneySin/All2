@@ -32,8 +32,8 @@ import asyncio
 import time
 from pymongo import AsyncMongoClient
 from pymongo.errors import BulkWriteError
-from hydrogram import Client, filters
-from hydrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from info import ADMINS, DATABASE_URL, DATABASE_NAME
 
 BATCH_SIZE = 500

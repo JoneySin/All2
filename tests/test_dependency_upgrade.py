@@ -11,7 +11,7 @@ for key, value in {
 }.items():
     os.environ.setdefault(key, value)
 
-from hydrogram.errors import ListenerTimeout
+from kurigram_compat import ListenerTimeout
 from mockupdb import MockupDB
 from pymongo import AsyncMongoClient
 from database import ia_filterdb as db

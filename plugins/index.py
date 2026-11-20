@@ -3,12 +3,13 @@ import time
 import asyncio
 import logging
 import gc
-from hydrogram import Client, filters, enums
-from hydrogram.errors import FloodWait, ListenerTimeout
+from pyrogram import Client, filters, enums
+from pyrogram.errors import FloodWait
+from kurigram_compat import ListenerTimeout
 from info import ADMINS, LOG_CHANNEL
 from database.ia_filterdb import save_file, file_already_indexed
 from media_probe import probe_telegram_file, should_probe_media
-from hydrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from utils import temp, get_readable_time
 from Script import script
 

@@ -646,15 +646,15 @@ async def fetch_file_range(client, file_ref, file_size, offset_mb, chunks_mb,
                            timeout=FETCH_TIMEOUT):
     """Telegram se [offset_mb, offset_mb+chunks_mb) MB slice lao (max ~cap bytes).
 
-    hydrogram ka public `client.get_file()` use hota hai — DC session + CDN
+    pyrogram ka public `client.get_file()` use hota hai — DC session + CDN
     redirect sab wahi sambhalta hai. Timeout/partial par jo mila wahi (fail-soft);
     sirf FloodWait caller tak jaata hai (migration ka anti-flood handler pakdega).
     """
     if not client or not file_ref or chunks_mb <= 0:
         return b""
     try:
-        from hydrogram.file_id import FileId
-        from hydrogram.errors import FloodWait
+        from pyrogram.file_id import FileId
+        from pyrogram.errors import FloodWait
     except Exception:
         return b""
     try:
@@ -756,9 +756,9 @@ async def probe_telegram_file(client, file_ref, file_size=0, file_name="",
     if not client or not file_ref:
         return {}
     try:
-        from hydrogram.errors import FloodWait
+        from pyrogram.errors import FloodWait
     except Exception:
-        FloodWait = ()  # pragma: no cover — hydrogram hamesha hota hai
+        FloodWait = ()  # pragma: no cover — pyrogram hamesha hota hai
     try:
         head = await fetch_file_range(client, file_ref, file_size, 0, head_mb)
     except FloodWait:

@@ -3,7 +3,7 @@ import re
 import time
 from zoneinfo import ZoneInfo
 from datetime import datetime
-from hydrogram import enums
+from pyrogram import enums
 
 from info import ADMINS, IS_PREMIUM, TIME_ZONE
 # ✅ DRY: premium plan का reset-state dict database layer से ही आता है (एक ही जगह

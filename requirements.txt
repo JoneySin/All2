@@ -1,5 +1,5 @@
 # Tested direct dependencies. Update with compatibility and regression testing.
-hydrogram==0.2.0
+kurigram==2.2.27
 TgCrypto==1.2.5
 pymongo==4.19.0
 dnspython==2.9.2

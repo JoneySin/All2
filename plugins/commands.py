@@ -2,8 +2,8 @@ import asyncio
 import random
 import logging
 from time import time as time_now
-from hydrogram import Client, filters, enums
-from hydrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from pyrogram import Client, filters, enums
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from Script import script
 # ✅ DRY: directory + post-category counts अब ia_filterdb के shared helpers से आते हैं
@@ -163,7 +163,6 @@ async def start(client, message):
                     caption=caption,
                     reply_markup=InlineKeyboardMarkup(btn)
                 )
-
                 if PM_FILE_DELETE_TIME > 0:
                     del_msg = await msg.reply(
                         f"⚠️ This message will delete in {get_readable_time(PM_FILE_DELETE_TIME)}."
@@ -264,7 +263,6 @@ async def link_generator(client, message):
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("💎 Buy Premium Plan", callback_data="activate_plan")
             ]]),
-            quote=True
         )
 
     media = (
@@ -273,7 +271,7 @@ async def link_generator(client, message):
         getattr(message.reply_to_message, 'audio', None)
     )
     if not media:
-        return await message.reply("❌ **No streamable media found in the replied message.**", quote=True)
+        return await message.reply("❌ **No streamable media found in the replied message.**")
 
     # ⏳ Link validity: premium user = fixed 1 din | admin = /link 12h, /link 3d, /link 0 (kabhi nahi)
     ttl = USER_LINK_TTL
@@ -285,12 +283,11 @@ async def link_generator(client, message):
             secs = await get_seconds(arg)
             if secs <= 0:
                 return await message.reply(
-                    "❌ **Usage:** `/link` (default 1 day)\n`/link 12h` | `/link 3d` | `/link 30m` | `/link 0` (never expire)",
-                    quote=True
+                    "❌ **Usage:** `/link` (default 1 day)\n`/link 12h` | `/link 3d` | `/link 30m` | `/link 0` (never expire)"
                 )
             ttl = min(secs, MAX_ADMIN_TTL)
 
-    msg = await message.reply("⏳ **Injecting into Stream Stream Tunnel...**", quote=True)
+    msg = await message.reply("⏳ **Injecting into Stream Stream Tunnel...**")
     try:
         copied = await message.reply_to_message.copy(BIN_CHANNEL)
         if ttl is not None:

@@ -3,7 +3,8 @@ import sys
 import random
 import logging
 import gc
-from hydrogram import Client, filters, enums
+from pyrogram import Client, filters, enums
+from pyrogram.types import LinkPreviewOptions
 from info import ADMINS, LOG_CHANNEL, PICS, IS_PREMIUM
 from database.users_chats_db import db
 
@@ -218,4 +219,4 @@ async def get_id(c, m):
         if f_id:
             t += f"\n📂 <b>MEDIA DETAILS</b>\n🆔 <b>File ID:</b> <code>{f_id}</code>\n"
 
-    await m.reply_text(t, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+    await m.reply_text(t, parse_mode=enums.ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))

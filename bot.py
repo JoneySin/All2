@@ -24,7 +24,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
-logging.getLogger('hydrogram').setLevel(logging.ERROR)
+logging.getLogger('pyrogram').setLevel(logging.ERROR)
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 logging.getLogger('aiohttp.server').setLevel(logging.WARNING)
 
@@ -34,9 +34,13 @@ logger = logging.getLogger(__name__)
 # CORE IMPORTS
 # ==========================================================
 from aiohttp import web
-from hydrogram import Client, types, StopPropagation, idle 
-from hydrogram.errors import FloodWait 
-from hydrogram.handlers import MessageHandler 
+from pyrogram import Client, types, StopPropagation, idle
+from pyrogram.errors import FloodWait
+from pyrogram.handlers import MessageHandler
+# Kurigram shims (Hydrogram's Client.listen) and native button colours. Both
+# must be installed before plugins build any keyboards.
+import kurigram_compat  # noqa: F401  (installs Client.listen)
+import button_styles  # noqa: F401  (styles every InlineKeyboardMarkup)
 from web import web_app
 from web.search_api import start_group_scan, stop_group_scan
 from info import (
@@ -111,7 +115,7 @@ class Bot(Client):
         self._delete_task = None  
 
     async def start(self):
-        # 1. Start Pyrogram/Hydrogram Client Instance
+        # 1. Start Kurigram Client Instance
         await super().start()
         temp.START_TIME = time.time()
 

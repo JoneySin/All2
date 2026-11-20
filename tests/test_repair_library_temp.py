@@ -14,7 +14,7 @@ for key, value in {
 }.items():
     os.environ.setdefault(key, value)
 
-from hydrogram.errors import BadRequest, FloodWait
+from pyrogram.errors import BadRequest, FloodWait
 from mongomock_motor import AsyncMongoMockClient
 
 # Removing the optional plugin must not make the rest of the test suite fail.

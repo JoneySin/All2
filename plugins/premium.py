@@ -5,9 +5,10 @@ import asyncio
 import logging
 from datetime import timedelta
 
-from hydrogram import Client, filters
-from hydrogram.errors import ListenerTimeout, MessageNotModified
-from hydrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram import Client, filters
+from pyrogram.errors import MessageNotModified
+from kurigram_compat import ListenerTimeout
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 # डेटाबेस इम्पोर्ट्स
 from database.users_chats_db import db, web_db 
@@ -112,7 +113,7 @@ async def check_premium_expired(bot):
 @Client.on_message(filters.command("myplan") & filters.private)
 async def myplan_cmd(c, m):
     if not IS_PREMIUM: return
-    if m.from_user.id in ADMINS: return await m.reply(ADMIN_MSG, quote=True)
+    if m.from_user.id in ADMINS: return await m.reply(ADMIN_MSG)
         
     mp = await db.get_plan(m.from_user.id)
     if not mp.get("premium"):
@@ -121,12 +122,12 @@ async def myplan_cmd(c, m):
     exp = parse_expire_time(mp.get("expire"))
     now = get_local_now()
     left = f"{(exp - now).days} days, {(exp - now).seconds // 3600} hours" if exp else "Unknown"
-    await m.reply(f"💎 <b>Premium Status Summary</b>\n\n📦 <b>Plan Active:</b> {mp.get('plan')}\n🗓 <b>Expires On:</b> {format_plan_expiry(exp)}\n⏲ <b>Time Remaining:</b> {left}", quote=True)
+    await m.reply(f"💎 <b>Premium Status Summary</b>\n\n📦 <b>Plan Active:</b> {mp.get('plan')}\n🗓 <b>Expires On:</b> {format_plan_expiry(exp)}\n⏲ <b>Time Remaining:</b> {left}")
 
 @Client.on_message(filters.command("plan") & filters.private)
 async def plan_cmd(c, m):
     if not IS_PREMIUM: return
-    if m.from_user.id in ADMINS: return await m.reply(ADMIN_MSG, quote=True)
+    if m.from_user.id in ADMINS: return await m.reply(ADMIN_MSG)
     await m.reply(script.PLAN_TXT.format(PRE_DAY_AMOUNT, RECEIPT_SEND_USERNAME), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Activate Premium Now", callback_data="buy_prem")]]))
 
 @Client.on_message(filters.command(["add_prm", "rm_prm"]) & filters.user(ADMINS))

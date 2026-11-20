@@ -10,8 +10,8 @@ from difflib import SequenceMatcher
 from struct import pack
 from bson.objectid import ObjectId
 from pymongo import AsyncMongoClient
-from hydrogram.file_id import FileId
-from hydrogram.errors import FloodWait
+from pyrogram.file_id import FileId
+from pyrogram.errors import FloodWait
 from info import DATABASE_URL, DATABASE_NAME, USE_CAPTION_FILTER, DELETE_CHANNEL
 from utils import temp
 from media_probe import should_probe_media
@@ -441,7 +441,7 @@ async def save_file(media, collection_type="primary", probed=None):
 
         # ✅ NEW: video/audio ki duration (seconds) bhi save karte hain — sirf web UI
         # me dikhane ke liye (Telegram bot ke messages me jaan-boojhkar nahi bhejte).
-        # hydrogram me Video/Animation/Audio par .duration hota hai, Document par nahi,
+        # pyrogram me Video/Animation/Audio par .duration hota hai, Document par nahi,
         # isliye getattr se safe rakha hai (documents ke liye 0 → UI me chip hide).
         # 🔍 probed (actual-bytes) duration mile to wahi — uploader ka attribute
         # aksar default/guess hota hai (1280×720 wala bug duration par bhi lagu tha).

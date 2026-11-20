@@ -13,7 +13,7 @@ import logging
 import time
 from collections import OrderedDict
 
-from hydrogram.file_id import FileId
+from pyrogram.file_id import FileId
 
 from info import BIN_CHANNEL
 from utils import temp

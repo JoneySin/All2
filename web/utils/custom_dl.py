@@ -5,12 +5,11 @@ import math
 import os
 from collections import deque
 
-from hydrogram import Client, utils, raw
-import hydrogram.errors as _herr
-from hydrogram.types import Message
-from hydrogram.session import Session, Auth
-from hydrogram.errors import AuthBytesInvalid, FloodWait
-from hydrogram.file_id import FileId, FileType, ThumbnailSource
+from pyrogram import Client, utils, raw
+import pyrogram.errors as _herr
+from pyrogram.types import Message
+from pyrogram.errors import FloodWait
+from pyrogram.file_id import FileId, FileType, ThumbnailSource
 from utils import temp
 
 logger = logging.getLogger(__name__)
@@ -65,7 +64,8 @@ class TGCustomYield:
     # Media session — har DC ke liye ek baar. Lock lagaya hai: pehle 2-3 parallel
     # requests ek saath naya session bana deti thi (ek leak ho jaata tha).
     # ─────────────────────────────────────────────────────────
-    async def generate_media_session(self, c: Client, d: FileId) -> Session:
+    async def generate_media_session(self, c: Client, d: FileId):
+        """Reuse one media session per DC; Kurigram/ Pyrogram builds it for us."""
         ms = c.media_sessions.get(d.dc_id)
         if ms:
             return ms
@@ -75,30 +75,7 @@ class TGCustomYield:
             ms = c.media_sessions.get(d.dc_id)
             if ms:
                 return ms
-
-            test_mode = await c.storage.test_mode()
-            if d.dc_id != await c.storage.dc_id():
-                ms = Session(
-                    c, d.dc_id,
-                    await Auth(c, d.dc_id, test_mode).create(),
-                    test_mode, is_media=True
-                )
-                await ms.start()
-                for _ in range(3):
-                    try:
-                        ex = await c.invoke(raw.functions.auth.ExportAuthorization(dc_id=d.dc_id))
-                        await ms.send(raw.functions.auth.ImportAuthorization(id=ex.id, bytes=ex.bytes))
-                        break
-                    except AuthBytesInvalid:
-                        continue
-                else:
-                    await ms.stop()
-                    raise AuthBytesInvalid
-            else:
-                ms = Session(c, d.dc_id, await c.storage.auth_key(), test_mode, is_media=True)
-                await ms.start()
-            c.media_sessions[d.dc_id] = ms
-
+            ms = await c.get_session(d.dc_id, is_media=True)
         return ms
 
     @staticmethod

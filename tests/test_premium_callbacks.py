@@ -12,7 +12,8 @@ for key, value in {
 }.items():
     os.environ.setdefault(key, value)
 
-from hydrogram.errors import ListenerTimeout, MessageNotModified
+from pyrogram.errors import MessageNotModified
+from kurigram_compat import ListenerTimeout
 from mongomock_motor import AsyncMongoMockClient
 from database.users_chats_db import Database
 from plugins import premium
