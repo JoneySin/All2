@@ -13,7 +13,7 @@ for key, value in {
     os.environ.setdefault(key, value)
 
 from pyrogram.errors import MessageNotModified
-from kurigram_compat import ListenerTimeout
+from input_waiter import InputTimeout
 from mongomock_motor import AsyncMongoMockClient
 from database.users_chats_db import Database
 from plugins import premium
@@ -45,10 +45,11 @@ class PremiumCallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_buy_already_displayed_prompt_and_timeout(self):
         q = query(); q.from_user.id = 55
         q.message.edit.side_effect = MessageNotModified()
-        bot = SimpleNamespace(listen=AsyncMock(side_effect=ListenerTimeout()))
-        await premium.buy_callback(bot, q)
+        bot = SimpleNamespace()
+        with patch.object(premium, 'wait_for_user_message', AsyncMock(side_effect=InputTimeout())) as waiter:
+            await premium.buy_callback(bot, q)
         q.answer.assert_awaited_once_with()
-        bot.listen.assert_awaited_once_with(chat_id=-1005, user_id=55, timeout=60)
+        waiter.assert_awaited_once_with(bot, chat_id=-1005, user_id=55, timeout=60)
         self.assertIn('Timeout', q.message.reply.await_args.args[0])
         self.assertNotIn(55, premium.ACTIVE_PURCHASES)
 
@@ -57,15 +58,16 @@ class PremiumCallbackTests(unittest.IsolatedAsyncioTestCase):
         first.message.edit.return_value = first.message
         second = query(); second.from_user.id = 55
         entered, release = asyncio.Event(), asyncio.Event()
-        async def listen(**_kwargs):
-            entered.set(); await release.wait(); raise ListenerTimeout()
-        bot = SimpleNamespace(listen=AsyncMock(side_effect=listen))
-        task = asyncio.create_task(premium.buy_callback(bot, first))
-        await entered.wait()
-        await premium.buy_callback(bot, second)
-        self.assertIn('already active', second.answer.await_args.args[0])
-        release.set(); await task
-        bot.listen.assert_awaited_once()
+        async def wait(*_args, **_kwargs):
+            entered.set(); await release.wait(); raise InputTimeout()
+        bot = SimpleNamespace()
+        with patch.object(premium, 'wait_for_user_message', AsyncMock(side_effect=wait)) as waiter:
+            task = asyncio.create_task(premium.buy_callback(bot, first))
+            await entered.wait()
+            await premium.buy_callback(bot, second)
+            self.assertIn('already active', second.answer.await_args.args[0])
+            release.set(); await task
+        waiter.assert_awaited_once()
         self.assertNotIn(55, premium.ACTIVE_PURCHASES)
 
     async def test_duplicate_approval_is_durable_and_decision_not_reapplied(self):

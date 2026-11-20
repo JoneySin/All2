@@ -435,7 +435,7 @@ async def save_file(media, collection_type="primary", probed=None):
 
         # ✅ NEW: video/audio ki duration (seconds) bhi save karte hain — sirf web UI
         # me dikhane ke liye (Telegram bot ke messages me jaan-boojhkar nahi bhejte).
-        # pyrogram me Video/Animation/Audio par .duration hota hai, Document par nahi,
+        # Kurigram me Video/Animation/Audio par .duration hota hai, Document par nahi,
         # isliye getattr se safe rakha hai (documents ke liye 0 → UI me chip hide).
         # 🔍 probed (actual-bytes) duration mile to wahi — uploader ka attribute
         # aksar default/guess hota hai (1280×720 wala bug duration par bhi lagu tha).

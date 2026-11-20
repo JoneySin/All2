@@ -5,11 +5,11 @@ import logging
 import gc
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
-from kurigram_compat import ListenerTimeout
+from input_waiter import wait_for_user_message
 from info import ADMINS, LOG_CHANNEL
 from database.ia_filterdb import save_file, file_already_indexed
 from media_probe import probe_telegram_file, should_probe_media
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from keyboards import ui_button, ui_keyboard
 from utils import temp, get_readable_time
 from Script import script
 
@@ -25,16 +25,16 @@ lock = asyncio.Lock()
 # ─────────────────────────────────────────────
 def collection_picker_markup(chat, lst_msg_id, skip):
     """Primary / Cloud / Archive चुनने वाला inline keyboard"""
-    return InlineKeyboardMarkup([
+    return ui_keyboard([
         [
-            InlineKeyboardButton('✅ PRIMARY', callback_data=f'index#start#{chat}#{lst_msg_id}#{skip}#primary'),
-            InlineKeyboardButton('📂 CLOUD', callback_data=f'index#start#{chat}#{lst_msg_id}#{skip}#cloud')
+            ui_button('✅ PRIMARY', callback_data=f'index#start#{chat}#{lst_msg_id}#{skip}#primary'),
+            ui_button('📂 CLOUD', callback_data=f'index#start#{chat}#{lst_msg_id}#{skip}#cloud')
         ],
         [
-            InlineKeyboardButton('📦 ARCHIVES', callback_data=f'index#start#{chat}#{lst_msg_id}#{skip}#archive')
+            ui_button('📦 ARCHIVES', callback_data=f'index#start#{chat}#{lst_msg_id}#{skip}#archive')
         ],
         [
-            InlineKeyboardButton('❌ CANCEL', callback_data='close_data')
+            ui_button('❌ CANCEL', callback_data='close_data')
         ]
     ])
 
@@ -102,11 +102,11 @@ async def index_files(bot, query):
         await query.message.edit("📝 <b>Send the number of messages to skip:</b>\n\nSend <code>0</code> to start from beginning.")
         
         try:
-            msg = await bot.listen(chat_id=query.message.chat.id, user_id=query.from_user.id, timeout=60)
+            msg = await wait_for_user_message(bot, chat_id=query.message.chat.id, user_id=query.from_user.id, timeout=60)
             skip = int(msg.text)
             if not 0 <= skip <= int(lst_msg_id):
                 raise ValueError
-        except (ValueError, TypeError, asyncio.TimeoutError, ListenerTimeout):
+        except (ValueError, TypeError, asyncio.TimeoutError):
             return await query.message.edit("❌ Invalid number or Timeout. Try again.")
         try:
             await msg.delete()
@@ -170,13 +170,13 @@ async def auto_index(bot, message):
 
     buttons = [
         [
-            InlineKeyboardButton('⚡ START INDEXING (Skip 0)', callback_data=f'index#yes#{chat_id}#{last_msg_id}#0')
+            ui_button('⚡ START INDEXING (Skip 0)', callback_data=f'index#yes#{chat_id}#{last_msg_id}#0')
         ],
         [
-            InlineKeyboardButton('📝 CUSTOM SKIP', callback_data=f'index#ask_skip#{chat_id}#{last_msg_id}')
+            ui_button('📝 CUSTOM SKIP', callback_data=f'index#ask_skip#{chat_id}#{last_msg_id}')
         ],
         [
-            InlineKeyboardButton('❌ CANCEL', callback_data='close_data')
+            ui_button('❌ CANCEL', callback_data='close_data')
         ]
     ]
     await message.reply(
@@ -184,7 +184,7 @@ async def auto_index(bot, message):
         f'📢 Channel: <b>{chat.title}</b>\n'
         f'📨 Total Messages: <code>{last_msg_id}</code>\n\n'
         f'Choose an option:',
-        reply_markup=InlineKeyboardMarkup(buttons)
+        reply_markup=ui_keyboard(buttons)
     )
 
 
@@ -239,14 +239,14 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, skip, collection_type="p
                 if current % 50 == 0 and (time.time() - last_update_time > 4):
                     last_update_time = time.time()
                     btn = [[
-                        InlineKeyboardButton('CANCEL', callback_data=f'index#cancel#{chat}#{lst_msg_id}#{skip}')
+                        ui_button('CANCEL', callback_data=f'index#cancel#{chat}#{lst_msg_id}#{skip}')
                     ]]
                     try:
                         await msg.edit_text(
                             text="<b>📊 Indexing Progress</b>\n"
                                  + index_status_text(collection_type, time_taken, current, total_files,
                                                      duplicate, deleted, no_media, unsupported, errors, badfiles),
-                            reply_markup=InlineKeyboardMarkup(btn)
+                            reply_markup=ui_keyboard(btn)
                         )
                     except FloodWait as e:
                         await asyncio.sleep(e.value)

@@ -64,7 +64,7 @@ class TGCustomYield:
     # requests ek saath naya session bana deti thi (ek leak ho jaata tha).
     # ─────────────────────────────────────────────────────────
     async def generate_media_session(self, c: Client, d: FileId):
-        """Reuse one media session per DC; Kurigram/ Pyrogram builds it for us."""
+        """Reuse one media session per DC; Kurigram builds it for us."""
         ms = c.media_sessions.get(d.dc_id)
         if ms:
             return ms

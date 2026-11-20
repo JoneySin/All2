@@ -37,10 +37,6 @@ from aiohttp import web
 from pyrogram import Client, types, StopPropagation, idle
 from pyrogram.errors import FloodWait
 from pyrogram.handlers import MessageHandler
-# Kurigram shims (Hydrogram's Client.listen) and native button colours. Both
-# must be installed before plugins build any keyboards.
-import kurigram_compat  # noqa: F401  (installs Client.listen)
-import button_styles  # noqa: F401  (styles every InlineKeyboardMarkup)
 from web import web_app
 from web.search_api import start_group_scan, stop_group_scan
 from info import (

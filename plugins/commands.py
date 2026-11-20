@@ -3,7 +3,8 @@ import random
 import logging
 from time import time as time_now
 from pyrogram import Client, filters, enums
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from pyrogram.types import WebAppInfo
+from keyboards import ui_button, ui_keyboard
 
 from Script import script
 # ✅ DRY: directory + post-category counts अब ia_filterdb के shared helpers से आते हैं
@@ -127,8 +128,8 @@ async def start(client, message):
         return await message.reply_photo(
             random.choice(PICS),
             caption=script.PLAN_TXT.format(10, "@admin"),
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("💎 Buy Premium Plan", callback_data="activate_plan")
+            reply_markup=ui_keyboard([[
+                ui_button("💎 Buy Premium Plan", callback_data="activate_plan")
             ]])
         )
 
@@ -151,9 +152,9 @@ async def start(client, message):
                     file_size=get_size(file.get('file_size', 0))
                 )
 
-                btn = [[InlineKeyboardButton('❌ Close', callback_data=f'close_{message.from_user.id}')]]
+                btn = [[ui_button('❌ Close', callback_data=f'close_{message.from_user.id}')]]
                 if IS_STREAM:
-                    btn.insert(0, [InlineKeyboardButton("▶️ Watch / Download", callback_data=f"stream#{file_id}")])
+                    btn.insert(0, [ui_button("▶️ Watch / Download", callback_data=f"stream#{file_id}")])
 
                 target_media = file.get('file_ref') if file.get('file_ref') else file_id
 
@@ -161,7 +162,7 @@ async def start(client, message):
                     message.chat.id,
                     target_media,
                     caption=caption,
-                    reply_markup=InlineKeyboardMarkup(btn)
+                    reply_markup=ui_keyboard(btn)
                 )
                 if PM_FILE_DELETE_TIME > 0:
                     del_msg = await msg.reply(
@@ -181,17 +182,17 @@ async def start(client, message):
         return
 
     btn = [
-        [InlineKeyboardButton("🍿 Open Mini App", web_app=WebAppInfo(url=MINI_APP_URL))],
-        [InlineKeyboardButton("+ Add to Group +", url=f"https://t.me/{temp.U_NAME}?startgroup=start")],
-        [InlineKeyboardButton("👨‍🚒 Help Menu", callback_data="help"), InlineKeyboardButton("📊 Global Stats", callback_data="stats")]
+        [ui_button("🍿 Open Mini App", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [ui_button("+ Add to Group +", url=f"https://t.me/{temp.U_NAME}?startgroup=start")],
+        [ui_button("👨‍🚒 Help Menu", callback_data="help"), ui_button("📊 Global Stats", callback_data="stats")]
     ]
     if message.from_user.id not in ADMINS:
-        btn.append([InlineKeyboardButton("💎 Premium Duration", callback_data="myplan")])
+        btn.append([ui_button("💎 Premium Duration", callback_data="myplan")])
 
     await message.reply_photo(
         random.choice(PICS),
         caption=script.START_TXT.format(message.from_user.mention, get_wish()),
-        reply_markup=InlineKeyboardMarkup(btn)
+        reply_markup=ui_keyboard(btn)
     )
 
 
@@ -209,9 +210,9 @@ async def stats(_, message):
         stats_text, _ = await build_stats_texts()
 
         buttons = [
-            [InlineKeyboardButton("❌ CLOSE PANEL", callback_data=f"close_{message.from_user.id}")]
+            [ui_button("❌ CLOSE PANEL", callback_data=f"close_{message.from_user.id}")]
         ]
-        await msg.edit(stats_text, reply_markup=InlineKeyboardMarkup(buttons))
+        await msg.edit(stats_text, reply_markup=ui_keyboard(buttons))
         
     except Exception as ex:
         await msg.edit(f"❌ **System Error during Stats generation:**\n\n<code>{ex}</code>\n\n_Please check your script.py placeholders._")
@@ -245,9 +246,9 @@ async def delete_all_cmd(client, message):
 
     await message.reply(
         f"⚠️ <b>DANGER ZONE WARNING!</b>\n\nYou are wiping out ALL documents from `{storage}`.\nAre you absolutely sure?",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("💥 CONFIRM DESTROY ALL", callback_data=f"confirm_del#{storage}"),
-            InlineKeyboardButton("❌ ABORT", callback_data=f"close_{message.from_user.id}")
+        reply_markup=ui_keyboard([[
+            ui_button("💥 CONFIRM DESTROY ALL", callback_data=f"confirm_del#{storage}"),
+            ui_button("❌ ABORT", callback_data=f"close_{message.from_user.id}")
         ]])
     )
 
@@ -260,8 +261,8 @@ async def link_generator(client, message):
     if IS_PREMIUM and message.from_user.id not in ADMINS and not await is_premium(message.from_user.id, client):
         return await message.reply(
             "🔒 **Premium Feature**\n\nOnly Admins and active Premium Members can generate direct links.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("💎 Buy Premium Plan", callback_data="activate_plan")
+            reply_markup=ui_keyboard([[
+                ui_button("💎 Buy Premium Plan", callback_data="activate_plan")
             ]]),
         )
 
@@ -297,14 +298,14 @@ async def link_generator(client, message):
         valid_txt = "Never" if ttl is None else get_readable_time(ttl)
         btn = [
             [
-                InlineKeyboardButton("🍿 WATCH ONLINE", url=f"{URL}watch/{copied.id}?{q}"),
-                InlineKeyboardButton("📥 FAST DOWNLOAD", url=f"{URL}download/{copied.id}?{q}")
+                ui_button("🍿 WATCH ONLINE", url=f"{URL}watch/{copied.id}?{q}"),
+                ui_button("📥 FAST DOWNLOAD", url=f"{URL}download/{copied.id}?{q}")
             ],
-            [InlineKeyboardButton("❌ CLOSE ❌", callback_data=f"close_{message.from_user.id}")]
+            [ui_button("❌ CLOSE ❌", callback_data=f"close_{message.from_user.id}")]
         ]
         await msg.edit_text(
             f"<i><b>Direct High-Speed Pipeline Ready ⚡</b></i>\n⏳ <b>Valid for:</b> <code>{valid_txt}</code>",
-            reply_markup=InlineKeyboardMarkup(btn)
+            reply_markup=ui_keyboard(btn)
         )
     except Exception as e:
         await msg.edit_text(f"❌ **Error generating links:** `{e}`")
@@ -321,33 +322,33 @@ async def ui_cb(client, query):
     if data == "back_start":
         text = script.START_TXT.format(query.from_user.mention, get_wish())
         btn = [
-            [InlineKeyboardButton("🍿 Open Mini App", web_app=WebAppInfo(url=MINI_APP_URL))],
-            [InlineKeyboardButton("+ Add to Group +", url=f"https://t.me/{temp.U_NAME}?startgroup=start")],
-            [InlineKeyboardButton("👨‍🚒 Help Menu", callback_data="help"), InlineKeyboardButton("📊 Global Stats", callback_data="stats")]
+            [ui_button("🍿 Open Mini App", web_app=WebAppInfo(url=MINI_APP_URL))],
+            [ui_button("+ Add to Group +", url=f"https://t.me/{temp.U_NAME}?startgroup=start")],
+            [ui_button("👨‍🚒 Help Menu", callback_data="help"), ui_button("📊 Global Stats", callback_data="stats")]
         ]
         if query.from_user.id not in ADMINS:
-            btn.append([InlineKeyboardButton("💎 Premium Duration", callback_data="myplan")])
-        buttons_markup = InlineKeyboardMarkup(btn)
+            btn.append([ui_button("💎 Premium Duration", callback_data="myplan")])
+        buttons_markup = ui_keyboard(btn)
 
     elif data == "help":
         text = script.HELP_TXT.format(query.from_user.mention)
-        btn = [[InlineKeyboardButton("👨‍💻 User Commands", callback_data="user_cmds")]]
+        btn = [[ui_button("👨‍💻 User Commands", callback_data="user_cmds")]]
         if query.from_user.id in ADMINS:
-            btn[0].append(InlineKeyboardButton("👮‍♂️ Admin Commands", callback_data="admin_cmds"))
-        btn.append([InlineKeyboardButton("⬅️ Back Menu", callback_data="back_start")])
-        buttons_markup = InlineKeyboardMarkup(btn)
+            btn[0].append(ui_button("👮‍♂️ Admin Commands", callback_data="admin_cmds"))
+        btn.append([ui_button("⬅️ Back Menu", callback_data="back_start")])
+        buttons_markup = ui_keyboard(btn)
 
     elif data == "user_cmds":
         text = script.USER_COMMAND_TXT
-        btn = [[InlineKeyboardButton("⬅️ Back Menu", callback_data="help")]]
-        buttons_markup = InlineKeyboardMarkup(btn)
+        btn = [[ui_button("⬅️ Back Menu", callback_data="help")]]
+        buttons_markup = ui_keyboard(btn)
 
     elif data == "admin_cmds":
         if query.from_user.id not in ADMINS:
             return await query.answer("❌ You are not an Admin!", show_alert=True)
         text = script.ADMIN_COMMAND_TXT
-        btn = [[InlineKeyboardButton("⬅️ Back Menu", callback_data="help")]]
-        buttons_markup = InlineKeyboardMarkup(btn)
+        btn = [[ui_button("⬅️ Back Menu", callback_data="help")]]
+        buttons_markup = ui_keyboard(btn)
 
     elif data == "stats":
         try:
@@ -355,8 +356,8 @@ async def ui_cb(client, query):
             # ब्लॉक दो बार चलाते थे। अब दोनों build_stats_texts() शेयर करते हैं।
             admin_text, user_text = await build_stats_texts()
             text = admin_text if query.from_user.id in ADMINS else user_text
-            buttons_markup = InlineKeyboardMarkup(
-                [[InlineKeyboardButton("⬅️ Back Menu", callback_data="back_start")]]
+            buttons_markup = ui_keyboard(
+                [[ui_button("⬅️ Back Menu", callback_data="back_start")]]
             )
         except Exception as ex:
             return await query.answer(f"❌ Error displaying stats: {ex}", show_alert=True)
@@ -401,12 +402,12 @@ async def stream_cb(client, query):
         q = sign_params(msg.id, STREAM_TTL)
         btn = [
             [
-                InlineKeyboardButton("🎬 Stream Online", url=f"{URL}watch/{msg.id}?{q}"),
-                InlineKeyboardButton("⚡ Download File", url=f"{URL}download/{msg.id}?{q}")
+                ui_button("🎬 Stream Online", url=f"{URL}watch/{msg.id}?{q}"),
+                ui_button("⚡ Download File", url=f"{URL}download/{msg.id}?{q}")
             ],
-            [InlineKeyboardButton("❌ Close Panel", callback_data=f"close_{query.from_user.id}")]
+            [ui_button("❌ Close Panel", callback_data=f"close_{query.from_user.id}")]
         ]
-        await query.message.edit_reply_markup(InlineKeyboardMarkup(btn))
+        await query.message.edit_reply_markup(ui_keyboard(btn))
     except Exception as e:
         await query.answer(f"Error: {e}", show_alert=True)
 

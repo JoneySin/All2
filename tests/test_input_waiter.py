@@ -1,4 +1,4 @@
-"""Kurigram migration: dependency pin, listen shim and timeout alias."""
+"""Kurigram-native input waiter, dependency pins and crypto backend."""
 import asyncio
 import os
 import unittest
@@ -13,7 +13,7 @@ for key, value in {
 
 from pyrogram import Client, StopPropagation, enums
 
-import kurigram_compat as compat
+from input_waiter import InputTimeout, wait_for_user_message
 
 
 class FakeClient:
@@ -27,12 +27,11 @@ class FakeClient:
         self.handlers.remove((handler, group))
 
 
-class CompatibilityTests(unittest.IsolatedAsyncioTestCase):
+class InputWaiterTests(unittest.IsolatedAsyncioTestCase):
     async def test_requirements_pin_latest_kurigram(self):
         requirements = (Path(__file__).resolve().parents[1] / "requirements.txt").read_text()
         self.assertIn("kurigram==2.2.27", requirements)
         self.assertIn("kuricrypt==0.1.2", requirements)
-        self.assertNotIn("hydrogram", requirements)
         self.assertNotIn("TgCrypto", requirements)
 
     def test_fast_crypto_backend_is_kuricrypt(self):
@@ -47,14 +46,13 @@ class CompatibilityTests(unittest.IsolatedAsyncioTestCase):
 
     def test_button_style_enum_exists(self):
         self.assertTrue(hasattr(enums, "ButtonStyle"))
-        self.assertTrue(hasattr(enums.ButtonStyle, "SUCCESS"))
-        self.assertTrue(hasattr(enums.ButtonStyle, "DANGER"))
-        self.assertTrue(hasattr(enums.ButtonStyle, "PRIMARY"))
+        for style in ("SUCCESS", "DANGER", "PRIMARY"):
+            self.assertTrue(hasattr(enums.ButtonStyle, style))
 
     def test_listener_timeout_is_a_timeout(self):
-        self.assertTrue(issubclass(compat.ListenerTimeout, asyncio.TimeoutError))
+        self.assertTrue(issubclass(InputTimeout, asyncio.TimeoutError))
 
-    async def test_listen_captures_next_message_and_stops_propagation(self):
+    async def test_waits_for_next_message_and_stops_propagation(self):
         client = FakeClient()
         captured = {}
 
@@ -71,20 +69,20 @@ class CompatibilityTests(unittest.IsolatedAsyncioTestCase):
             return message
 
         expected = asyncio.create_task(send())
-        result = await compat.listen(client, chat_id=1, user_id=2, timeout=1)
+        result = await wait_for_user_message(client, chat_id=1, user_id=2, timeout=1)
         self.assertIs(result, await expected)
         self.assertEqual(captured["group"], -1)
         self.assertEqual(client.handlers, [])
 
-    async def test_listen_times_out_and_cleans_up(self):
+    async def test_times_out_and_cleans_up(self):
         client = FakeClient()
-        with self.assertRaises(compat.ListenerTimeout):
-            await compat.listen(client, chat_id=1, timeout=0.02)
+        with self.assertRaises(InputTimeout):
+            await wait_for_user_message(client, chat_id=1, timeout=0.02)
         self.assertEqual(client.handlers, [])
 
-    async def test_client_has_listen(self):
-        self.assertTrue(hasattr(Client, "listen"))
-        self.assertTrue(callable(Client.listen))
+    def test_does_not_patch_client(self):
+        # Input waiting is a helper, not a monkey-patched Client method.
+        self.assertNotIn("listen", vars(Client))
 
 
 if __name__ == "__main__":

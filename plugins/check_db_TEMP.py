@@ -33,7 +33,7 @@ import time
 from pymongo import AsyncMongoClient
 from pymongo.errors import BulkWriteError
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from keyboards import ui_button, ui_keyboard
 from info import ADMINS, DATABASE_URL, DATABASE_NAME
 
 BATCH_SIZE = 500
@@ -106,13 +106,13 @@ async def check_db_cmd(bot, message):
             f"\n\nStorage : {storage_used}"
         )
 
-        buttons = InlineKeyboardMarkup([
+        buttons = ui_keyboard([
             [
-                InlineKeyboardButton("📦 Copy", callback_data="dbop:copy_db"),
-                InlineKeyboardButton("📁 Select", callback_data="dbop:copy_collection"),
-                InlineKeyboardButton("🔁 Migrate", callback_data="dbop:migrate"),
+                ui_button("📦 Copy", callback_data="dbop:copy_db"),
+                ui_button("📁 Select", callback_data="dbop:copy_collection"),
+                ui_button("🔁 Migrate", callback_data="dbop:migrate"),
             ],
-            [InlineKeyboardButton("❌ Cancel", callback_data="dbop:cancel")],
+            [ui_button("❌ Cancel", callback_data="dbop:cancel")],
         ])
         await status.edit(text, reply_markup=buttons)
     except Exception as e:
@@ -146,10 +146,10 @@ async def dbop_callback(bot, cq):
         if not collections:
             return await cq.message.edit("❌ No collections found.")
 
-        rows = [[InlineKeyboardButton(c, callback_data=f"colsel:{c}")] for c in collections]
-        rows.append([InlineKeyboardButton("❌ Cancel", callback_data="dbop:cancel")])
+        rows = [[ui_button(c, callback_data=f"colsel:{c}")] for c in collections]
+        rows.append([ui_button("❌ Cancel", callback_data="dbop:cancel")])
         CHOOSING_COLLECTION[cq.from_user.id] = True
-        await cq.message.edit("📁 Which collection do you want to copy?", reply_markup=InlineKeyboardMarkup(rows))
+        await cq.message.edit("📁 Which collection do you want to copy?", reply_markup=ui_keyboard(rows))
         return await cq.answer()
 
     # copy_db or migrate
@@ -208,14 +208,14 @@ async def _ask_existing_collection_decision(bot, chat_id, user_id, col_name, des
     fut = asyncio.get_event_loop().create_future()
     DECISION_FUTURES[user_id] = fut
 
-    buttons = InlineKeyboardMarkup([
+    buttons = ui_keyboard([
         [
-            InlineKeyboardButton("▶️ Resume", callback_data="existwarn:resume"),
-            InlineKeyboardButton("♻️ Replace", callback_data="existwarn:replace"),
+            ui_button("▶️ Resume", callback_data="existwarn:resume"),
+            ui_button("♻️ Replace", callback_data="existwarn:replace"),
         ],
         [
-            InlineKeyboardButton("⏭️ Skip", callback_data="existwarn:skip"),
-            InlineKeyboardButton("❌ Cancel", callback_data="existwarn:cancel"),
+            ui_button("⏭️ Skip", callback_data="existwarn:skip"),
+            ui_button("❌ Cancel", callback_data="existwarn:cancel"),
         ],
     ])
     await bot.send_message(

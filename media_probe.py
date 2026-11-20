@@ -646,7 +646,7 @@ async def fetch_file_range(client, file_ref, file_size, offset_mb, chunks_mb,
                            timeout=FETCH_TIMEOUT):
     """Telegram se [offset_mb, offset_mb+chunks_mb) MB slice lao (max ~cap bytes).
 
-    pyrogram ka public `client.get_file()` use hota hai — DC session + CDN
+    Kurigram ka public `client.get_file()` use hota hai — DC session + CDN
     redirect sab wahi sambhalta hai. Timeout/partial par jo mila wahi (fail-soft);
     sirf FloodWait caller tak jaata hai (migration ka anti-flood handler pakdega).
     """
@@ -758,7 +758,7 @@ async def probe_telegram_file(client, file_ref, file_size=0, file_name="",
     try:
         from pyrogram.errors import FloodWait
     except Exception:
-        FloodWait = ()  # pragma: no cover — pyrogram hamesha hota hai
+        FloodWait = ()  # pragma: no cover — Kurigram hamesha hota hai
     try:
         head = await fetch_file_range(client, file_ref, file_size, 0, head_mb)
     except FloodWait:

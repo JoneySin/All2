@@ -6,7 +6,8 @@ import logging
 import gc
 from lru import LRU  # ✅ LRU-Dict imported for Auto-Pilot RAM Management
 from pyrogram import Client, filters, enums
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LinkPreviewOptions
+from pyrogram.types import LinkPreviewOptions
+from keyboards import ui_button, ui_keyboard
 
 from info import ADMINS, MAX_BOT_RESULTS, IS_PREMIUM, PICS, SPELL_CHECK
 from utils import is_premium, get_size, is_check_admin, temp, get_settings, save_group_settings
@@ -112,10 +113,10 @@ def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, n
     nav = []
     prev_off = int(offset) - MAX_BOT_RESULTS
     if prev_off >= 0: 
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"nav_{req_id}_{key}_{prev_off}_{act_src_short}"))
+        nav.append(ui_button("◀️ Prev", callback_data=f"nav_{req_id}_{key}_{prev_off}_{act_src_short}"))
         
     if next_off: 
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"nav_{req_id}_{key}_{next_off}_{act_src_short}"))
+        nav.append(ui_button("Next ▶️", callback_data=f"nav_{req_id}_{key}_{next_off}_{act_src_short}"))
     
     if nav: 
         btn.append(nav)
@@ -125,11 +126,11 @@ def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, n
         for c in ["primary", "cloud", "archive"]:
             # ✅ अगर सोर्स 'all' है तो सब पर टिक लगाओ, वरना सिर्फ उसी पर लगाओ जो मैच हो
             tick = "✅" if (act_src_lower == "all" or c == act_src_lower) else "📂"
-            col_btn.append(InlineKeyboardButton(f"{tick} {c.title()}", callback_data=f"coll_{req_id}_{key}_{SRC_TO_SHORT[c]}"))
+            col_btn.append(ui_button(f"{tick} {c.title()}", callback_data=f"coll_{req_id}_{key}_{SRC_TO_SHORT[c]}"))
         btn.append(col_btn)
-        btn.append([InlineKeyboardButton("❌ Close Result", callback_data=f"close_{req_id}")])
+        btn.append([ui_button("❌ Close Result", callback_data=f"close_{req_id}")])
     
-    return cap, InlineKeyboardMarkup(btn) if btn else None
+    return cap, ui_keyboard(btn) if btn else None
 
 # ─────────────────────────────────────────────
 # ⚙️ INLINE GROUP SETTINGS UI CENTER
@@ -140,12 +141,12 @@ def get_settings_markup(settings):
     s_btn = "🔲 SIMPLE" if settings.get("simple_mode", True) else "🔳 FULL"
     
     buttons = [
-        [InlineKeyboardButton(f"⏳ Auto Delete: {s_del}", callback_data="set_toggle_auto_delete")],
-        [InlineKeyboardButton(f"🧠 Spell Check: {s_spl}", callback_data="set_toggle_spell_check")],
-        [InlineKeyboardButton(f"🎨 Buttons Style: {s_btn}", callback_data="set_toggle_simple_mode")],
-        [InlineKeyboardButton("❌ Close Panel", callback_data="close_admin_panel")]
+        [ui_button(f"⏳ Auto Delete: {s_del}", callback_data="set_toggle_auto_delete")],
+        [ui_button(f"🧠 Spell Check: {s_spl}", callback_data="set_toggle_spell_check")],
+        [ui_button(f"🎨 Buttons Style: {s_btn}", callback_data="set_toggle_simple_mode")],
+        [ui_button("❌ Close Panel", callback_data="close_admin_panel")]
     ]
-    return InlineKeyboardMarkup(buttons)
+    return ui_keyboard(buttons)
 
 @Client.on_message(filters.command("settings") & filters.group)
 async def group_settings_panel(client, message):
@@ -213,7 +214,7 @@ async def pm_search(client, message):
         return await message.reply_photo(
             random.choice(PICS), 
             caption=script.PLAN_TXT.format(10, "@admin"), 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Buy Premium Plan", callback_data="activate_plan")]])
+            reply_markup=ui_keyboard([[ui_button("💎 Buy Premium Plan", callback_data="activate_plan")]])
         )
     
     settings = await get_settings(message.chat.id)
@@ -276,7 +277,7 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
                 skey = f"{m.chat.id}-{m.id}"
                 SPELL_SUGGESTIONS[skey] = suggestions
                 btn = [
-                    [InlineKeyboardButton(f"🔍 {s[:100]}{'…' if len(s) > 100 else ''}", callback_data=f"spellchk_{msg.from_user.id}_{skey}_{i}")]
+                    [ui_button(f"🔍 {s[:100]}{'…' if len(s) > 100 else ''}", callback_data=f"spellchk_{msg.from_user.id}_{skey}_{i}")]
                     for i, s in enumerate(suggestions)
                 ]
                 # ✅ FIX: पहले caption में suggestions की पूरी लिस्ट फिर से लिखी
@@ -289,7 +290,7 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
                 # होता है — इसलिए अब caption सिर्फ "Did you mean?" रखा है।
                 cap = "🤔 **Did you mean?**"
                 try:
-                    await m.edit_text(cap, reply_markup=InlineKeyboardMarkup(btn))
+                    await m.edit_text(cap, reply_markup=ui_keyboard(btn))
                     asyncio.create_task(start_auto_delete_timer(client, m.chat.id, m.id, delay=300))
                 except: pass
                 return

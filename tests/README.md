@@ -49,26 +49,28 @@ stale marks, dissolved groups, both caps, access errors and both player UIs. The
 not cover real Telegram media or a real browser, so actual codec support and mobile
 layout still need manual checks.
 
-Telegram's Bot API supports coloured inline buttons through an optional `style`
-field (`primary`, `success`, `danger`); clients released before 9 February 2026
-ignore it. The bot runs on Kurigram 2.2.27, which exposes the field natively as
-`InlineKeyboardButton(style=enums.ButtonStyle.X)`, so no Bot API workaround is
-needed. `button_styles.py` colours every new `InlineKeyboardMarkup` when it is
-built, which covers all keyboards (file cards, search navigation, settings and
-premium screens), not just the main card. A row of up to three buttons never
-repeats a colour: when two actions want the same colour, the later one moves
-to the next unused colour; longer rows cycle while keeping neighbours
-different. An explicit `style=` at a call site always wins. Colours are semantic: red for close/cancel/delete/reject actions,
+Telegram's Bot API supports coloured inline buttons through the optional
+`style` field (`primary`, `success`, `danger`); clients released before
+9 February 2026 ignore it. The bot runs on Kurigram 2.2.27, which exposes the
+field natively as `InlineKeyboardButton(style=enums.ButtonStyle.X)`. All plugins
+build keyboards with `keyboards.py` (`ui_button` / `ui_keyboard`), so every
+screen gets a colour without patching third-party classes. A row of up to three
+buttons never repeats a colour: when two actions want the same colour, the later
+one moves to the next unused colour; longer rows cycle while keeping neighbours
+different. An explicit `style=` passed to `ui_button` is kept when it is unique
+in the row. Colours are semantic: red for close/cancel/delete/reject actions,
 green for watch/download/buy/approve/index actions, blue for navigation,
 settings and links. Tests cover the matching rules, toggle labels, explicit
-styles, automatic application, and the Kurigram pin. Actual colours still need
-a visual check on a current Telegram client; older clients show the default.
+styles, row uniqueness, and a guard that plugins never fall back to raw button
+types. Actual colours still need a visual check on a current Telegram client;
+older clients show the default.
 
-Kurigram does not provide Hydrogram's `Client.listen()` used by the payment and
-indexing prompts, so `kurigram_compat.py` re-implements it with a temporary
-message handler (group `-1`, `StopPropagation`) and raises a local
-`ListenerTimeout` that subclasses `asyncio.TimeoutError`. Tests cover capture,
-timeout and handler cleanup.
+Payments and indexing need one follow-up message from the user. `input_waiter.py`
+provides `wait_for_user_message`, built on Kurigram's dispatcher: a temporary
+`MessageHandler` in group `-1` resolves a future, `StopPropagation` prevents the
+input from also becoming a search, and `InputTimeout` subclasses
+`asyncio.TimeoutError`. The handler is always removed. This is a helper rather
+than a patched `Client` method. Tests cover capture, timeout and cleanup.
 
 Kurigram's preferred native crypto backend, `kuricrypt`, is pinned in place of
 TgCrypto (local IGE benchmark: about 830 MB/s versus 155 MB/s for 1 MB blocks,
