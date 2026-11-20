@@ -31,7 +31,19 @@ class CompatibilityTests(unittest.IsolatedAsyncioTestCase):
     async def test_requirements_pin_latest_kurigram(self):
         requirements = (Path(__file__).resolve().parents[1] / "requirements.txt").read_text()
         self.assertIn("kurigram==2.2.27", requirements)
+        self.assertIn("kuricrypt==0.1.2", requirements)
         self.assertNotIn("hydrogram", requirements)
+        self.assertNotIn("TgCrypto", requirements)
+
+    def test_fast_crypto_backend_is_kuricrypt(self):
+        import kuricrypt
+        from pyrogram.crypto import aes
+        self.assertIs(aes._crypto_backend, kuricrypt)
+        key, iv, data = os.urandom(32), os.urandom(32), os.urandom(4096)
+        self.assertEqual(
+            kuricrypt.ige256_decrypt(kuricrypt.ige256_encrypt(data, key, iv), key, iv),
+            data,
+        )
 
     def test_button_style_enum_exists(self):
         self.assertTrue(hasattr(enums, "ButtonStyle"))

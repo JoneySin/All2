@@ -1,6 +1,6 @@
 # Tested direct dependencies. Update with compatibility and regression testing.
 kurigram==2.2.27
-TgCrypto==1.2.5
+kuricrypt==0.1.2
 pymongo==4.19.0
 dnspython==2.9.2
 aiohttp==3.14.5

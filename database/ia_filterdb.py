@@ -398,12 +398,6 @@ async def apply_media_meta_update(col, file_id, media, current_type=None, probed
     )
     return meta
 
-async def mark_meta_migration_error(col, file_id):
-    """Tooti hui file_ref wale doc ko mark karo taaki har run me dobara na uthe."""
-    await col.update_one(
-        {"_id": file_id},
-        {"$set": {"meta.err": int(time.time())}},
-    )
 
 # ─────────────────────────────────────────────────────────
 # 💾 SAVE FILE

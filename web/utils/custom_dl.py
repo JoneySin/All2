@@ -1,5 +1,4 @@
 import asyncio
-import io
 import logging
 import math
 import os
@@ -187,33 +186,3 @@ class TGCustomYield:
                 t.cancel()
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
-
-    # ─────────────────────────────────────────────────────────
-    # 📥 BYTESIO PIPELINE — thumbnail / small file download
-    # ─────────────────────────────────────────────────────────
-    async def download_as_bytesio(self, msg: Message) -> io.BytesIO:
-        """
-        Thumbnail या छोटी files के लिए।
-        ⚠️  4GB video इसमें मत डालो — पूरी file RAM में आ जाएगी।
-        """
-        file_props = await self.generate_file_properties(msg)
-        ms = await self.generate_media_session(self.main_bot, file_props)
-        loc = await self.get_location(file_props)
-
-        limit, offset = 1_048_576, 0  # 1 MB blocks
-        buf = io.BytesIO()
-
-        try:
-            while True:
-                r = await ms.send(
-                    raw.functions.upload.GetFile(location=loc, offset=offset, limit=limit)
-                )
-                if not isinstance(r, raw.types.upload.File) or not r.bytes:
-                    break
-                buf.write(r.bytes)
-                offset += len(r.bytes)
-        except Exception as e:
-            logger.error(f"download_as_bytesio error: {e}")
-
-        buf.seek(0)
-        return buf

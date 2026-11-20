@@ -143,12 +143,6 @@ class WebAuthDB:
                 user["password"] = new_hash
         return user
 
-    async def update_profile(self, tg_id, new_email, new_password=None):
-        update_data = {"email": new_email}
-        if new_password:
-            update_data["password"] = await _password_work(hash_password, new_password)
-        await self.col.update_one({"tg_id": tg_id}, {"$set": update_data})
-
     # ───────────── 🔐 PASSWORD-RESET OTP ─────────────
     # ✅ FIX: पहले otp_expiry को tz-aware datetime में सेव करके MongoDB से naive datetime में
     # वापस पढ़ा जाता था और दोनों की तुलना TypeError देती थी — यानी सही OTP डालने पर भी
@@ -247,7 +241,7 @@ class Database:
         
         # Collections
         self.users, self.groups, self.premium = self.db.Users, self.db.Groups, self.db.Premiums
-        self.settings, self.warns = self.db.Settings, self.db.Warns
+        self.settings = self.db.Settings
         self.delete_queue = self.db.AutoDeleteQueue 
 
     async def _ensure_indexes(self):
@@ -304,18 +298,12 @@ class Database:
     
     # 'get_all_users' (पुराना ब्रॉडकास्ट कर्सर) पूरी तरह हटा दिया गया है ताकि रैम लीक न हो।
     
-    async def delete_user(self, uid): 
-        await self.users.delete_many({"id": int(uid)})
-    
     async def ban_user(self, uid, rsn="No Reason"): 
         await self.users.update_one({"id": int(uid)}, {"$set": {"ban_status": {"is_banned": True, "ban_reason": rsn}}}, upsert=True)
         
     async def unban_user(self, uid): 
         await self.users.update_one({"id": int(uid)}, {"$set": {"ban_status": self.df_ban}})
         
-    async def get_ban_status(self, uid): 
-        return (await self.users.find_one({"id": int(uid)}, {"ban_status": 1}) or {}).get("ban_status", self.df_ban)
-
     # ───────────────── GROUPS ─────────────────
     async def add_chat(self, gid, title): 
         await self.groups.update_one({"id": int(gid)}, {"$set": {"title": title}, "$setOnInsert": {"settings": self.df_set, "chat_status": self.df_chat}}, upsert=True)
@@ -325,9 +313,6 @@ class Database:
         
     async def total_chat_count(self): 
         return await self.groups.count_documents({})
-    
-    async def get_all_chats(self): 
-        return self.groups.find({}, {"id": 1})
     
     async def disable_chat(self, gid, rsn="No Reason"): 
         await self.groups.update_one({"id": int(gid)}, {"$set": {"chat_status": {"is_disabled": True, "reason": rsn}}})
@@ -342,24 +327,6 @@ class Database:
     async def get_settings(self, gid): 
         return {**self.df_set, **((await self.groups.find_one({"id": int(gid)}, {"settings": 1})) or {}).get("settings", {})}
     
-    async def get_warn(self, uid, cid): 
-        return await self.warns.find_one({"user_id": uid, "chat_id": cid}, {"count": 1}) or {"count": 0}
-        
-    async def set_warn(self, uid, cid, data): 
-        await self.warns.update_one({"user_id": uid, "chat_id": cid}, {"$set": data}, upsert=True)
-        
-    async def clear_warn(self, uid, cid): 
-        await self.warns.delete_one({"user_id": uid, "chat_id": cid})
-
-    async def get_all_notes(self, cid): 
-        return ((await self.groups.find_one({"id": int(cid)}, {"settings.notes": 1})) or {}).get("settings", {}).get("notes", {})
-        
-    async def save_note(self, cid, name, data): 
-        await self.groups.update_one({"id": int(cid)}, {"$set": {f"settings.notes.{name}": data}}, upsert=True)
-        
-    async def delete_note(self, cid, name): 
-        await self.groups.update_one({"id": int(cid)}, {"$unset": {f"settings.notes.{name}": ""}})
-
     # ───────────────── PREMIUM INTEGRITY SYSTEM ─────────────────
     async def get_plan(self, uid): 
         return {**self.df_prm, **((await self.premium.find_one({"id": int(uid)}, {"status": 1})) or {}).get("status", {})}
