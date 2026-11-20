@@ -27,6 +27,28 @@ scans, completion, failures and status retry with the in-memory fixture. Saved-g
 changes, admin access and database failures. Counts represent stored records,
 including preserved legacy singletons, not the number of visible search cards.
 
+Opening a file in the web player lists its saved group below the video, with a chip
+for the file being played. `/api/file/switches` requires an authenticated web
+session and resolves the live saved group that owns that database file ID. Series
+groups are nested for display only: episodes come from explicit filename markers
+(`S01E02`), an admin's `episode_labels` rename the episode for all its qualities, and
+quality versions are grouped inside their episode; each quality chip shows its
+duration and file size. Files without an episode marker
+stay in their own bucket, so nothing is hidden or wrongly merged. This is derived on
+read from the existing flat `members` list, so saved groups, scans, deletes and
+merges keep one source of truth and need no migration. Quality groups keep one sorted
+row and are capped at 300 items; series are capped at 100 episodes with the playing
+episode always kept and marked truncated. Membership is never guessed from the title:
+standalone files, deleted members and groups left with fewer than two live files show
+no switcher. A stale loose `group_id` mark cannot expose another group's members; the
+saved members list decides. Changing quality reuses the signed inline stream and
+keeps the playback position and play/pause state. Changing episode prefers the same
+quality label in the new episode, otherwise the best available one, and starts from
+the beginning. Tests cover episode/quality ordering, admin labels, unlabelled files,
+stale marks, dissolved groups, both caps, access errors and both player UIs. They do
+not cover real Telegram media or a real browser, so actual codec support and mobile
+layout still need manual checks.
+
 For grouped `/api/search` requests, treat `next_offset` as an opaque continuation
 value and send it back unchanged, including when a selective filter returns an
 empty page. Large continuations are stored in `GroupSearchCursors` and expire after
@@ -200,3 +222,28 @@ The backfill queue is bounded and falls back to inline work under saturation.
 Grouped search tests check that repeated batches reuse request-local query plans.
 These tests use mocks; real MongoDB query timing and Telegram throughput/flood
 limits must be measured in the deployment environment.
+
+## Temporary library repair
+
+`plugins/repair_library_TEMP.py` is an optional, admin-only one-off tool.
+After deploying and restarting the bot, run `/repair_library` in Telegram. It
+combines metadata migration and thumbnail warmup in a single scan of Primary,
+Cloud and Archive. Existing `TG_ID:`, `NO_THUMB`, and web-custom posters are
+preserved; metadata still gets migrated when needed. It reads Telegram media,
+probes eligible video bytes, writes MongoDB, and may upload posters to the
+configured thumbnail storage channel. Back up the database before running it.
+
+Use the run's Cancel button to stop after the current operation. A restart,
+cancellation or individual failure can leave pending work; rerun the command
+and inspect its error/cleanup counts before considering the job finished. Broken
+or inaccessible references are left unchanged so they can be retried. A group
+cover revision failure is reported separately: the thumbnail may already be saved,
+so refresh the affected group cover manually (the bot log records the file ID).
+Some probes fall back to Telegram metadata if byte probing fails. Only one repair can
+run **per bot instance**; don't run it simultaneously from multiple instances.
+
+After checking the results, remove `plugins/repair_library_TEMP.py` and redeploy
+or restart the bot. The admin help entry disappears on restart; indexing, search,
+streaming and shared metadata/probe helpers remain installed. The regression
+tests for the plugin skip if it has been removed. Live Telegram and MongoDB
+behavior must still be verified separately.

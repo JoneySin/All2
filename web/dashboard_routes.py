@@ -277,7 +277,7 @@ function cardHtml(f,nested){
 }
 
 var GROUP_DATA={},FILE_DATA={},SEL={},selMode=false;
-function playDashboardFile(fid,card){if(selMode){if(card)toggleSel(card);return;}var f=FILE_DATA[fid];if(f)openInlinePlayer(f.stream_id||f.file_id,f.name);}
+function playDashboardFile(fid,card){if(selMode){if(card)toggleSel(card);return;}var f=FILE_DATA[fid];if(f)openInlinePlayer(f.file_id,f.name);}
 function esc(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function unesc(x){var t=document.createElement('textarea');t.innerHTML=String(x||'');return t.value;}
 function groupIdChip(id,pending){
