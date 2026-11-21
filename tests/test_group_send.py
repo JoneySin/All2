@@ -75,10 +75,11 @@ class GroupSendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([call.args[1] for call in client.send_cached_media.await_args_list],
                          ['ref-a', 'ref-b'])
 
-    def test_group_button_is_green_and_skips_single_member(self):
+    def test_group_button_is_blue_and_skips_single_member(self):
         row = commands._group_button(group(['a', 'b'], 'series', ['a', 'b']))
         self.assertEqual(row[0].callback_data, 'grp#7')
         self.assertEqual(row[0].text, '⚡Send All 2 Episode')
+        self.assertEqual(row[0].style, enums.ButtonStyle.PRIMARY)
         self.assertIsNone(commands._group_button(group(['a'])))
 
     async def test_start_file_card_gets_the_group_button(self):
@@ -104,6 +105,11 @@ class GroupSendTests(unittest.IsolatedAsyncioTestCase):
         markup = client.send_cached_media.await_args.kwargs['reply_markup']
         self.assertEqual(markup.inline_keyboard[0][0].callback_data, 'grp#7')
         self.assertEqual(markup.inline_keyboard[0][0].text, '♻️Send All 2 Quality')
+        # Stacked buttons need distinct colours too: Send All blue,
+        # Watch/Download green, Close red.
+        self.assertEqual(markup.inline_keyboard[0][0].style, enums.ButtonStyle.PRIMARY)
+        self.assertEqual(markup.inline_keyboard[1][0].style, enums.ButtonStyle.SUCCESS)
+        self.assertEqual(markup.inline_keyboard[2][0].style, enums.ButtonStyle.DANGER)
 
     async def test_admin_toggle_persists_and_updates_runtime(self):
         message = SimpleNamespace(

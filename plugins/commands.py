@@ -72,13 +72,17 @@ def _group_action_label(group):
 
 
 def _group_button(group):
-    """One green action row for a multi-file quality/series group."""
+    """One blue action row for a multi-file quality/series group.
+
+    Watch/Download is green, so Send All stays blue to keep the stacked
+    buttons visually distinct (a row-level colour check cannot see other rows).
+    """
     if not group or len(group.get("members") or []) < 2:
         return None
     return [ui_button(
         _group_action_label(group),
         callback_data=f"grp#{group['_id']}",
-        style=enums.ButtonStyle.SUCCESS,
+        style=enums.ButtonStyle.PRIMARY,
     )]
 
 
