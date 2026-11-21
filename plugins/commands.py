@@ -59,7 +59,7 @@ def _group_member_order(group):
 
 
 def _group_action_label(group):
-    count = len(group.get("members") or [])
+    count = len({str(x) for x in (group.get("members") or [])})
     if (group.get("group_type") or "quality") == "series":
         return f"📺 Send All Episodes ({count})"
     return f"🎬 Send All Qualities ({count})"
