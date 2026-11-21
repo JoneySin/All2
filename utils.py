@@ -26,6 +26,7 @@ class temp(object):
     BANNED_USERS, BANNED_CHATS = [], []
     ME, BOT, U_NAME, B_NAME = None, None, None, None
     CANCEL = False
+    SEND_ALL_ENABLED = True
     FILES, PM_FILES = {}, {}
     USER_SESSIONS = {}   # web dashboard login sessions  (web/login_routes.py)
     REG_PENDING = {}     # web registration OTP flow      (web/login_routes.py)

@@ -49,6 +49,12 @@ MINI_APP_URL = _build_mini_app_url(URL)
 _GROUP_SEND_ACTIVE = set()
 
 
+async def load_send_all_setting():
+    """Load the admin's global Send All switch after the DB is ready."""
+    temp.SEND_ALL_ENABLED = await db.get_send_all_enabled()
+    logger.info("📦 Send All group buttons: %s", "ON" if temp.SEND_ALL_ENABLED else "OFF")
+
+
 def _group_member_order(group):
     """Members in episode order for series groups, saved order otherwise."""
     members = list(dict.fromkeys(str(x) for x in (group.get("members") or [])))
@@ -61,8 +67,8 @@ def _group_member_order(group):
 def _group_action_label(group):
     count = len({str(x) for x in (group.get("members") or [])})
     if (group.get("group_type") or "quality") == "series":
-        return f"📺 Send All Episodes ({count})"
-    return f"🎬 Send All Qualities ({count})"
+        return f"⚡Send All {count} Episode"
+    return f"♻️Send All {count} Quality"
 
 
 def _group_button(group):
@@ -191,9 +197,9 @@ async def start(client, message):
                     file_size=get_size(file.get('file_size', 0))
                 )
 
-                group = await get_group_for_file(file_id, file.get("group_id"))
+                group = await get_group_for_file(file_id, file.get("group_id")) if temp.SEND_ALL_ENABLED else None
                 btn = []
-                group_row = _group_button(group)
+                group_row = _group_button(group) if temp.SEND_ALL_ENABLED else None
                 if group_row:
                     btn.append(group_row)
                 if IS_STREAM:
@@ -241,6 +247,35 @@ async def start(client, message):
 
 
 # ─────────────────────────────────────────────
+# ⚙️ SEND ALL FEATURE SWITCH (BOT ADMIN)
+# ─────────────────────────────────────────────
+@Client.on_message(filters.command(["sendall", "send_all"]) & filters.user(ADMINS))
+async def send_all_toggle(client, message):
+    arg = message.command[1].lower() if len(message.command) > 1 else ""
+    current = "ON" if temp.SEND_ALL_ENABLED else "OFF"
+    if arg not in ("on", "off"):
+        return await message.reply(
+            "⚙️ <b>Send All Buttons</b>\n\n"
+            f"Current: <b>{current}</b>\n\n"
+            "Usage: <code>/sendAll on</code> or <code>/sendAll off</code>"
+        )
+
+    enabled = arg == "on"
+    temp.SEND_ALL_ENABLED = enabled
+    try:
+        await db.set_send_all_enabled(enabled)
+    except Exception as e:
+        logger.error("Could not persist Send All setting: %s", e)
+        return await message.reply(
+            f"⚠️ Send All is <b>{'ON' if enabled else 'OFF'}</b> for this run, "
+            "but saving it to the database failed. It may reset after a restart."
+        )
+    await message.reply(
+        f"✅ Send All buttons are now <b>{'ON' if enabled else 'OFF'}</b>."
+    )
+
+
+# ─────────────────────────────────────────────
 # 📦 SEND A WHOLE QUALITY / SERIES GROUP
 # ─────────────────────────────────────────────
 @Client.on_callback_query(filters.regex(r"^grp#"))
@@ -250,6 +285,8 @@ async def send_group_files(client, query):
         return await query.answer("❌ Invalid request.", show_alert=True)
 
     uid = query.from_user.id
+    if not temp.SEND_ALL_ENABLED:
+        return await query.answer("❌ Send All buttons are turned off by the admin.", show_alert=True)
     if IS_PREMIUM and uid not in ADMINS and not await is_premium(uid, client):
         return await query.answer("❌ Premium Expired!", show_alert=True)
 
@@ -558,9 +595,7 @@ async def stream_cb(client, query):
             ],
             [ui_button("❌ Close Panel", callback_data=f"close_{query.from_user.id}")]
         ]
-        group_row = _group_button(await get_group_for_file(file_id, file.get("group_id")))
-        if group_row:
-            btn.insert(0, group_row)
+        # Watch/Download replaces the file card: Send All must disappear here.
         await query.message.edit_reply_markup(ui_keyboard(btn))
     except Exception as e:
         await query.answer(f"Error: {e}", show_alert=True)

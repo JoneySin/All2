@@ -47,6 +47,7 @@ from utils import temp
 from database.users_chats_db import db
 from database.ia_filterdb import ensure_indexes
 from plugins.premium import check_premium_expired
+from plugins.commands import load_send_all_setting
 
 # ❌ DEAD CODE REMOVED: यहाँ एक `/health` route था, पर web/dashboard_routes.py में
 # भी वही route रजिस्टर है। web/__init__.py का register_admin_components() इस
@@ -118,6 +119,10 @@ class Bot(Client):
         # 2. Database Indexes Sync (Makkhan DB Tuning)
         await ensure_indexes()
         await db._ensure_indexes() 
+        try:
+            await load_send_all_setting()
+        except Exception as e:
+            logger.warning(f"Could not load Send All setting: {e}; keeping default ON")
         logger.info("✅ Database Connections & Indexes Fully Synced")
 
         # 3. Load banned users & chats into Runtime Buckets

@@ -328,6 +328,19 @@ class Database:
     async def get_settings(self, gid): 
         return {**self.df_set, **((await self.groups.find_one({"id": int(gid)}, {"settings": 1})) or {}).get("settings", {})}
     
+    # ───────────────── BOT FEATURE FLAGS ─────────────────
+    async def get_send_all_enabled(self):
+        """Global admin switch for the Send All group buttons (default ON)."""
+        doc = await self.settings.find_one({"id": "send_all_enabled"}, {"value": 1})
+        return True if not doc else bool(doc.get("value", True))
+
+    async def set_send_all_enabled(self, enabled):
+        await self.settings.update_one(
+            {"id": "send_all_enabled"},
+            {"$set": {"value": bool(enabled)}},
+            upsert=True,
+        )
+
     # ───────────────── PREMIUM INTEGRITY SYSTEM ─────────────────
     async def get_plan(self, uid): 
         return {**self.df_prm, **((await self.premium.find_one({"id": int(uid)}, {"status": 1})) or {}).get("status", {})}
