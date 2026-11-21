@@ -24,12 +24,6 @@ def is_valid_ip(ip):
     )
     return re.match(ip_pattern, ip) is not None
 
-def get_channels(env_var):
-    val = environ.get(env_var, "").replace(",", " ").strip()
-    if not val: return []
-    # ✅ टेलीग्राम आईडी के ऋणात्मक चिह्नों (-100) को सुरक्षित पार्स करने के लिए न्यूमेरिक चेक
-    return [int(x) for x in val.split() if x.replace("-", "").isnumeric()]
-
 # ─────────────────────────────────────────────
 # 🤖 BOT CREDENTIALS
 # ─────────────────────────────────────────────
@@ -41,7 +35,6 @@ if not API_ID or not API_HASH or not BOT_TOKEN:
     logger.error("❌ API_ID / API_HASH / BOT_TOKEN missing")
     exit(1)
 
-BOT_ID = int(BOT_TOKEN.split(":")[0])
 PORT = int(environ.get("PORT", 8080)) # कोएब (Koyeb) के डायनेमिक बाइंडिंग के लिए 8080 यूनिवर्सल बेस्ट पोर्ट है
 
 # ─────────────────────────────────────────────
@@ -104,15 +97,12 @@ MAX_WEB_RESULTS = int(environ.get("MAX_WEB_RESULTS", 21))
 # ─────────────────────────────────────────────
 # ⏳ TIMERS ENGINE (सेंट्रलाइज्ड कस्टमाइजेबल टाइमर्स)
 # ─────────────────────────────────────────────
-DELETE_TIME = int(environ.get("DELETE_TIME", 300)) 
 PM_FILE_DELETE_TIME = int(environ.get("PM_FILE_DELETE_TIME", 600)) 
 PREMIUM_REMINDER_BUSY_GAP = int(environ.get("PREMIUM_REMINDER_BUSY_GAP", 60)) 
-THUMB_DELETE_TIME = int(environ.get("THUMB_DELETE_TIME", 5))
 
 # ─────────────────────────────────────────────
 # ⚡ SPEED, BUFFER & ANTI-SPAM THRU LMT
 # ─────────────────────────────────────────────
-SEARCH_LIMIT_PER_SEC = int(environ.get("SEARCH_LIMIT_PER_SEC", 2))
 MAX_THUMB_CACHE = int(environ.get("MAX_THUMB_CACHE", 500))
 
 # ─────────────────────────────────────────────
@@ -124,6 +114,10 @@ PROTECT_CONTENT = is_enabled("PROTECT_CONTENT", False)
 SPELL_CHECK = is_enabled("SPELL_CHECK", True)
 IS_STREAM = is_enabled("IS_STREAM", True)
 IS_PREMIUM = is_enabled("IS_PREMIUM", True)
+# A full library scan is useful after bulk changes, but running it on every
+# restart can keep a small worker/DB busy for minutes and make normal replies
+# feel slow. Keep it opt-in; the admin dashboard can still trigger it manually.
+STARTUP_GROUP_SCAN = is_enabled("STARTUP_GROUP_SCAN", False)
 
 # ─────────────────────────────────────────────
 # 📝 TEXT FILE CAPTION TEMPLATE

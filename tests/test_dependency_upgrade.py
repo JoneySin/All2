@@ -1,4 +1,4 @@
-"""Compatibility checks for the native async MongoDB driver and bot listeners."""
+"""Wire-level MongoDB driver and Kurigram one-shot input checks."""
 import os
 import unittest
 from types import SimpleNamespace
@@ -11,7 +11,7 @@ for key, value in {
 }.items():
     os.environ.setdefault(key, value)
 
-from hydrogram.errors import ListenerTimeout
+from input_waiter import InputTimeout
 from mockupdb import MockupDB
 from pymongo import AsyncMongoClient
 from database import ia_filterdb as db
@@ -87,26 +87,32 @@ class DriverUpgradeTests(unittest.IsolatedAsyncioTestCase):
         reply = AsyncMock()
         message = SimpleNamespace(chat=SimpleNamespace(id=99), edit=AsyncMock(return_value=msg), reply=reply)
         query = SimpleNamespace(from_user=SimpleNamespace(id=55), message=message, answer=AsyncMock())
-        client = SimpleNamespace(listen=AsyncMock(side_effect=ListenerTimeout()))
-        with patch.object(premium, 'ADMINS', []):
+        client = SimpleNamespace()
+        with patch.object(premium, 'ADMINS', []), patch.object(
+            premium, 'wait_for_user_message', AsyncMock(side_effect=InputTimeout())
+        ) as waiter:
             await premium.buy_callback(client, query)
-        client.listen.assert_awaited_once_with(chat_id=99, user_id=55, timeout=60)
+        waiter.assert_awaited_once_with(client, chat_id=99, user_id=55, timeout=60)
         self.assertIn('Timeout', reply.await_args.args[0])
 
     async def test_payment_receipt_listener_and_success(self):
         response = SimpleNamespace(id=4, text='30')
         receipt = SimpleNamespace(photo=True, copy=AsyncMock())
-        client = SimpleNamespace(listen=AsyncMock(side_effect=[response, receipt]))
+        client = SimpleNamespace()
         message = SimpleNamespace(chat=SimpleNamespace(id=99),
             edit=AsyncMock(return_value=SimpleNamespace(id=1)),
             reply_photo=AsyncMock(return_value=SimpleNamespace(id=2)),
             reply=AsyncMock(return_value=SimpleNamespace(id=3)))
         query = SimpleNamespace(from_user=SimpleNamespace(id=55, mention='Test'), message=message, answer=AsyncMock())
-        with patch.object(premium, 'ADMINS', []), patch.object(premium, 'safe_del', new_callable=AsyncMock):
+        with patch.object(premium, 'ADMINS', []), patch.object(
+            premium, 'safe_del', new_callable=AsyncMock
+        ), patch.object(
+            premium, 'wait_for_user_message', AsyncMock(side_effect=[response, receipt])
+        ) as waiter:
             await premium.buy_callback(client, query)
-        self.assertEqual(client.listen.await_args_list, [
-            call(chat_id=99, user_id=55, timeout=60),
-            call(chat_id=99, user_id=55, timeout=300),
+        self.assertEqual(waiter.await_args_list, [
+            call(client, chat_id=99, user_id=55, timeout=60),
+            call(client, chat_id=99, user_id=55, timeout=300),
         ])
         receipt.copy.assert_awaited_once()
         premium.VERIFY_CACHE.pop(55, None)

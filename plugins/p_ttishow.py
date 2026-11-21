@@ -3,7 +3,8 @@ import sys
 import random
 import logging
 import gc
-from hydrogram import Client, filters, enums
+from pyrogram import Client, filters, enums
+from pyrogram.types import LinkPreviewOptions
 from info import ADMINS, LOG_CHANNEL, PICS, IS_PREMIUM
 from database.users_chats_db import db
 
@@ -58,7 +59,7 @@ async def welcome(c, m):
         try:
             w_msg = await c.send_message(m.chat.id, welcome_cap)
             
-            # यदि ग्रुप में ऑटो-डिलीट ऑन है, तो वेलकम मैसेज को ५ मिनट (DELETE_TIME) में साफ़ करें
+            # यदि ग्रुप में ऑटो-डिलीट ऑन है, तो वेलकम मैसेज को ५ मिनट में साफ़ करें
             if settings.get("auto_delete", True):
                 await db.add_to_delete_queue(m.chat.id, w_msg.id, 300)
         except Exception as e:
@@ -214,8 +215,8 @@ async def get_id(c, m):
         t += f"Status: <code>Active Premium Group</code>\n📛 <b>Title:</b> {m.chat.title}\n🔗 <b>Link:</b> @{m.chat.username or 'Private'}\n"
 
     if r:
-        f_id, f_ref = get_media_file_id(r)
+        f_id, _ = get_media_file_id(r)
         if f_id:
             t += f"\n📂 <b>MEDIA DETAILS</b>\n🆔 <b>File ID:</b> <code>{f_id}</code>\n"
 
-    await m.reply_text(t, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+    await m.reply_text(t, parse_mode=enums.ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True))

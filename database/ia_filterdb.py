@@ -10,8 +10,8 @@ from difflib import SequenceMatcher
 from struct import pack
 from bson.objectid import ObjectId
 from pymongo import AsyncMongoClient
-from hydrogram.file_id import FileId
-from hydrogram.errors import FloodWait
+from pyrogram.file_id import FileId
+from pyrogram.errors import FloodWait
 from info import DATABASE_URL, DATABASE_NAME, USE_CAPTION_FILTER, DELETE_CHANNEL
 from utils import temp
 from media_probe import should_probe_media
@@ -23,9 +23,10 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────
 client = AsyncMongoClient(
     DATABASE_URL,
-    maxPoolSize=15,             
-    minPoolSize=0,              
-    maxIdleTimeMS=30000,        
+    maxPoolSize=15,
+    minPoolSize=2,              # keep a couple of warm TLS connections for first-click latency
+    maxIdleTimeMS=300000,       # idle sockets stay warm for 5 min instead of reconnecting every 30 s
+    waitQueueTimeoutMS=10000,   # fail fast instead of hanging forever when the pool is saturated
     serverSelectionTimeoutMS=5000,
     connectTimeoutMS=10000,
     socketTimeoutMS=20000,
@@ -398,12 +399,6 @@ async def apply_media_meta_update(col, file_id, media, current_type=None, probed
     )
     return meta
 
-async def mark_meta_migration_error(col, file_id):
-    """Tooti hui file_ref wale doc ko mark karo taaki har run me dobara na uthe."""
-    await col.update_one(
-        {"_id": file_id},
-        {"$set": {"meta.err": int(time.time())}},
-    )
 
 # ─────────────────────────────────────────────────────────
 # 💾 SAVE FILE
@@ -441,7 +436,7 @@ async def save_file(media, collection_type="primary", probed=None):
 
         # ✅ NEW: video/audio ki duration (seconds) bhi save karte hain — sirf web UI
         # me dikhane ke liye (Telegram bot ke messages me jaan-boojhkar nahi bhejte).
-        # hydrogram me Video/Animation/Audio par .duration hota hai, Document par nahi,
+        # Kurigram me Video/Animation/Audio par .duration hota hai, Document par nahi,
         # isliye getattr se safe rakha hai (documents ke liye 0 → UI me chip hide).
         # 🔍 probed (actual-bytes) duration mile to wahi — uploader ka attribute
         # aksar default/guess hota hai (1280×720 wala bug duration par bhi lagu tha).
@@ -1076,6 +1071,28 @@ async def get_groups_by_ids(ids):
         return []
     by = {d["_id"]: d for d in docs}
     return [by[i] for i in ids if i in by]
+
+
+async def get_group_for_file(file_id, group_id=None):
+    """Return the live QualityGroup that contains *file_id*, if any.
+
+    ``group_id`` is a loose mark written by the scanner; membership in the
+    saved ``members`` array is authoritative, so verify it and fall back to a
+    member lookup for legacy/stale marks.
+    """
+    fid = str(file_id or "")
+    gid = str(group_id or "").strip()
+    if not fid:
+        return None
+    try:
+        if gid:
+            group = await groups.find_one({"_id": gid, "members": fid}, GROUP_PROJECTION)
+            if group:
+                return group
+        return await groups.find_one({"members": fid}, GROUP_PROJECTION)
+    except Exception as e:
+        logger.warning(f"get_group_for_file error: {e}")
+        return None
 
 
 async def get_files_by_ids(ids):

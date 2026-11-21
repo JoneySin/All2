@@ -49,6 +49,35 @@ stale marks, dissolved groups, both caps, access errors and both player UIs. The
 not cover real Telegram media or a real browser, so actual codec support and mobile
 layout still need manual checks.
 
+Telegram's Bot API supports coloured inline buttons through the optional
+`style` field (`primary`, `success`, `danger`); clients released before
+9 February 2026 ignore it. The bot runs on Kurigram 2.2.27, which exposes the
+field natively as `InlineKeyboardButton(style=enums.ButtonStyle.X)`. All plugins
+build keyboards with `keyboards.py` (`ui_button` / `ui_keyboard`), so every
+screen gets a colour without patching third-party classes. A row of up to three
+buttons never repeats a colour: when two actions want the same colour, the later
+one moves to the next unused colour; longer rows cycle while keeping neighbours
+different. An explicit `style=` passed to `ui_button` is kept when it is unique
+in the row. Colours are semantic: red for close/cancel/delete/reject actions,
+green for watch/download/buy/approve/index actions, blue for navigation,
+settings and links. Tests cover the matching rules, toggle labels, explicit
+styles, row uniqueness, and a guard that plugins never fall back to raw button
+types. Actual colours still need a visual check on a current Telegram client;
+older clients show the default.
+
+Payments and indexing need one follow-up message from the user. `input_waiter.py`
+provides `wait_for_user_message`, built on Kurigram's dispatcher: a temporary
+`MessageHandler` in group `-1` resolves a future, `StopPropagation` prevents the
+input from also becoming a search, and `InputTimeout` subclasses
+`asyncio.TimeoutError`. The handler is always removed. This is a helper rather
+than a patched `Client` method. Tests cover capture, timeout and cleanup.
+
+Kurigram's preferred native crypto backend, `kuricrypt`, is pinned in place of
+TgCrypto (local IGE benchmark: about 830 MB/s versus 155 MB/s for 1 MB blocks,
+roughly 5x); `uvloop` and `orjson` were already enabled, so the MTProto
+encryption path is now the fastest one Kurigram supports. The dependency test
+also checks that Pyrogram actually selected `kuricrypt` at runtime.
+
 For grouped `/api/search` requests, treat `next_offset` as an opaque continuation
 value and send it back unchanged, including when a selective filter returns an
 empty page. Large continuations are stored in `GroupSearchCursors` and expire after

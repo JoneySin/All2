@@ -143,12 +143,6 @@ class WebAuthDB:
                 user["password"] = new_hash
         return user
 
-    async def update_profile(self, tg_id, new_email, new_password=None):
-        update_data = {"email": new_email}
-        if new_password:
-            update_data["password"] = await _password_work(hash_password, new_password)
-        await self.col.update_one({"tg_id": tg_id}, {"$set": update_data})
-
     # ───────────── 🔐 PASSWORD-RESET OTP ─────────────
     # ✅ FIX: पहले otp_expiry को tz-aware datetime में सेव करके MongoDB से naive datetime में
     # वापस पढ़ा जाता था और दोनों की तुलना TypeError देती थी — यानी सही OTP डालने पर भी
@@ -238,16 +232,17 @@ class Database:
         # ✅ PYMONGO ASYNC ENGINE: कोएब आइडल थ्रॉटलिंग और कनेक्शन DROP से सुरक्षित ट्यूनिंग
         self.client = AsyncMongoClient(
             DATABASE_URL, 
-            minPoolSize=0,            # आइडल टाइम पर 0 कनेक्शन (RAM 100% सेफ)
+            minPoolSize=2,            # 2 warm connections: first click/query doesn't pay TLS setup
             maxPoolSize=15,           # हैवी ट्रैफिक के लिए 15 कनेक्शंस पूल
-            maxIdleTimeMS=30000,      # 30 सेकंड बाद कनेक्शन ऑटो-कूलडाउन
+            maxIdleTimeMS=300000,     # 5 मिनट तक idle sockets warm रहें (पहले 30s)
+            waitQueueTimeoutMS=10000, # pool saturated हो तो 10s में fail, forever hang नहीं
             serverSelectionTimeoutMS=5000
         )
         self.db = self.client[DATABASE_NAME]
         
         # Collections
         self.users, self.groups, self.premium = self.db.Users, self.db.Groups, self.db.Premiums
-        self.settings, self.warns = self.db.Settings, self.db.Warns
+        self.settings = self.db.Settings
         self.delete_queue = self.db.AutoDeleteQueue 
 
     async def _ensure_indexes(self):
@@ -304,18 +299,12 @@ class Database:
     
     # 'get_all_users' (पुराना ब्रॉडकास्ट कर्सर) पूरी तरह हटा दिया गया है ताकि रैम लीक न हो।
     
-    async def delete_user(self, uid): 
-        await self.users.delete_many({"id": int(uid)})
-    
     async def ban_user(self, uid, rsn="No Reason"): 
         await self.users.update_one({"id": int(uid)}, {"$set": {"ban_status": {"is_banned": True, "ban_reason": rsn}}}, upsert=True)
         
     async def unban_user(self, uid): 
         await self.users.update_one({"id": int(uid)}, {"$set": {"ban_status": self.df_ban}})
         
-    async def get_ban_status(self, uid): 
-        return (await self.users.find_one({"id": int(uid)}, {"ban_status": 1}) or {}).get("ban_status", self.df_ban)
-
     # ───────────────── GROUPS ─────────────────
     async def add_chat(self, gid, title): 
         await self.groups.update_one({"id": int(gid)}, {"$set": {"title": title}, "$setOnInsert": {"settings": self.df_set, "chat_status": self.df_chat}}, upsert=True)
@@ -325,9 +314,6 @@ class Database:
         
     async def total_chat_count(self): 
         return await self.groups.count_documents({})
-    
-    async def get_all_chats(self): 
-        return self.groups.find({}, {"id": 1})
     
     async def disable_chat(self, gid, rsn="No Reason"): 
         await self.groups.update_one({"id": int(gid)}, {"$set": {"chat_status": {"is_disabled": True, "reason": rsn}}})
@@ -342,23 +328,18 @@ class Database:
     async def get_settings(self, gid): 
         return {**self.df_set, **((await self.groups.find_one({"id": int(gid)}, {"settings": 1})) or {}).get("settings", {})}
     
-    async def get_warn(self, uid, cid): 
-        return await self.warns.find_one({"user_id": uid, "chat_id": cid}, {"count": 1}) or {"count": 0}
-        
-    async def set_warn(self, uid, cid, data): 
-        await self.warns.update_one({"user_id": uid, "chat_id": cid}, {"$set": data}, upsert=True)
-        
-    async def clear_warn(self, uid, cid): 
-        await self.warns.delete_one({"user_id": uid, "chat_id": cid})
+    # ───────────────── BOT FEATURE FLAGS ─────────────────
+    async def get_send_all_enabled(self):
+        """Global admin switch for the Send All group buttons (default ON)."""
+        doc = await self.settings.find_one({"id": "send_all_enabled"}, {"value": 1})
+        return True if not doc else bool(doc.get("value", True))
 
-    async def get_all_notes(self, cid): 
-        return ((await self.groups.find_one({"id": int(cid)}, {"settings.notes": 1})) or {}).get("settings", {}).get("notes", {})
-        
-    async def save_note(self, cid, name, data): 
-        await self.groups.update_one({"id": int(cid)}, {"$set": {f"settings.notes.{name}": data}}, upsert=True)
-        
-    async def delete_note(self, cid, name): 
-        await self.groups.update_one({"id": int(cid)}, {"$unset": {f"settings.notes.{name}": ""}})
+    async def set_send_all_enabled(self, enabled):
+        await self.settings.update_one(
+            {"id": "send_all_enabled"},
+            {"$set": {"value": bool(enabled)}},
+            upsert=True,
+        )
 
     # ───────────────── PREMIUM INTEGRITY SYSTEM ─────────────────
     async def get_plan(self, uid): 
@@ -432,7 +413,9 @@ class Database:
 
     async def get_expired_delete_tasks(self):
         now = get_local_now()
-        return self.delete_queue.find({"delete_at": {"$lte": now}})
+        # Bounded batch: a large backlog must not monopolise the event loop and
+        # delay /start, searches or callback edits. The next 15 s cycle continues.
+        return self.delete_queue.find({"delete_at": {"$lte": now}}).sort("delete_at", 1).limit(100)
 
     async def remove_from_delete_queue(self, chat_id, message_id):
         # डिलीट टास्क रिमूव करते समय भी सीधे यूनिक कॉम्बो की को टारगेट करें

@@ -5,8 +5,9 @@ import random
 import logging
 import gc
 from lru import LRU  # ✅ LRU-Dict imported for Auto-Pilot RAM Management
-from hydrogram import Client, filters, enums
-from hydrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram import Client, ContinuePropagation, filters, enums
+from pyrogram.types import LinkPreviewOptions
+from keyboards import ui_button, ui_keyboard
 
 from info import ADMINS, MAX_BOT_RESULTS, IS_PREMIUM, PICS, SPELL_CHECK
 from utils import is_premium, get_size, is_check_admin, temp, get_settings, save_group_settings
@@ -112,10 +113,10 @@ def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, n
     nav = []
     prev_off = int(offset) - MAX_BOT_RESULTS
     if prev_off >= 0: 
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"nav_{req_id}_{key}_{prev_off}_{act_src_short}"))
+        nav.append(ui_button("◀️ Prev", callback_data=f"nav_{req_id}_{key}_{prev_off}_{act_src_short}"))
         
     if next_off: 
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"nav_{req_id}_{key}_{next_off}_{act_src_short}"))
+        nav.append(ui_button("Next ▶️", callback_data=f"nav_{req_id}_{key}_{next_off}_{act_src_short}"))
     
     if nav: 
         btn.append(nav)
@@ -125,11 +126,11 @@ def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, n
         for c in ["primary", "cloud", "archive"]:
             # ✅ अगर सोर्स 'all' है तो सब पर टिक लगाओ, वरना सिर्फ उसी पर लगाओ जो मैच हो
             tick = "✅" if (act_src_lower == "all" or c == act_src_lower) else "📂"
-            col_btn.append(InlineKeyboardButton(f"{tick} {c.title()}", callback_data=f"coll_{req_id}_{key}_{SRC_TO_SHORT[c]}"))
+            col_btn.append(ui_button(f"{tick} {c.title()}", callback_data=f"coll_{req_id}_{key}_{SRC_TO_SHORT[c]}"))
         btn.append(col_btn)
-        btn.append([InlineKeyboardButton("❌ Close Result", callback_data=f"close_{req_id}")])
+        btn.append([ui_button("❌ Close Result", callback_data=f"close_{req_id}")])
     
-    return cap, InlineKeyboardMarkup(btn) if btn else None
+    return cap, ui_keyboard(btn) if btn else None
 
 # ─────────────────────────────────────────────
 # ⚙️ INLINE GROUP SETTINGS UI CENTER
@@ -140,12 +141,12 @@ def get_settings_markup(settings):
     s_btn = "🔲 SIMPLE" if settings.get("simple_mode", True) else "🔳 FULL"
     
     buttons = [
-        [InlineKeyboardButton(f"⏳ Auto Delete: {s_del}", callback_data="set_toggle_auto_delete")],
-        [InlineKeyboardButton(f"🧠 Spell Check: {s_spl}", callback_data="set_toggle_spell_check")],
-        [InlineKeyboardButton(f"🎨 Buttons Style: {s_btn}", callback_data="set_toggle_simple_mode")],
-        [InlineKeyboardButton("❌ Close Panel", callback_data="close_admin_panel")]
+        [ui_button(f"⏳ Auto Delete: {s_del}", callback_data="set_toggle_auto_delete")],
+        [ui_button(f"🧠 Spell Check: {s_spl}", callback_data="set_toggle_spell_check")],
+        [ui_button(f"🎨 Buttons Style: {s_btn}", callback_data="set_toggle_simple_mode")],
+        [ui_button("❌ Close Panel", callback_data="close_admin_panel")]
     ]
-    return InlineKeyboardMarkup(buttons)
+    return ui_keyboard(buttons)
 
 @Client.on_message(filters.command("settings") & filters.group)
 async def group_settings_panel(client, message):
@@ -161,20 +162,20 @@ async def toggle_settings_callback(client, query):
     try:
         if not await is_check_admin(client, query.message.chat.id, query.from_user.id):
             return await query.answer("❌ Only Group Admins can tweak settings!", show_alert=True)
-            
+        await query.answer()
+
         key = query.data.replace("set_toggle_", "")
         settings = await get_settings(query.message.chat.id)
         
         settings[key] = not settings.get(key, True)
         await save_group_settings(query.message.chat.id, key, settings[key])
-        
-        await query.answer("✅ Configuration Updated Successfully!", show_alert=False)
         await query.message.edit_reply_markup(reply_markup=get_settings_markup(settings))
     except Exception as e:
         logger.error(f"Settings Toggle Error: {e}")
 
 @Client.on_callback_query(filters.regex(r"^close_admin_panel"))
 async def close_admin_panel(client, query):
+    await query.answer()
     try: await query.message.delete()
     except: pass
 
@@ -206,14 +207,15 @@ async def search_toggle(client, message):
 # ─────────────────────────────────────────────
 @Client.on_message(filters.private & filters.text & filters.incoming)
 async def pm_search(client, message):
-    if not await is_valid_search(message): return
+    if not await is_valid_search(message):
+        raise ContinuePropagation
     uid = message.from_user.id
     
     if uid not in ADMINS and not await is_premium(uid, client):
         return await message.reply_photo(
             random.choice(PICS), 
             caption=script.PLAN_TXT.format(10, "@admin"), 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Buy Premium Plan", callback_data="activate_plan")]])
+            reply_markup=ui_keyboard([[ui_button("💎 Buy Premium Plan", callback_data="activate_plan")]])
         )
     
     settings = await get_settings(message.chat.id)
@@ -221,7 +223,8 @@ async def pm_search(client, message):
 
 @Client.on_message(filters.group & filters.text & filters.incoming)
 async def group_search(client, message):
-    if not await is_valid_search(message): return
+    if not await is_valid_search(message):
+        raise ContinuePropagation
     chat_id, user_id = message.chat.id, message.from_user.id
 
     settings = await get_settings(chat_id)
@@ -236,7 +239,7 @@ async def group_search(client, message):
             if not await is_check_admin(client, chat_id, user_id):
                 try: await message.delete()
                 except: pass
-                msg = await message.reply("❌ External Links not allowed in Premium Group!", quote=True)
+                msg = await message.reply("❌ External Links not allowed in Premium Group!")
                 await asyncio.sleep(5)
                 try: await msg.delete()
                 except: pass
@@ -266,7 +269,7 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
             suggestions = await get_spell_suggestions(search, limit=5)
             if suggestions:
                 try:
-                    m = await msg.reply("🤔 Checking spelling...", quote=True)
+                    m = await msg.reply("🤔 Checking spelling...")
                 except:
                     return
                 # ✅ FIX: callback_data में सीधे suggestion टेक्स्ट के बजाय सिर्फ
@@ -276,7 +279,7 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
                 skey = f"{m.chat.id}-{m.id}"
                 SPELL_SUGGESTIONS[skey] = suggestions
                 btn = [
-                    [InlineKeyboardButton(f"🔍 {s[:100]}{'…' if len(s) > 100 else ''}", callback_data=f"spellchk_{msg.from_user.id}_{skey}_{i}")]
+                    [ui_button(f"🔍 {s[:100]}{'…' if len(s) > 100 else ''}", callback_data=f"spellchk_{msg.from_user.id}_{skey}_{i}")]
                     for i, s in enumerate(suggestions)
                 ]
                 # ✅ FIX: पहले caption में suggestions की पूरी लिस्ट फिर से लिखी
@@ -289,13 +292,13 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
                 # होता है — इसलिए अब caption सिर्फ "Did you mean?" रखा है।
                 cap = "🤔 **Did you mean?**"
                 try:
-                    await m.edit_text(cap, reply_markup=InlineKeyboardMarkup(btn))
+                    await m.edit_text(cap, reply_markup=ui_keyboard(btn))
                     asyncio.create_task(start_auto_delete_timer(client, m.chat.id, m.id, delay=300))
                 except: pass
                 return
 
         try:
-            m = await msg.reply(script.NOT_FILE_TXT.format(msg.from_user.mention, search), quote=True)
+            m = await msg.reply(script.NOT_FILE_TXT.format(msg.from_user.mention, search))
             asyncio.create_task(start_auto_delete_timer(client, m.chat.id, m.id, delay=15))
         except: pass
         return
@@ -307,7 +310,7 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
     cap, markup = get_filter_ui(search, files, total, act_src, 0, msg.chat.id, msg.from_user.id, key, next_offset, is_simple_mode, delay=300)
 
     try:
-        res = await msg.reply(cap, reply_markup=markup, disable_web_page_preview=True, quote=True)
+        res = await msg.reply(cap, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
         asyncio.create_task(start_auto_delete_timer(client, res.chat.id, res.id, delay=300))
     except Exception as e: 
         logger.error(f"Auto filter response error: {e}")
@@ -316,20 +319,21 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
 # 📤 CALLBACK HANDLERS
 # ─────────────────────────────────────────────
 # ✅ BUG FIX (duplicate handler): `^close_` regex पर दो अलग-अलग handlers रजिस्टर थे —
-# यहाँ close_callback और plugins/commands.py में close_cb। hydrogram दोनों को एक ही
+# यहाँ close_callback और plugins/commands.py में close_cb। pyrogram दोनों को एक ही
 # callback पर चलाता था, यानी हर "❌ Close" tap पर delete_messages दो बार चलता,
 # दूसरी बार हमेशा MessageDeleteForbidden/MessageIdInvalid exception देता, और दोनों
 # अपनी-अपनी सफाई करते थे (एक PM_FILES देखता, दूसरा auto-delete timer)।
 # अब एक ही merged handler है जो दोनों की पूरी सफाई करता है, और साथ में search
 # result cache (temp.FILES / BUTTONS) भी रिलीज़ करता है — पहले वो close के बाद
 # LRU eviction तक RAM में टिका रहता था।
-@Client.on_callback_query(filters.regex(r"^close_"))
+@Client.on_callback_query(filters.regex(r"^close_(?!admin_panel)"))
 async def close_callback(client, query):
     try:
         # `close_data` (index cancel बटन) पर कोई owner चेक नहीं, `close_<uid>` पर है
         parts = query.data.split("_")
         if len(parts) > 1 and parts[1].isdigit() and int(parts[1]) != query.from_user.id:
             return await query.answer("❌ You cannot close this result!", show_alert=True)
+        await query.answer()
 
         chat_id = query.message.chat.id
         current_msg_id = query.message.id
@@ -404,7 +408,7 @@ async def spell_check_handler(client, query):
         is_simple_mode = settings.get("simple_mode", True)
 
         cap, markup = get_filter_ui(suggestion, files, total, act_src, 0, query.message.chat.id, query.from_user.id, key, next_offset, is_simple_mode, delay=300)
-        await query.message.edit_text(cap, reply_markup=markup, disable_web_page_preview=True)
+        await query.message.edit_text(cap, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
         
         asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))
             
@@ -431,6 +435,9 @@ async def pagination_handler(client, query):
 
     entry = BUTTONS.get(key)
     if not entry: return await query.answer("❌ Search Expired!", show_alert=True)
+    # Acknowledge before hitting the database so the button spinner clears
+    # immediately; the page edit follows once the query finishes.
+    await query.answer()
     search = entry["query"]
 
     # ✅ Default fallback changed to "all" to support multi-collection scrolling 
@@ -449,7 +456,11 @@ async def pagination_handler(client, query):
     
     if not files:
         err = "❌ No more pages!" if action == "nav" else f"❌ No files in {coll_type.upper()}"
-        return await query.answer(err, show_alert=True)
+        try:
+            await query.message.edit_text(err)
+        except Exception:
+            pass
+        return
 
     temp.FILES[key] = files
     settings = await get_settings(query.message.chat.id)
@@ -458,10 +469,8 @@ async def pagination_handler(client, query):
     cap, markup = get_filter_ui(search, files, total, act_src, offset, query.message.chat.id, req, key, next_off, is_simple_mode, delay=300)
 
     try: 
-        await query.message.edit_text(cap, reply_markup=markup, disable_web_page_preview=True)
+        await query.message.edit_text(cap, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
         asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))
     except Exception as e:
         logger.error(f"Pagination delivery failure: {e}")
         asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))
-        
-    await query.answer()

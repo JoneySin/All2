@@ -24,7 +24,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
-logging.getLogger('hydrogram').setLevel(logging.ERROR)
+logging.getLogger('pyrogram').setLevel(logging.ERROR)
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 logging.getLogger('aiohttp.server').setLevel(logging.WARNING)
 
@@ -34,19 +34,20 @@ logger = logging.getLogger(__name__)
 # CORE IMPORTS
 # ==========================================================
 from aiohttp import web
-from hydrogram import Client, types, StopPropagation, idle 
-from hydrogram.errors import FloodWait 
-from hydrogram.handlers import MessageHandler 
+from pyrogram import Client, types, StopPropagation, idle
+from pyrogram.errors import FloodWait
+from pyrogram.handlers import MessageHandler
 from web import web_app
 from web.search_api import start_group_scan, stop_group_scan
 from info import (
-    API_ID, API_HASH, BOT_TOKEN, PORT, ADMINS, 
-    LOG_CHANNEL, TIME_ZONE
+    API_ID, API_HASH, BOT_TOKEN, PORT, ADMINS,
+    LOG_CHANNEL, TIME_ZONE, STARTUP_GROUP_SCAN
 )
 from utils import temp
 from database.users_chats_db import db
 from database.ia_filterdb import ensure_indexes
 from plugins.premium import check_premium_expired
+from plugins.commands import load_send_all_setting
 
 # ❌ DEAD CODE REMOVED: यहाँ एक `/health` route था, पर web/dashboard_routes.py में
 # भी वही route रजिस्टर है। web/__init__.py का register_admin_components() इस
@@ -111,13 +112,17 @@ class Bot(Client):
         self._delete_task = None  
 
     async def start(self):
-        # 1. Start Pyrogram/Hydrogram Client Instance
+        # 1. Start Kurigram Client Instance
         await super().start()
         temp.START_TIME = time.time()
 
         # 2. Database Indexes Sync (Makkhan DB Tuning)
         await ensure_indexes()
         await db._ensure_indexes() 
+        try:
+            await load_send_all_setting()
+        except Exception as e:
+            logger.warning(f"Could not load Send All setting: {e}; keeping default ON")
         logger.info("✅ Database Connections & Indexes Fully Synced")
 
         # 3. Load banned users & chats into Runtime Buckets
@@ -179,13 +184,17 @@ class Bot(Client):
         await web.TCPSite(self._runner, "0.0.0.0", PORT).start()
         logger.info(f"🌐 Web Server & Mini App Stream Live on Port {PORT}")
 
-        # Run the existing safe full-library scan in the background on every start.
-        # The admin scan button shares this reservation and status.
-        try:
-            if start_group_scan():
-                logger.info("🗂️ Startup group scan scheduled in background")
-        except Exception as e:
-            logger.error(f"Could not schedule startup group scan: {e}")
+        # The full-library scan is opt-in: on a small Koyeb worker it competes
+        # with /start, search and callback queries for CPU and MongoDB time.
+        # Admins can still run it from the dashboard whenever a repair is needed.
+        if STARTUP_GROUP_SCAN:
+            try:
+                if start_group_scan():
+                    logger.info("🗂️ Startup group scan scheduled in background")
+            except Exception as e:
+                logger.error(f"Could not schedule startup group scan: {e}")
+        else:
+            logger.info("🗂️ Startup group scan disabled (set STARTUP_GROUP_SCAN=true to enable)")
 
         # 8. Start Background Automation Tasks (Premium Engine & Auto-Delete Sync)
         self._premium_task = asyncio.create_task(check_premium_expired(self))

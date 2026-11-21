@@ -13,7 +13,7 @@ import logging
 import time
 from collections import OrderedDict
 
-from hydrogram.file_id import FileId
+from pyrogram.file_id import FileId
 
 from info import BIN_CHANNEL
 from utils import temp
@@ -71,8 +71,3 @@ async def get_media_info(message_id):
         _INFLIGHT[message_id] = task
         task.add_done_callback(lambda _t, _m=message_id: _INFLIGHT.pop(_m, None))
     return await asyncio.shield(task)
-
-
-def drop_media_info(message_id):
-    """File delete/replace hone par cache se hatao."""
-    _CACHE.pop(message_id, None)

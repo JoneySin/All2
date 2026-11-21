@@ -70,7 +70,7 @@ class PaymentQrTests(unittest.IsolatedAsyncioTestCase):
     async def test_payment_flow_generates_png_containing_expected_qr(self):
         response = SimpleNamespace(id=4, text='30')
         receipt = SimpleNamespace(photo=True, copy=AsyncMock())
-        client = SimpleNamespace(listen=AsyncMock(side_effect=[response, receipt]))
+        client = SimpleNamespace()
         message = SimpleNamespace(chat=SimpleNamespace(id=99),
             edit=AsyncMock(return_value=SimpleNamespace(id=1)),
             reply_photo=AsyncMock(return_value=SimpleNamespace(id=2)),
@@ -79,7 +79,8 @@ class PaymentQrTests(unittest.IsolatedAsyncioTestCase):
         try:
             with patch.object(premium, 'ADMINS', []), patch.object(premium, 'safe_del', new_callable=AsyncMock), \
                     patch.object(premium, 'UPI_ID', 'example@upi'), patch.object(premium, 'UPI_NAME', 'Test Merchant'), \
-                    patch.object(premium, 'PRE_DAY_AMOUNT', 10):
+                    patch.object(premium, 'PRE_DAY_AMOUNT', 10), \
+                    patch.object(premium, 'wait_for_user_message', AsyncMock(side_effect=[response, receipt])):
                 await premium.buy_callback(client, query)
             message.reply_photo.assert_awaited_once()
             payload = message.reply_photo.await_args.kwargs['photo'].getvalue()
