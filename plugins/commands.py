@@ -3,6 +3,7 @@ import random
 import logging
 from time import time as time_now
 from pyrogram import Client, filters, enums
+from pyrogram.errors import FloodWait
 from pyrogram.types import WebAppInfo
 from keyboards import ui_button, ui_keyboard
 
@@ -13,6 +14,7 @@ from Script import script
 from database.ia_filterdb import (
     db_count_documents, get_file_details, delete_files,
     get_directory_counts, get_post_category_counts,
+    get_group_for_file, get_files_by_ids, get_groups_by_ids,
 )
 from database.users_chats_db import db
 
@@ -42,6 +44,43 @@ def _build_mini_app_url(base_url: str) -> str:
     return f"{url.rstrip('/')}/miniapp"
 
 MINI_APP_URL = _build_mini_app_url(URL)
+
+# One bulk send per user+group at a time: repeated taps must not flood Telegram.
+_GROUP_SEND_ACTIVE = set()
+
+
+def _group_member_order(group):
+    """Members in episode order for series groups, saved order otherwise."""
+    members = list(dict.fromkeys(str(x) for x in (group.get("members") or [])))
+    if (group.get("group_type") or "quality") != "series":
+        return members
+    saved = [str(x) for x in (group.get("episode_order") or [])]
+    return list(dict.fromkeys([x for x in saved if x in members] + members))
+
+
+def _group_action_label(group):
+    count = len(group.get("members") or [])
+    if (group.get("group_type") or "quality") == "series":
+        return f"📺 Send All Episodes ({count})"
+    return f"🎬 Send All Qualities ({count})"
+
+
+def _group_button(group):
+    """One green action row for a multi-file quality/series group."""
+    if not group or len(group.get("members") or []) < 2:
+        return None
+    return [ui_button(
+        _group_action_label(group),
+        callback_data=f"grp#{group['_id']}",
+        style=enums.ButtonStyle.SUCCESS,
+    )]
+
+
+def _file_caption(template, file):
+    return (template or script.FILE_CAPTION).format(
+        file_name=str(file.get("file_name", "File")),
+        file_size=get_size(file.get("file_size") or 0),
+    )
 
 
 # ─────────────────────────────────────────────
@@ -152,9 +191,14 @@ async def start(client, message):
                     file_size=get_size(file.get('file_size', 0))
                 )
 
-                btn = [[ui_button('❌ Close', callback_data=f'close_{message.from_user.id}')]]
+                group = await get_group_for_file(file_id, file.get("group_id"))
+                btn = []
+                group_row = _group_button(group)
+                if group_row:
+                    btn.append(group_row)
                 if IS_STREAM:
-                    btn.insert(0, [ui_button("▶️ Watch / Download", callback_data=f"stream#{file_id}")])
+                    btn.append([ui_button("▶️ Watch / Download", callback_data=f"stream#{file_id}")])
+                btn.append([ui_button('❌ Close', callback_data=f'close_{message.from_user.id}')])
 
                 target_media = file.get('file_ref') if file.get('file_ref') else file_id
 
@@ -194,6 +238,107 @@ async def start(client, message):
         caption=script.START_TXT.format(message.from_user.mention, get_wish()),
         reply_markup=ui_keyboard(btn)
     )
+
+
+# ─────────────────────────────────────────────
+# 📦 SEND A WHOLE QUALITY / SERIES GROUP
+# ─────────────────────────────────────────────
+@Client.on_callback_query(filters.regex(r"^grp#"))
+async def send_group_files(client, query):
+    """Send every member of the file's group to the user who tapped the button."""
+    if not query.message or not query.from_user:
+        return await query.answer("❌ Invalid request.", show_alert=True)
+
+    uid = query.from_user.id
+    if IS_PREMIUM and uid not in ADMINS and not await is_premium(uid, client):
+        return await query.answer("❌ Premium Expired!", show_alert=True)
+
+    gid = query.data.split("#", 1)[1].strip() if "#" in query.data else ""
+    if not gid:
+        return await query.answer("❌ Group not found.", show_alert=True)
+
+    send_key = (uid, gid)
+    if send_key in _GROUP_SEND_ACTIVE:
+        return await query.answer("⏳ This group is already being sent.", show_alert=True)
+    _GROUP_SEND_ACTIVE.add(send_key)
+
+    try:
+        groups = await get_groups_by_ids([gid])
+        group = groups[0] if groups else None
+        if not group:
+            return await query.answer("❌ This group is no longer available.", show_alert=True)
+
+        order = _group_member_order(group)
+        if len(order) < 2:
+            return await query.answer("❌ This group has only one file.", show_alert=True)
+
+        await query.answer(
+            f"📤 Sending {len(order)} files…" if query.message.chat.id == uid
+            else "📩 Check your PM — sending all files…"
+        )
+
+        files = await get_files_by_ids(order)
+        by_id = {str(doc.get("_id")): doc for doc in files if doc}
+        ordered = [by_id[fid] for fid in order if fid in by_id]
+        if not ordered:
+            return
+
+        settings = await get_settings(query.message.chat.id)
+        template = settings.get("caption", script.FILE_CAPTION)
+        target = uid
+        sent = 0
+        sent_messages = []
+
+        for file in ordered:
+            fid = str(file.get("_id"))
+            buttons = [[ui_button("❌ Close", callback_data=f"close_{uid}")]]
+            if IS_STREAM:
+                buttons.insert(0, [ui_button("▶️ Watch / Download", callback_data=f"stream#{fid}")])
+            media = file.get("file_ref") if file.get("file_ref") else fid
+            caption = _file_caption(template, file)
+
+            message = None
+            for attempt in range(2):
+                try:
+                    message = await client.send_cached_media(
+                        target, media, caption=caption, reply_markup=ui_keyboard(buttons)
+                    )
+                    break
+                except FloodWait as e:
+                    if attempt:
+                        logger.warning("Group send FloodWait retry failed for %s", fid)
+                        break
+                    await asyncio.sleep(e.value)
+                except Exception as e:
+                    logger.warning("Group send failed for %s: %s", fid, e)
+                    break
+            if message is not None:
+                sent += 1
+                sent_messages.append(message)
+
+        if not sent:
+            try:
+                await client.send_message(
+                    query.message.chat.id,
+                    "❌ Files could not be sent. Start the bot in PM and try again.",
+                )
+            except Exception:
+                pass
+            return
+
+        if PM_FILE_DELETE_TIME > 0 and sent_messages:
+            try:
+                note = await client.send_message(
+                    target,
+                    f"⚠️ These {sent} files will be deleted in {get_readable_time(PM_FILE_DELETE_TIME)}.",
+                )
+                for message in sent_messages:
+                    await db.add_to_delete_queue(target, message.id, PM_FILE_DELETE_TIME)
+                await db.add_to_delete_queue(target, note.id, PM_FILE_DELETE_TIME)
+            except Exception as e:
+                logger.warning("Could not schedule bulk file deletion: %s", e)
+    finally:
+        _GROUP_SEND_ACTIVE.discard(send_key)
 
 
 # ─────────────────────────────────────────────
@@ -413,6 +558,9 @@ async def stream_cb(client, query):
             ],
             [ui_button("❌ Close Panel", callback_data=f"close_{query.from_user.id}")]
         ]
+        group_row = _group_button(await get_group_for_file(file_id, file.get("group_id")))
+        if group_row:
+            btn.insert(0, group_row)
         await query.message.edit_reply_markup(ui_keyboard(btn))
     except Exception as e:
         await query.answer(f"Error: {e}", show_alert=True)

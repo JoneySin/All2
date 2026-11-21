@@ -1073,6 +1073,28 @@ async def get_groups_by_ids(ids):
     return [by[i] for i in ids if i in by]
 
 
+async def get_group_for_file(file_id, group_id=None):
+    """Return the live QualityGroup that contains *file_id*, if any.
+
+    ``group_id`` is a loose mark written by the scanner; membership in the
+    saved ``members`` array is authoritative, so verify it and fall back to a
+    member lookup for legacy/stale marks.
+    """
+    fid = str(file_id or "")
+    gid = str(group_id or "").strip()
+    if not fid:
+        return None
+    try:
+        if gid:
+            group = await groups.find_one({"_id": gid, "members": fid}, GROUP_PROJECTION)
+            if group:
+                return group
+        return await groups.find_one({"members": fid}, GROUP_PROJECTION)
+    except Exception as e:
+        logger.warning(f"get_group_for_file error: {e}")
+        return None
+
+
 async def get_files_by_ids(ids):
     """Quality-group ki files: primary + cloud + archive teeno me se _id se, source_col tag ke saath.
     (Group ki file chahe kisi bhi collection me ho, search me match ho ya na ho.)"""
