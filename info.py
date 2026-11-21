@@ -114,6 +114,10 @@ PROTECT_CONTENT = is_enabled("PROTECT_CONTENT", False)
 SPELL_CHECK = is_enabled("SPELL_CHECK", True)
 IS_STREAM = is_enabled("IS_STREAM", True)
 IS_PREMIUM = is_enabled("IS_PREMIUM", True)
+# A full library scan is useful after bulk changes, but running it on every
+# restart can keep a small worker/DB busy for minutes and make normal replies
+# feel slow. Keep it opt-in; the admin dashboard can still trigger it manually.
+STARTUP_GROUP_SCAN = is_enabled("STARTUP_GROUP_SCAN", False)
 
 # ─────────────────────────────────────────────
 # 📝 TEXT FILE CAPTION TEMPLATE

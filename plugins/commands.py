@@ -319,6 +319,12 @@ async def ui_cb(client, query):
     data = query.data
     buttons_markup = None
 
+    # Answer first: Telegram keeps the button's loading spinner until a
+    # callback query is acknowledged. Help/Stats must not wait for DB work.
+    if data == "admin_cmds" and query.from_user.id not in ADMINS:
+        return await query.answer("❌ You are not an Admin!", show_alert=True)
+    await query.answer()
+
     if data == "back_start":
         text = script.START_TXT.format(query.from_user.mention, get_wish())
         btn = [
@@ -344,8 +350,6 @@ async def ui_cb(client, query):
         buttons_markup = ui_keyboard(btn)
 
     elif data == "admin_cmds":
-        if query.from_user.id not in ADMINS:
-            return await query.answer("❌ You are not an Admin!", show_alert=True)
         text = script.ADMIN_COMMAND_TXT
         btn = [[ui_button("⬅️ Back Menu", callback_data="help")]]
         buttons_markup = ui_keyboard(btn)
@@ -360,7 +364,8 @@ async def ui_cb(client, query):
                 [[ui_button("⬅️ Back Menu", callback_data="back_start")]]
             )
         except Exception as ex:
-            return await query.answer(f"❌ Error displaying stats: {ex}", show_alert=True)
+            logger.error(f"Stats callback failed: {ex}")
+            return
 
     try:
         await query.message.edit_caption(
@@ -379,6 +384,7 @@ async def ui_cb(client, query):
 async def confirm_del(client, query):
     if query.from_user.id not in ADMINS:
         return await query.answer("❌ You are not an Admin!", show_alert=True)
+    await query.answer()
 
     storage = query.data.split("#")[1]
     await query.message.edit("🗑 Destroying collection blocks... Please stand by.")

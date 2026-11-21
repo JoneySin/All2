@@ -188,7 +188,8 @@ async def list_web_users(c, m):
 async def myplan_cb(client, query):
     if query.from_user.id in ADMINS: return await query.answer(ADMIN_ALERT, show_alert=True)
     if not IS_PREMIUM: return await query.answer("Premium system disabled.", show_alert=True)
-    
+    await query.answer()
+
     mp = await db.get_plan(query.from_user.id)
     btn = [[ui_button("⬅️ Back Menu", callback_data="back_start")]]
     

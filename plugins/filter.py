@@ -162,20 +162,20 @@ async def toggle_settings_callback(client, query):
     try:
         if not await is_check_admin(client, query.message.chat.id, query.from_user.id):
             return await query.answer("❌ Only Group Admins can tweak settings!", show_alert=True)
-            
+        await query.answer()
+
         key = query.data.replace("set_toggle_", "")
         settings = await get_settings(query.message.chat.id)
         
         settings[key] = not settings.get(key, True)
         await save_group_settings(query.message.chat.id, key, settings[key])
-        
-        await query.answer("✅ Configuration Updated Successfully!", show_alert=False)
         await query.message.edit_reply_markup(reply_markup=get_settings_markup(settings))
     except Exception as e:
         logger.error(f"Settings Toggle Error: {e}")
 
 @Client.on_callback_query(filters.regex(r"^close_admin_panel"))
 async def close_admin_panel(client, query):
+    await query.answer()
     try: await query.message.delete()
     except: pass
 
@@ -326,13 +326,14 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
 # अब एक ही merged handler है जो दोनों की पूरी सफाई करता है, और साथ में search
 # result cache (temp.FILES / BUTTONS) भी रिलीज़ करता है — पहले वो close के बाद
 # LRU eviction तक RAM में टिका रहता था।
-@Client.on_callback_query(filters.regex(r"^close_"))
+@Client.on_callback_query(filters.regex(r"^close_(?!admin_panel)"))
 async def close_callback(client, query):
     try:
         # `close_data` (index cancel बटन) पर कोई owner चेक नहीं, `close_<uid>` पर है
         parts = query.data.split("_")
         if len(parts) > 1 and parts[1].isdigit() and int(parts[1]) != query.from_user.id:
             return await query.answer("❌ You cannot close this result!", show_alert=True)
+        await query.answer()
 
         chat_id = query.message.chat.id
         current_msg_id = query.message.id
@@ -434,6 +435,9 @@ async def pagination_handler(client, query):
 
     entry = BUTTONS.get(key)
     if not entry: return await query.answer("❌ Search Expired!", show_alert=True)
+    # Acknowledge before hitting the database so the button spinner clears
+    # immediately; the page edit follows once the query finishes.
+    await query.answer()
     search = entry["query"]
 
     # ✅ Default fallback changed to "all" to support multi-collection scrolling 
@@ -452,7 +456,11 @@ async def pagination_handler(client, query):
     
     if not files:
         err = "❌ No more pages!" if action == "nav" else f"❌ No files in {coll_type.upper()}"
-        return await query.answer(err, show_alert=True)
+        try:
+            await query.message.edit_text(err)
+        except Exception:
+            pass
+        return
 
     temp.FILES[key] = files
     settings = await get_settings(query.message.chat.id)
@@ -466,5 +474,3 @@ async def pagination_handler(client, query):
     except Exception as e:
         logger.error(f"Pagination delivery failure: {e}")
         asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))
-        
-    await query.answer()

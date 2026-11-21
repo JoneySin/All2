@@ -739,6 +739,7 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
               patch.object(bot_module, "check_premium_expired", background),
               patch.object(bot_module, "auto_delete_worker", background),
               patch.object(bot_module, "ADMINS", []), patch.object(bot_module, "LOG_CHANNEL", None),
+              patch.object(bot_module, "STARTUP_GROUP_SCAN", True),
               patch.object(api, "_scan_all_groups", delayed_scan)):
             await asyncio.wait_for(instance.start(), 2)
             await asyncio.wait_for(entered.wait(), 2)

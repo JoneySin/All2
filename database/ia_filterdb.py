@@ -23,9 +23,10 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────
 client = AsyncMongoClient(
     DATABASE_URL,
-    maxPoolSize=15,             
-    minPoolSize=0,              
-    maxIdleTimeMS=30000,        
+    maxPoolSize=15,
+    minPoolSize=2,              # keep a couple of warm TLS connections for first-click latency
+    maxIdleTimeMS=300000,       # idle sockets stay warm for 5 min instead of reconnecting every 30 s
+    waitQueueTimeoutMS=10000,   # fail fast instead of hanging forever when the pool is saturated
     serverSelectionTimeoutMS=5000,
     connectTimeoutMS=10000,
     socketTimeoutMS=20000,

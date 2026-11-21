@@ -40,8 +40,8 @@ from pyrogram.handlers import MessageHandler
 from web import web_app
 from web.search_api import start_group_scan, stop_group_scan
 from info import (
-    API_ID, API_HASH, BOT_TOKEN, PORT, ADMINS, 
-    LOG_CHANNEL, TIME_ZONE
+    API_ID, API_HASH, BOT_TOKEN, PORT, ADMINS,
+    LOG_CHANNEL, TIME_ZONE, STARTUP_GROUP_SCAN
 )
 from utils import temp
 from database.users_chats_db import db
@@ -179,13 +179,17 @@ class Bot(Client):
         await web.TCPSite(self._runner, "0.0.0.0", PORT).start()
         logger.info(f"🌐 Web Server & Mini App Stream Live on Port {PORT}")
 
-        # Run the existing safe full-library scan in the background on every start.
-        # The admin scan button shares this reservation and status.
-        try:
-            if start_group_scan():
-                logger.info("🗂️ Startup group scan scheduled in background")
-        except Exception as e:
-            logger.error(f"Could not schedule startup group scan: {e}")
+        # The full-library scan is opt-in: on a small Koyeb worker it competes
+        # with /start, search and callback queries for CPU and MongoDB time.
+        # Admins can still run it from the dashboard whenever a repair is needed.
+        if STARTUP_GROUP_SCAN:
+            try:
+                if start_group_scan():
+                    logger.info("🗂️ Startup group scan scheduled in background")
+            except Exception as e:
+                logger.error(f"Could not schedule startup group scan: {e}")
+        else:
+            logger.info("🗂️ Startup group scan disabled (set STARTUP_GROUP_SCAN=true to enable)")
 
         # 8. Start Background Automation Tasks (Premium Engine & Auto-Delete Sync)
         self._premium_task = asyncio.create_task(check_premium_expired(self))

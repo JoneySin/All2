@@ -232,9 +232,10 @@ class Database:
         # ✅ PYMONGO ASYNC ENGINE: कोएब आइडल थ्रॉटलिंग और कनेक्शन DROP से सुरक्षित ट्यूनिंग
         self.client = AsyncMongoClient(
             DATABASE_URL, 
-            minPoolSize=0,            # आइडल टाइम पर 0 कनेक्शन (RAM 100% सेफ)
+            minPoolSize=2,            # 2 warm connections: first click/query doesn't pay TLS setup
             maxPoolSize=15,           # हैवी ट्रैफिक के लिए 15 कनेक्शंस पूल
-            maxIdleTimeMS=30000,      # 30 सेकंड बाद कनेक्शन ऑटो-कूलडाउन
+            maxIdleTimeMS=300000,     # 5 मिनट तक idle sockets warm रहें (पहले 30s)
+            waitQueueTimeoutMS=10000, # pool saturated हो तो 10s में fail, forever hang नहीं
             serverSelectionTimeoutMS=5000
         )
         self.db = self.client[DATABASE_NAME]
@@ -399,7 +400,9 @@ class Database:
 
     async def get_expired_delete_tasks(self):
         now = get_local_now()
-        return self.delete_queue.find({"delete_at": {"$lte": now}})
+        # Bounded batch: a large backlog must not monopolise the event loop and
+        # delay /start, searches or callback edits. The next 15 s cycle continues.
+        return self.delete_queue.find({"delete_at": {"$lte": now}}).sort("delete_at", 1).limit(100)
 
     async def remove_from_delete_queue(self, chat_id, message_id):
         # डिलीट टास्क रिमूव करते समय भी सीधे यूनिक कॉम्बो की को टारगेट करें
