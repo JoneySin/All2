@@ -2,8 +2,10 @@ import asyncio
 import random
 import logging
 from time import time as time_now
-from hydrogram import Client, filters, enums
-from hydrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from pyrogram import Client, filters, enums
+from pyrogram.errors import FloodWait
+from pyrogram.types import WebAppInfo
+from keyboards import ui_button, ui_keyboard
 
 from Script import script
 # ✅ DRY: directory + post-category counts अब ia_filterdb के shared helpers से आते हैं
@@ -12,6 +14,7 @@ from Script import script
 from database.ia_filterdb import (
     db_count_documents, get_file_details, delete_files,
     get_directory_counts, get_post_category_counts,
+    get_group_for_file, get_files_by_ids, get_groups_by_ids,
 )
 from database.users_chats_db import db
 
@@ -41,6 +44,62 @@ def _build_mini_app_url(base_url: str) -> str:
     return f"{url.rstrip('/')}/miniapp"
 
 MINI_APP_URL = _build_mini_app_url(URL)
+
+# One bulk send per user+group at a time: repeated taps must not flood Telegram.
+_GROUP_SEND_ACTIVE = set()
+
+
+def _clear_web_search_cache():
+    """Drop web catalogue/page caches after a bot-side delete or restore."""
+    try:
+        from web.search_api import _invalidate_search_caches
+        _invalidate_search_caches()
+    except Exception:
+        pass
+
+
+async def load_send_all_setting():
+    """Load the admin's global Send All switch after the DB is ready."""
+    temp.SEND_ALL_ENABLED = await db.get_send_all_enabled()
+    logger.info("📦 Send All group buttons: %s", "ON" if temp.SEND_ALL_ENABLED else "OFF")
+
+
+def _group_member_order(group):
+    """Members in episode order for series groups, saved order otherwise."""
+    members = list(dict.fromkeys(str(x) for x in (group.get("members") or [])))
+    if (group.get("group_type") or "quality") != "series":
+        return members
+    saved = [str(x) for x in (group.get("episode_order") or [])]
+    return list(dict.fromkeys([x for x in saved if x in members] + members))
+
+
+def _group_action_label(group):
+    count = len({str(x) for x in (group.get("members") or [])})
+    if (group.get("group_type") or "quality") == "series":
+        return f"⚡Send All {count} Episode"
+    return f"♻️Send All {count} Quality"
+
+
+def _group_button(group):
+    """One blue action row for a multi-file quality/series group.
+
+    Watch/Download is green, so Send All stays blue to keep the stacked
+    buttons visually distinct (a row-level colour check cannot see other rows).
+    """
+    if not group or len(group.get("members") or []) < 2:
+        return None
+    return [ui_button(
+        _group_action_label(group),
+        callback_data=f"grp#{group['_id']}",
+        style=enums.ButtonStyle.PRIMARY,
+    )]
+
+
+def _file_caption(template, file):
+    return (template or script.FILE_CAPTION).format(
+        file_name=str(file.get("file_name", "File")),
+        file_size=get_size(file.get("file_size") or 0),
+    )
 
 
 # ─────────────────────────────────────────────
@@ -127,8 +186,8 @@ async def start(client, message):
         return await message.reply_photo(
             random.choice(PICS),
             caption=script.PLAN_TXT.format(10, "@admin"),
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("💎 Buy Premium Plan", callback_data="activate_plan")
+            reply_markup=ui_keyboard([[
+                ui_button("💎 Buy Premium Plan", callback_data="activate_plan")
             ]])
         )
 
@@ -151,9 +210,14 @@ async def start(client, message):
                     file_size=get_size(file.get('file_size', 0))
                 )
 
-                btn = [[InlineKeyboardButton('❌ Close', callback_data=f'close_{message.from_user.id}')]]
+                group = await get_group_for_file(file_id, file.get("group_id")) if temp.SEND_ALL_ENABLED else None
+                btn = []
+                group_row = _group_button(group) if temp.SEND_ALL_ENABLED else None
+                if group_row:
+                    btn.append(group_row)
                 if IS_STREAM:
-                    btn.insert(0, [InlineKeyboardButton("▶️ Watch / Download", callback_data=f"stream#{file_id}")])
+                    btn.append([ui_button("▶️ Watch / Download", callback_data=f"stream#{file_id}")])
+                btn.append([ui_button('❌ Close', callback_data=f'close_{message.from_user.id}')])
 
                 target_media = file.get('file_ref') if file.get('file_ref') else file_id
 
@@ -161,9 +225,8 @@ async def start(client, message):
                     message.chat.id,
                     target_media,
                     caption=caption,
-                    reply_markup=InlineKeyboardMarkup(btn)
+                    reply_markup=ui_keyboard(btn)
                 )
-
                 if PM_FILE_DELETE_TIME > 0:
                     del_msg = await msg.reply(
                         f"⚠️ This message will delete in {get_readable_time(PM_FILE_DELETE_TIME)}."
@@ -182,18 +245,150 @@ async def start(client, message):
         return
 
     btn = [
-        [InlineKeyboardButton("🍿 Open Mini App", web_app=WebAppInfo(url=MINI_APP_URL))],
-        [InlineKeyboardButton("+ Add to Group +", url=f"https://t.me/{temp.U_NAME}?startgroup=start")],
-        [InlineKeyboardButton("👨‍🚒 Help Menu", callback_data="help"), InlineKeyboardButton("📊 Global Stats", callback_data="stats")]
+        [ui_button("🍿 Open Mini App", web_app=WebAppInfo(url=MINI_APP_URL))],
+        [ui_button("+ Add to Group +", url=f"https://t.me/{temp.U_NAME}?startgroup=start")],
+        [ui_button("👨‍🚒 Help Menu", callback_data="help"), ui_button("📊 Global Stats", callback_data="stats")]
     ]
     if message.from_user.id not in ADMINS:
-        btn.append([InlineKeyboardButton("💎 Premium Duration", callback_data="myplan")])
+        btn.append([ui_button("💎 Premium Duration", callback_data="myplan")])
 
     await message.reply_photo(
         random.choice(PICS),
         caption=script.START_TXT.format(message.from_user.mention, get_wish()),
-        reply_markup=InlineKeyboardMarkup(btn)
+        reply_markup=ui_keyboard(btn)
     )
+
+
+# ─────────────────────────────────────────────
+# ⚙️ SEND ALL FEATURE SWITCH (BOT ADMIN)
+# ─────────────────────────────────────────────
+@Client.on_message(filters.command(["sendall", "send_all"]) & filters.user(ADMINS))
+async def send_all_toggle(client, message):
+    arg = message.command[1].lower() if len(message.command) > 1 else ""
+    current = "ON" if temp.SEND_ALL_ENABLED else "OFF"
+    if arg not in ("on", "off"):
+        return await message.reply(
+            "⚙️ <b>Send All Buttons</b>\n\n"
+            f"Current: <b>{current}</b>\n\n"
+            "Usage: <code>/sendAll on</code> or <code>/sendAll off</code>"
+        )
+
+    enabled = arg == "on"
+    temp.SEND_ALL_ENABLED = enabled
+    try:
+        await db.set_send_all_enabled(enabled)
+    except Exception as e:
+        logger.error("Could not persist Send All setting: %s", e)
+        return await message.reply(
+            f"⚠️ Send All is <b>{'ON' if enabled else 'OFF'}</b> for this run, "
+            "but saving it to the database failed. It may reset after a restart."
+        )
+    await message.reply(
+        f"✅ Send All buttons are now <b>{'ON' if enabled else 'OFF'}</b>."
+    )
+
+
+# ─────────────────────────────────────────────
+# 📦 SEND A WHOLE QUALITY / SERIES GROUP
+# ─────────────────────────────────────────────
+@Client.on_callback_query(filters.regex(r"^grp#"))
+async def send_group_files(client, query):
+    """Send every member of the file's group to the user who tapped the button."""
+    if not query.message or not query.from_user:
+        return await query.answer("❌ Invalid request.", show_alert=True)
+
+    uid = query.from_user.id
+    if not temp.SEND_ALL_ENABLED:
+        return await query.answer("❌ Send All buttons are turned off by the admin.", show_alert=True)
+    if IS_PREMIUM and uid not in ADMINS and not await is_premium(uid, client):
+        return await query.answer("❌ Premium Expired!", show_alert=True)
+
+    gid = query.data.split("#", 1)[1].strip() if "#" in query.data else ""
+    if not gid:
+        return await query.answer("❌ Group not found.", show_alert=True)
+
+    send_key = (uid, gid)
+    if send_key in _GROUP_SEND_ACTIVE:
+        return await query.answer("⏳ This group is already being sent.", show_alert=True)
+    _GROUP_SEND_ACTIVE.add(send_key)
+
+    try:
+        groups = await get_groups_by_ids([gid])
+        group = groups[0] if groups else None
+        if not group:
+            return await query.answer("❌ This group is no longer available.", show_alert=True)
+
+        order = _group_member_order(group)
+        if len(order) < 2:
+            return await query.answer("❌ This group has only one file.", show_alert=True)
+
+        await query.answer(
+            f"📤 Sending {len(order)} files…" if query.message.chat.id == uid
+            else "📩 Check your PM — sending all files…"
+        )
+
+        files = await get_files_by_ids(order)
+        by_id = {str(doc.get("_id")): doc for doc in files if doc}
+        ordered = [by_id[fid] for fid in order if fid in by_id]
+        if not ordered:
+            return
+
+        settings = await get_settings(query.message.chat.id)
+        template = settings.get("caption", script.FILE_CAPTION)
+        target = uid
+        sent = 0
+        sent_messages = []
+
+        for file in ordered:
+            fid = str(file.get("_id"))
+            buttons = [[ui_button("❌ Close", callback_data=f"close_{uid}")]]
+            if IS_STREAM:
+                buttons.insert(0, [ui_button("▶️ Watch / Download", callback_data=f"stream#{fid}")])
+            media = file.get("file_ref") if file.get("file_ref") else fid
+            caption = _file_caption(template, file)
+
+            message = None
+            for attempt in range(2):
+                try:
+                    message = await client.send_cached_media(
+                        target, media, caption=caption, reply_markup=ui_keyboard(buttons)
+                    )
+                    break
+                except FloodWait as e:
+                    if attempt:
+                        logger.warning("Group send FloodWait retry failed for %s", fid)
+                        break
+                    await asyncio.sleep(e.value)
+                except Exception as e:
+                    logger.warning("Group send failed for %s: %s", fid, e)
+                    break
+            if message is not None:
+                sent += 1
+                sent_messages.append(message)
+
+        if not sent:
+            try:
+                await client.send_message(
+                    query.message.chat.id,
+                    "❌ Files could not be sent. Start the bot in PM and try again.",
+                )
+            except Exception:
+                pass
+            return
+
+        if PM_FILE_DELETE_TIME > 0 and sent_messages:
+            try:
+                note = await client.send_message(
+                    target,
+                    f"⚠️ These {sent} files will be deleted in {get_readable_time(PM_FILE_DELETE_TIME)}.",
+                )
+                for message in sent_messages:
+                    await db.add_to_delete_queue(target, message.id, PM_FILE_DELETE_TIME)
+                await db.add_to_delete_queue(target, note.id, PM_FILE_DELETE_TIME)
+            except Exception as e:
+                logger.warning("Could not schedule bulk file deletion: %s", e)
+    finally:
+        _GROUP_SEND_ACTIVE.discard(send_key)
 
 
 # ─────────────────────────────────────────────
@@ -210,9 +405,9 @@ async def stats(_, message):
         stats_text, _ = await build_stats_texts()
 
         buttons = [
-            [InlineKeyboardButton("❌ CLOSE PANEL", callback_data=f"close_{message.from_user.id}")]
+            [ui_button("❌ CLOSE PANEL", callback_data=f"close_{message.from_user.id}")]
         ]
-        await msg.edit(stats_text, reply_markup=InlineKeyboardMarkup(buttons))
+        await msg.edit(stats_text, reply_markup=ui_keyboard(buttons))
         
     except Exception as ex:
         await msg.edit(f"❌ **System Error during Stats generation:**\n\n<code>{ex}</code>\n\n_Please check your script.py placeholders._")
@@ -229,10 +424,13 @@ async def delete_file_cmd(client, message):
     if storage not in ["primary", "cloud", "archive"]:
         return await message.reply("❌ Invalid Storage! Use: primary, cloud, archive")
 
-    msg = await message.reply("🗑 Deleting target strings...")
-    count = await delete_files(" ".join(message.command[2:]), storage)
+    msg = await message.reply("♻️ Moving matching files to Recycle Bin...")
+    count = await delete_files(" ".join(message.command[2:]), storage,
+                               deleted_by=message.from_user.id)
+    _clear_web_search_cache()
     await msg.edit(
-        f"✅ Deleted `{count}` files from `{storage}`." if count else "❌ No files found match."
+        f"♻️ Moved `{count}` files to Recycle Bin from `{storage}`."
+        if count else "❌ No files found match."
     )
 
 
@@ -245,10 +443,11 @@ async def delete_all_cmd(client, message):
         return await message.reply("❌ Invalid Collection Target!")
 
     await message.reply(
-        f"⚠️ <b>DANGER ZONE WARNING!</b>\n\nYou are wiping out ALL documents from `{storage}`.\nAre you absolutely sure?",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("💥 CONFIRM DESTROY ALL", callback_data=f"confirm_del#{storage}"),
-            InlineKeyboardButton("❌ ABORT", callback_data=f"close_{message.from_user.id}")
+        f"⚠️ <b>DANGER ZONE WARNING!</b>\n\nYou are moving ALL documents from `{storage}` to the Recycle Bin.\nThey can be restored from Web → Recycle Bin.\nAre you absolutely sure?",
+        reply_markup=ui_keyboard([[
+            ui_button("♻️ MOVE ALL TO RECYCLE BIN", callback_data=f"confirm_del#{storage}",
+                      style=enums.ButtonStyle.DANGER),
+            ui_button("❌ ABORT", callback_data=f"close_{message.from_user.id}")
         ]])
     )
 
@@ -261,10 +460,9 @@ async def link_generator(client, message):
     if IS_PREMIUM and message.from_user.id not in ADMINS and not await is_premium(message.from_user.id, client):
         return await message.reply(
             "🔒 **Premium Feature**\n\nOnly Admins and active Premium Members can generate direct links.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("💎 Buy Premium Plan", callback_data="activate_plan")
+            reply_markup=ui_keyboard([[
+                ui_button("💎 Buy Premium Plan", callback_data="activate_plan")
             ]]),
-            quote=True
         )
 
     media = (
@@ -273,7 +471,7 @@ async def link_generator(client, message):
         getattr(message.reply_to_message, 'audio', None)
     )
     if not media:
-        return await message.reply("❌ **No streamable media found in the replied message.**", quote=True)
+        return await message.reply("❌ **No streamable media found in the replied message.**")
 
     # ⏳ Link validity: premium user = fixed 1 din | admin = /link 12h, /link 3d, /link 0 (kabhi nahi)
     ttl = USER_LINK_TTL
@@ -285,12 +483,11 @@ async def link_generator(client, message):
             secs = await get_seconds(arg)
             if secs <= 0:
                 return await message.reply(
-                    "❌ **Usage:** `/link` (default 1 day)\n`/link 12h` | `/link 3d` | `/link 30m` | `/link 0` (never expire)",
-                    quote=True
+                    "❌ **Usage:** `/link` (default 1 day)\n`/link 12h` | `/link 3d` | `/link 30m` | `/link 0` (never expire)"
                 )
             ttl = min(secs, MAX_ADMIN_TTL)
 
-    msg = await message.reply("⏳ **Injecting into Stream Stream Tunnel...**", quote=True)
+    msg = await message.reply("⏳ **Injecting into Stream Stream Tunnel...**")
     try:
         copied = await message.reply_to_message.copy(BIN_CHANNEL)
         if ttl is not None:
@@ -300,14 +497,14 @@ async def link_generator(client, message):
         valid_txt = "Never" if ttl is None else get_readable_time(ttl)
         btn = [
             [
-                InlineKeyboardButton("🍿 WATCH ONLINE", url=f"{URL}watch/{copied.id}?{q}"),
-                InlineKeyboardButton("📥 FAST DOWNLOAD", url=f"{URL}download/{copied.id}?{q}")
+                ui_button("🍿 WATCH ONLINE", url=f"{URL}watch/{copied.id}?{q}"),
+                ui_button("📥 FAST DOWNLOAD", url=f"{URL}download/{copied.id}?{q}")
             ],
-            [InlineKeyboardButton("❌ CLOSE ❌", callback_data=f"close_{message.from_user.id}")]
+            [ui_button("❌ CLOSE ❌", callback_data=f"close_{message.from_user.id}")]
         ]
         await msg.edit_text(
             f"<i><b>Direct High-Speed Pipeline Ready ⚡</b></i>\n⏳ <b>Valid for:</b> <code>{valid_txt}</code>",
-            reply_markup=InlineKeyboardMarkup(btn)
+            reply_markup=ui_keyboard(btn)
         )
     except Exception as e:
         await msg.edit_text(f"❌ **Error generating links:** `{e}`")
@@ -321,36 +518,40 @@ async def ui_cb(client, query):
     data = query.data
     buttons_markup = None
 
+    # Answer first: Telegram keeps the button's loading spinner until a
+    # callback query is acknowledged. Help/Stats must not wait for DB work.
+    if data == "admin_cmds" and query.from_user.id not in ADMINS:
+        return await query.answer("❌ You are not an Admin!", show_alert=True)
+    await query.answer()
+
     if data == "back_start":
         text = script.START_TXT.format(query.from_user.mention, get_wish())
         btn = [
-            [InlineKeyboardButton("🍿 Open Mini App", web_app=WebAppInfo(url=MINI_APP_URL))],
-            [InlineKeyboardButton("+ Add to Group +", url=f"https://t.me/{temp.U_NAME}?startgroup=start")],
-            [InlineKeyboardButton("👨‍🚒 Help Menu", callback_data="help"), InlineKeyboardButton("📊 Global Stats", callback_data="stats")]
+            [ui_button("🍿 Open Mini App", web_app=WebAppInfo(url=MINI_APP_URL))],
+            [ui_button("+ Add to Group +", url=f"https://t.me/{temp.U_NAME}?startgroup=start")],
+            [ui_button("👨‍🚒 Help Menu", callback_data="help"), ui_button("📊 Global Stats", callback_data="stats")]
         ]
         if query.from_user.id not in ADMINS:
-            btn.append([InlineKeyboardButton("💎 Premium Duration", callback_data="myplan")])
-        buttons_markup = InlineKeyboardMarkup(btn)
+            btn.append([ui_button("💎 Premium Duration", callback_data="myplan")])
+        buttons_markup = ui_keyboard(btn)
 
     elif data == "help":
         text = script.HELP_TXT.format(query.from_user.mention)
-        btn = [[InlineKeyboardButton("👨‍💻 User Commands", callback_data="user_cmds")]]
+        btn = [[ui_button("👨‍💻 User Commands", callback_data="user_cmds")]]
         if query.from_user.id in ADMINS:
-            btn[0].append(InlineKeyboardButton("👮‍♂️ Admin Commands", callback_data="admin_cmds"))
-        btn.append([InlineKeyboardButton("⬅️ Back Menu", callback_data="back_start")])
-        buttons_markup = InlineKeyboardMarkup(btn)
+            btn[0].append(ui_button("👮‍♂️ Admin Commands", callback_data="admin_cmds"))
+        btn.append([ui_button("⬅️ Back Menu", callback_data="back_start")])
+        buttons_markup = ui_keyboard(btn)
 
     elif data == "user_cmds":
         text = script.USER_COMMAND_TXT
-        btn = [[InlineKeyboardButton("⬅️ Back Menu", callback_data="help")]]
-        buttons_markup = InlineKeyboardMarkup(btn)
+        btn = [[ui_button("⬅️ Back Menu", callback_data="help")]]
+        buttons_markup = ui_keyboard(btn)
 
     elif data == "admin_cmds":
-        if query.from_user.id not in ADMINS:
-            return await query.answer("❌ You are not an Admin!", show_alert=True)
         text = script.ADMIN_COMMAND_TXT
-        btn = [[InlineKeyboardButton("⬅️ Back Menu", callback_data="help")]]
-        buttons_markup = InlineKeyboardMarkup(btn)
+        btn = [[ui_button("⬅️ Back Menu", callback_data="help")]]
+        buttons_markup = ui_keyboard(btn)
 
     elif data == "stats":
         try:
@@ -358,11 +559,12 @@ async def ui_cb(client, query):
             # ब्लॉक दो बार चलाते थे। अब दोनों build_stats_texts() शेयर करते हैं।
             admin_text, user_text = await build_stats_texts()
             text = admin_text if query.from_user.id in ADMINS else user_text
-            buttons_markup = InlineKeyboardMarkup(
-                [[InlineKeyboardButton("⬅️ Back Menu", callback_data="back_start")]]
+            buttons_markup = ui_keyboard(
+                [[ui_button("⬅️ Back Menu", callback_data="back_start")]]
             )
         except Exception as ex:
-            return await query.answer(f"❌ Error displaying stats: {ex}", show_alert=True)
+            logger.error(f"Stats callback failed: {ex}")
+            return
 
     try:
         await query.message.edit_caption(
@@ -381,11 +583,16 @@ async def ui_cb(client, query):
 async def confirm_del(client, query):
     if query.from_user.id not in ADMINS:
         return await query.answer("❌ You are not an Admin!", show_alert=True)
+    await query.answer()
 
     storage = query.data.split("#")[1]
-    await query.message.edit("🗑 Destroying collection blocks... Please stand by.")
-    count = await delete_files("*", storage)
-    await query.message.edit(f"✅ Successfully Wiped `{count}` files from `{storage}`.")
+    await query.message.edit("♻️ Moving collection blocks to Recycle Bin... Please stand by.")
+    count = await delete_files("*", storage, deleted_by=query.from_user.id)
+    _clear_web_search_cache()
+    await query.message.edit(
+        f"♻️ Moved `{count}` files to Recycle Bin from `{storage}`. "
+        "Restore them from Web → Recycle Bin."
+    )
 
 
 @Client.on_callback_query(filters.regex(r"^stream#"))
@@ -404,12 +611,13 @@ async def stream_cb(client, query):
         q = sign_params(msg.id, STREAM_TTL)
         btn = [
             [
-                InlineKeyboardButton("🎬 Stream Online", url=f"{URL}watch/{msg.id}?{q}"),
-                InlineKeyboardButton("⚡ Download File", url=f"{URL}download/{msg.id}?{q}")
+                ui_button("🎬 Stream Online", url=f"{URL}watch/{msg.id}?{q}"),
+                ui_button("⚡ Download File", url=f"{URL}download/{msg.id}?{q}")
             ],
-            [InlineKeyboardButton("❌ Close Panel", callback_data=f"close_{query.from_user.id}")]
+            [ui_button("❌ Close Panel", callback_data=f"close_{query.from_user.id}")]
         ]
-        await query.message.edit_reply_markup(InlineKeyboardMarkup(btn))
+        # Watch/Download replaces the file card: Send All must disappear here.
+        await query.message.edit_reply_markup(ui_keyboard(btn))
     except Exception as e:
         await query.answer(f"Error: {e}", show_alert=True)
 

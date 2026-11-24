@@ -92,6 +92,7 @@ Choose a category below. 👇</b>"""
 • /prm_list - Premium users
 • /web_users - Web users
 {repair_command}• /restart - Restart bot
+• /sendAll on|off - Toggle Send All group buttons
 • /users - Export users.txt backup
 • /chats - Export chats.txt backup
 

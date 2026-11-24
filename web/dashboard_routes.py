@@ -116,7 +116,9 @@ CARD_CSS = """
 .sel-bar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:150;background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:9px 12px;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px;box-shadow:0 8px 30px rgba(0,0,0,.55);width:max-content;max-width:96vw}
 .sel-bar span{font-size:12px;font-weight:700;color:var(--text);white-space:nowrap}
 .sel-bar button,.gm-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer;color:#fff;background:var(--accent)}
-.sel-bar button.alt,.sel-bar button.sel-scan,.gm-btn.alt{background:var(--bg4)}
+.sel-bar button:hover,.gm-btn:hover{background:var(--accent-hover)}
+.sel-bar button.alt,.sel-bar button.sel-scan,.gm-btn.alt{background:var(--bg4);color:var(--text);border:1px solid var(--border)}
+.sel-bar button.alt:hover,.sel-bar button.sel-scan:hover,.gm-btn.alt:hover{background:var(--bg3);border-color:var(--accent);color:var(--accent)}
 .sel-fab{position:fixed;right:16px;bottom:18px;z-index:140;background:var(--accent);color:#fff;border:none;border-radius:999px;padding:11px 16px;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(229,9,20,.45)}
 .gm-card{max-width:620px!important;padding:24px!important}
 .gm-saving .gm-card{pointer-events:none}
@@ -138,6 +140,10 @@ CARD_CSS = """
 .gm-type-grid input:focus-visible+.gm-type-option{outline:2px solid var(--accent);outline-offset:2px}
 .gm-note{font-size:11px;color:var(--muted);line-height:1.5;margin-top:8px}
 .gm-join-note{color:#f9c87a;background:rgba(217,155,59,.1);border:1px solid rgba(217,155,59,.3);padding:9px;border-radius:8px}
+.light .gm-eyebrow{color:#a84606}
+.light .gm-join-note{color:#7a4b00}
+.light .merge-warning{color:#7a4b00}
+.light .gm-mem b{color:#0369a1}
 .gm-thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;max-height:210px;overflow-y:auto;overscroll-behavior:contain}
 .gm-th{position:relative;border:2px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;background:var(--bg3);aspect-ratio:16/9}
 .gm-th img{width:100%;height:100%;object-fit:cover;display:block}
@@ -153,7 +159,8 @@ CARD_CSS = """
 .gm-mem-actions{display:flex;gap:4px;flex-shrink:0}
 .gm-mem-actions button{min-width:30px;min-height:30px;background:var(--bg4);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:4px 7px;font-size:12px;font-weight:800;cursor:pointer}
 .gm-mem-actions button:disabled{opacity:.35;cursor:not-allowed}
-.gm-mem-actions button.gm-remove{background:rgba(160,8,8,.78);color:#fff}
+.gm-mem-actions button.gm-remove{background:var(--accent);color:#fff;border-color:var(--accent)}
+.gm-mem-actions button.gm-remove:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
 .gm-row{display:flex;gap:8px;margin-top:18px}
 .gm-row .gm-btn{flex:1;padding:12px}
 #gmGroupList{max-height:180px;overflow-y:auto}

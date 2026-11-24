@@ -5,9 +5,10 @@ import asyncio
 import logging
 from datetime import timedelta
 
-from hydrogram import Client, filters
-from hydrogram.errors import ListenerTimeout, MessageNotModified
-from hydrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram import Client, filters
+from pyrogram.errors import MessageNotModified
+from input_waiter import wait_for_user_message
+from keyboards import ui_button, ui_keyboard
 
 # डेटाबेस इम्पोर्ट्स
 from database.users_chats_db import db, web_db 
@@ -85,7 +86,7 @@ async def check_premium_expired(bot):
                         await bot.send_message(
                             uid, 
                             "❌ <b>Your Premium Plan has Expired!</b>\n\nRenew now to unlock access.", 
-                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Buy Premium Plan", callback_data="buy_prem")]])
+                            reply_markup=ui_keyboard([[ui_button("💎 Buy Premium Plan", callback_data="buy_prem")]])
                         )
                     except: pass
                     await db.update_plan(uid, dict(RESET_PLAN_STATUS))
@@ -95,7 +96,7 @@ async def check_premium_expired(bot):
                     if min_t <= left_mins <= max_t and not mp.get(flag):
                         if mp.get("last_reminder_id"): await safe_del(bot, uid, [mp.get("last_reminder_id")])
                         try:
-                            msg = await bot.send_message(uid, text.format(format_plan_expiry(exp)), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Renew Now", callback_data="buy_prem")]]))
+                            msg = await bot.send_message(uid, text.format(format_plan_expiry(exp)), reply_markup=ui_keyboard([[ui_button("💎 Renew Now", callback_data="buy_prem")]]))
                             mp.update({flag: True, "last_reminder_id": msg.id})
                             await db.update_plan(uid, mp)
                         except: pass
@@ -112,22 +113,22 @@ async def check_premium_expired(bot):
 @Client.on_message(filters.command("myplan") & filters.private)
 async def myplan_cmd(c, m):
     if not IS_PREMIUM: return
-    if m.from_user.id in ADMINS: return await m.reply(ADMIN_MSG, quote=True)
+    if m.from_user.id in ADMINS: return await m.reply(ADMIN_MSG)
         
     mp = await db.get_plan(m.from_user.id)
     if not mp.get("premium"):
-        return await m.reply("❌ <b>No Active Premium Subscription Found!</b>\n\nTap below to activate plan.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Buy Premium Plan", callback_data="buy_prem")]]))
+        return await m.reply("❌ <b>No Active Premium Subscription Found!</b>\n\nTap below to activate plan.", reply_markup=ui_keyboard([[ui_button("💎 Buy Premium Plan", callback_data="buy_prem")]]))
     
     exp = parse_expire_time(mp.get("expire"))
     now = get_local_now()
     left = f"{(exp - now).days} days, {(exp - now).seconds // 3600} hours" if exp else "Unknown"
-    await m.reply(f"💎 <b>Premium Status Summary</b>\n\n📦 <b>Plan Active:</b> {mp.get('plan')}\n🗓 <b>Expires On:</b> {format_plan_expiry(exp)}\n⏲ <b>Time Remaining:</b> {left}", quote=True)
+    await m.reply(f"💎 <b>Premium Status Summary</b>\n\n📦 <b>Plan Active:</b> {mp.get('plan')}\n🗓 <b>Expires On:</b> {format_plan_expiry(exp)}\n⏲ <b>Time Remaining:</b> {left}")
 
 @Client.on_message(filters.command("plan") & filters.private)
 async def plan_cmd(c, m):
     if not IS_PREMIUM: return
-    if m.from_user.id in ADMINS: return await m.reply(ADMIN_MSG, quote=True)
-    await m.reply(script.PLAN_TXT.format(PRE_DAY_AMOUNT, RECEIPT_SEND_USERNAME), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Activate Premium Now", callback_data="buy_prem")]]))
+    if m.from_user.id in ADMINS: return await m.reply(ADMIN_MSG)
+    await m.reply(script.PLAN_TXT.format(PRE_DAY_AMOUNT, RECEIPT_SEND_USERNAME), reply_markup=ui_keyboard([[ui_button("💎 Activate Premium Now", callback_data="buy_prem")]]))
 
 @Client.on_message(filters.command(["add_prm", "rm_prm"]) & filters.user(ADMINS))
 async def manage_premium(c, m):
@@ -187,18 +188,19 @@ async def list_web_users(c, m):
 async def myplan_cb(client, query):
     if query.from_user.id in ADMINS: return await query.answer(ADMIN_ALERT, show_alert=True)
     if not IS_PREMIUM: return await query.answer("Premium system disabled.", show_alert=True)
-    
+    await query.answer()
+
     mp = await db.get_plan(query.from_user.id)
-    btn = [[InlineKeyboardButton("⬅️ Back Menu", callback_data="back_start")]]
+    btn = [[ui_button("⬅️ Back Menu", callback_data="back_start")]]
     
     if not mp.get('premium'):
-        btn.insert(0, [InlineKeyboardButton('💎 Buy Premium Plan', callback_data='activate_plan')])
-        return await query.message.edit_caption("❌ No active premium subscription plan found.", reply_markup=InlineKeyboardMarkup(btn))
+        btn.insert(0, [ui_button('💎 Buy Premium Plan', callback_data='activate_plan')])
+        return await query.message.edit_caption("❌ No active premium subscription plan found.", reply_markup=ui_keyboard(btn))
     
     exp = parse_expire_time(mp.get('expire'))
     now = get_local_now()
     left = f"{(exp - now).days} days, {(exp - now).seconds//3600} hours" if exp else "Unknown"
-    await query.message.edit_caption(f"💎 <b>Premium Subscription Status</b>\n\n📦 Plan Model: {mp.get('plan')}\n⏳ Expires: {format_plan_expiry(exp)}\n⏱ Duration Left: {left}\n\nUse /plan to extend duration.", reply_markup=InlineKeyboardMarkup(btn))
+    await query.message.edit_caption(f"💎 <b>Premium Subscription Status</b>\n\n📦 Plan Model: {mp.get('plan')}\n⏳ Expires: {format_plan_expiry(exp)}\n⏱ Duration Left: {left}\n\nUse /plan to extend duration.", reply_markup=ui_keyboard(btn))
 
 def _payment_qr(upi_url):
     """Render a PNG without Pillow. Call off the event loop (pure Python work)."""
@@ -226,7 +228,7 @@ async def buy_callback(c, q):
         except MessageNotModified:
             # The prompt was already shown (e.g. retry after a timeout).
             prm_msg = q.message
-        resp = await c.listen(chat_id=q.message.chat.id, user_id=q.from_user.id, timeout=60)
+        resp = await wait_for_user_message(c, chat_id=q.message.chat.id, user_id=q.from_user.id, timeout=60)
         await safe_del(c, q.message.chat.id, [prm_msg.id, resp.id])
         days = int(resp.text)
         
@@ -237,16 +239,16 @@ async def buy_callback(c, q):
         bio = await asyncio.to_thread(_payment_qr, upi_url)
         
         qr_msg = await q.message.reply_photo(photo=bio, caption=f"💳 <b>UPI SECURE PAYMENT INSTANT GENERATED</b>\n\n» Amount To Pay: <code>₹{amount}</code>\n» Subscription Pack: <code>{days} Days</code>\n\nScan QR & pay. Then send payment screenshot here within 5 mins 👇\n\n⏳ Timeout Session: 5 mins")
-        receipt = await c.listen(chat_id=q.message.chat.id, user_id=q.from_user.id, timeout=300)
+        receipt = await wait_for_user_message(c, chat_id=q.message.chat.id, user_id=q.from_user.id, timeout=300)
         
         if not receipt.photo: return await q.message.reply("❌ <b>Invalid Asset Sent!</b> Please send valid transaction receipt photo only.")
         
         await safe_del(c, q.message.chat.id, [qr_msg.id])
         # Only tell the user it was submitted after the receipt reaches the admin.
-        await receipt.copy(RECEIPT_SEND_USERNAME, caption=f"#Payment\n👤 Profile: {q.from_user.mention} (<code>{q.from_user.id}</code>)\n💰 Amount: ₹{amount} ({days} days)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Approve Payment", callback_data=f"pay_confirm_{q.from_user.id}_{days}"), InlineKeyboardButton("❌ Reject Invoice", callback_data=f"pay_reject_{q.from_user.id}")]]))
+        await receipt.copy(RECEIPT_SEND_USERNAME, caption=f"#Payment\n👤 Profile: {q.from_user.mention} (<code>{q.from_user.id}</code>)\n💰 Amount: ₹{amount} ({days} days)", reply_markup=ui_keyboard([[ui_button("✅ Approve Payment", callback_data=f"pay_confirm_{q.from_user.id}_{days}"), ui_button("❌ Reject Invoice", callback_data=f"pay_reject_{q.from_user.id}")]]))
         VERIFY_CACHE[q.from_user.id] = (await q.message.reply("✅ <b>Transaction Sent to Admin Panel for Verification!</b>\nYour premium pack will activate shortly.")).id
     except ValueError: await q.message.reply("❌ Invalid Numeric Entry!")
-    except (asyncio.TimeoutError, ListenerTimeout):
+    except asyncio.TimeoutError:
         await q.message.reply("⏳ <b>Transaction Window Timeout!</b> Process cancelled.")
     except Exception:
         logger.exception("Payment session failed for user %s", uid)

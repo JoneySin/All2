@@ -5,6 +5,7 @@ from web.stats_routes import stats_routes
 from web.profile_routes import profile_routes
 from web.actor_routes import actor_routes  
 from web.post_routes import post_routes  # <-- नया पोस्ट रूट इम्पोर्ट किया (Step 1)
+from web.recycle_routes import recycle_routes
 
 # एक मास्टर राउट टेबल डिफाइन करें
 admin_routes = web.RouteTableDef()
@@ -17,4 +18,5 @@ def register_admin_components(app: web.Application):
     app.add_routes(profile_routes)
     app.add_routes(actor_routes)       
     app.add_routes(post_routes)        # <-- पोस्ट रूट्स को सर्वर इंजन में सिंक किया (Step 2)
+    app.add_routes(recycle_routes)
     app.add_routes(admin_routes)

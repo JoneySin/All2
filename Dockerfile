@@ -12,7 +12,7 @@ WORKDIR /app
 
 # 2. Install Essentials, tzdata + FFmpeg (RAM & Cloud Optimized)
 # tzdata: info.py के TIME_ZONE को लिनक्स ओएस स्तर पर लॉक करने के लिए
-# gcc, python3-dev, libffi-dev: uvloop और tgcrypto C-इंजन कंपाइलेशन के लिए
+# gcc, python3-dev, libffi-dev: uvloop/C-extensions कंपाइलेशन के लिए
 # ffmpeg: वीडियो थंबनेल एक्सट्रैक्टर पाइपलाइन के लिए
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \

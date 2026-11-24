@@ -3,3 +3,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 .env
+# Telegram session files contain an auth key and must never be committed/shipped.
+*.session
+*.session-journal
+*.session-wal

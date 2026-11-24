@@ -450,7 +450,7 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
                                       "episode_labels": [{"id": "a", "label": "First"}],
                                       "thumb_fid": "a", "thumb_col": "primary"})
 
-        async def delete_copy(fid, source):
+        async def delete_copy(fid, source, **kwargs):
             return bool((await self.cols[source].delete_one({"_id": fid})).deleted_count)
 
         with patch.object(api, "delete_single_file", delete_copy):
@@ -471,7 +471,7 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_delete_reports_when_post_delete_cleanup_fails(self):
         await self.insert_files(doc("a", "Film 720p.mkv", group_id="7"))
 
-        async def delete_copy(fid, source):
+        async def delete_copy(fid, source, **kwargs):
             return bool((await self.cols[source].delete_one({"_id": fid})).deleted_count)
 
         with patch.object(api, "delete_single_file", delete_copy), \
@@ -739,6 +739,8 @@ class GroupingIntegrationTests(unittest.IsolatedAsyncioTestCase):
               patch.object(bot_module, "check_premium_expired", background),
               patch.object(bot_module, "auto_delete_worker", background),
               patch.object(bot_module, "ADMINS", []), patch.object(bot_module, "LOG_CHANNEL", None),
+              patch.object(bot_module, "STARTUP_GROUP_SCAN", True),
+              patch.object(bot_module, "load_send_all_setting", AsyncMock()),
               patch.object(api, "_scan_all_groups", delayed_scan)):
             await asyncio.wait_for(instance.start(), 2)
             await asyncio.wait_for(entered.wait(), 2)

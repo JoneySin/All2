@@ -2030,7 +2030,7 @@ async def setup_stream_post(req):
 # ─────────────────────────────────────────────────────────
 @search_routes.post("/api/delete")
 async def api_delete(req):
-    role, _ = await get_user_role(req)
+    role, tg_id = await get_user_role(req)
     if role != "admin":
         return web.json_response({"error": "Core Admin Authorization Required!"}, status=403, dumps=fast_json)
     try:
@@ -2039,8 +2039,9 @@ async def api_delete(req):
         col = data.get("collection", "primary").lower()
         if col not in COLLECTIONS:
             return web.json_response({"error": "Invalid target collection!"}, status=400, dumps=fast_json)
-        # ✅ NEW: डिलीट से पहले DELETE_CHANNEL में बैकअप भेजा जाता है (delete_single_file के अंदर)
-        success = await delete_single_file(fid, col)
+        # Deletion moves the full record to the admin-only Recycle Bin; the
+        # existing DELETE_CHANNEL media backup is still sent inside the helper.
+        success = await delete_single_file(fid, col, deleted_by=tg_id)
         if success:
             try:
                 if col in FILE_COLLECTIONS:

@@ -24,7 +24,13 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
-logging.getLogger('hydrogram').setLevel(logging.ERROR)
+# Keep Pyrogram's retry warnings visible. The old ERROR level hid the real
+# reason (for example "500 RPC_CALL_FAIL") and left only the generic
+# "Failed to invoke auth.ImportBotAuthorization" at the top level. Set
+# PYROGRAM_LOG_LEVEL=INFO for full session/connection diagnostics.
+_pyro_level = getattr(logging, os.environ.get("PYROGRAM_LOG_LEVEL", "WARNING").upper(),
+                      logging.WARNING)
+logging.getLogger('pyrogram').setLevel(_pyro_level)
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 logging.getLogger('aiohttp.server').setLevel(logging.WARNING)
 
@@ -34,19 +40,21 @@ logger = logging.getLogger(__name__)
 # CORE IMPORTS
 # ==========================================================
 from aiohttp import web
-from hydrogram import Client, types, StopPropagation, idle 
-from hydrogram.errors import FloodWait 
-from hydrogram.handlers import MessageHandler 
+from pyrogram import Client, types, StopPropagation, idle
+from pyrogram.errors import FloodWait
+from pyrogram.handlers import MessageHandler
 from web import web_app
 from web.search_api import start_group_scan, stop_group_scan
 from info import (
-    API_ID, API_HASH, BOT_TOKEN, PORT, ADMINS, 
-    LOG_CHANNEL, TIME_ZONE
+    API_ID, API_HASH, BOT_TOKEN, PORT, ADMINS,
+    LOG_CHANNEL, TIME_ZONE, STARTUP_GROUP_SCAN,
+    PROXY, SESSION_STRING, SESSION_DIR, AUTH_RETRY_ATTEMPTS, AUTH_RETRY_DELAY
 )
 from utils import temp
 from database.users_chats_db import db
 from database.ia_filterdb import ensure_indexes
 from plugins.premium import check_premium_expired
+from plugins.commands import load_send_all_setting
 
 # ❌ DEAD CODE REMOVED: यहाँ एक `/health` route था, पर web/dashboard_routes.py में
 # भी वही route रजिस्टर है। web/__init__.py का register_admin_components() इस
@@ -99,25 +107,108 @@ async def auto_delete_worker(bot):
 # ==========================================================
 class Bot(Client):
     def __init__(self):
+        # Prefer an explicit path; otherwise use a mounted /data volume when
+        # one exists so the auth key survives Koyeb redeploys.
+        session_dir = SESSION_DIR or ("/data" if os.path.isdir("/data") else ".")
+        try:
+            os.makedirs(session_dir, exist_ok=True)
+        except OSError as e:
+            logger.error(f"SESSION_DIR is not writable ({session_dir}): {e}")
+            raise
         super().__init__(
             name="Auto_Filter_Bot",
             api_id=API_ID,
             api_hash=API_HASH,
             bot_token=BOT_TOKEN,
-            plugins={"root": "plugins"}
+            plugins={"root": "plugins"},
+            workdir=session_dir,
+            proxy=PROXY or None,
+            session_string=SESSION_STRING or None,
         )
         self._runner = None 
         self._premium_task = None 
         self._delete_task = None  
 
-    async def start(self):
-        # 1. Start Pyrogram/Hydrogram Client Instance
-        await super().start()
+    async def _start_web(self):
+        """Bind the health/web port before Telegram auth.
+
+        Koyeb marks an instance unhealthy when nothing listens on PORT. Starting
+        this first means an auth retry (or a Telegram-side outage) no longer
+        causes a restart loop that asks Telegram for a fresh auth key each time.
+        """
+        if getattr(self, "_runner", None):
+            return
         temp.START_TIME = time.time()
+        self._runner = web.AppRunner(web_app, access_log=None)
+        await self._runner.setup()
+        await web.TCPSite(self._runner, "0.0.0.0", PORT).start()
+        logger.info(f"🌐 Web Server & Mini App Stream Live on Port {PORT}")
+
+    async def _start_telegram(self):
+        """Start Kurigram, retrying only transport/Telegram-side failures.
+
+        Invalid credentials are deliberately not retried: Pyrogram raises a
+        BadRequest for those, which should fail fast with an actionable message.
+        """
+        attempts = max(1, AUTH_RETRY_ATTEMPTS)
+        configured_plugins = getattr(self, "plugins", None)
+        for attempt in range(1, attempts + 1):
+            # Client.start() loads plugins itself. On a retry the first attempt
+            # already registered those handlers, so loading them again would
+            # duplicate every command in the dispatcher.
+            if attempt > 1:
+                self.plugins = None
+            try:
+                await super().start()
+                return
+            except FloodWait as e:
+                wait = max(30, int(getattr(e, "value", 0) or 0))
+                if attempt >= attempts:
+                    logger.error(
+                        "Telegram FloodWait during startup: no retries left after %ss. "
+                        "Do not redeploy repeatedly; it only extends the wait.", wait)
+                    raise
+                logger.error(
+                    "Telegram FloodWait during startup: waiting %ss before retry %s/%s. "
+                    "Do not redeploy repeatedly; it only extends the wait.", wait, attempt, attempts
+                )
+                await asyncio.sleep(wait)
+            except (TimeoutError, OSError) as e:
+                detail = str(e) or repr(e)
+                if attempt >= attempts:
+                    logger.error(
+                        "Telegram authorization failed after %s attempt(s): %s. "
+                        "This is a Telegram/network failure before any MongoDB or web "
+                        "startup; check the Pyrogram retry lines above.",
+                        attempt, detail,
+                    )
+                    raise
+                delay = max(5, AUTH_RETRY_DELAY * attempt)
+                logger.error(
+                    "Telegram authorization attempt %s/%s failed: %s. "
+                    "This is a Telegram/network failure before any MongoDB or web "
+                    "startup; check the Pyrogram retry lines above. Retrying in %ss.",
+                    attempt, attempts, detail, delay,
+                )
+                await asyncio.sleep(delay)
+            finally:
+                self.plugins = configured_plugins
+
+    async def start(self):
+        # 1. Health/web first so Koyeb does not kill an instance that is waiting
+        # for Telegram's auth backend.
+        await self._start_web()
+
+        # 2. Start Kurigram Client Instance (with bounded transport retries).
+        await self._start_telegram()
 
         # 2. Database Indexes Sync (Makkhan DB Tuning)
         await ensure_indexes()
         await db._ensure_indexes() 
+        try:
+            await load_send_all_setting()
+        except Exception as e:
+            logger.warning(f"Could not load Send All setting: {e}; keeping default ON")
         logger.info("✅ Database Connections & Indexes Fully Synced")
 
         # 3. Load banned users & chats into Runtime Buckets
@@ -173,19 +264,17 @@ class Bot(Client):
         temp.U_NAME = me.username
         temp.B_NAME = me.first_name
 
-        # 7. Start Web Server with Health Routes (Combined Non-Blocking Engine Loop)
-        self._runner = web.AppRunner(web_app, access_log=None)
-        await self._runner.setup()
-        await web.TCPSite(self._runner, "0.0.0.0", PORT).start()
-        logger.info(f"🌐 Web Server & Mini App Stream Live on Port {PORT}")
-
-        # Run the existing safe full-library scan in the background on every start.
-        # The admin scan button shares this reservation and status.
-        try:
-            if start_group_scan():
-                logger.info("🗂️ Startup group scan scheduled in background")
-        except Exception as e:
-            logger.error(f"Could not schedule startup group scan: {e}")
+        # The full-library scan is opt-in: on a small Koyeb worker it competes
+        # with /start, search and callback queries for CPU and MongoDB time.
+        # Admins can still run it from the dashboard whenever a repair is needed.
+        if STARTUP_GROUP_SCAN:
+            try:
+                if start_group_scan():
+                    logger.info("🗂️ Startup group scan scheduled in background")
+            except Exception as e:
+                logger.error(f"Could not schedule startup group scan: {e}")
+        else:
+            logger.info("🗂️ Startup group scan disabled (set STARTUP_GROUP_SCAN=true to enable)")
 
         # 8. Start Background Automation Tasks (Premium Engine & Auto-Delete Sync)
         self._premium_task = asyncio.create_task(check_premium_expired(self))
@@ -221,6 +310,7 @@ class Bot(Client):
         
         if getattr(self, '_runner', None):
             await self._runner.cleanup()
+            self._runner = None
             logger.info("✅ Web App Runner Cleaned Up")
 
         await stop_group_scan()

@@ -113,10 +113,15 @@ CSS = """
 .file-poster-trigger:focus-visible,.group-poster-trigger:focus-visible{outline:3px solid var(--accent);outline-offset:-4px}
 .fc-name:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .btn-edit,.btn-del{flex:1;padding:6px 0;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;transition:background .12s,transform .1s;border:none}
-.btn-edit{background:rgba(42,42,48,.90);backdrop-filter:blur(10px);color:#fff;border:1px solid rgba(255,255,255,.18)}
-.btn-edit:hover{background:rgba(80,80,88,.95)}
-.btn-del{background:rgba(160,8,8,.78);backdrop-filter:blur(10px);color:#fff;border:1px solid rgba(229,9,20,.45)}
-.btn-del:hover{background:rgba(229,9,20,.92)}
+.btn-edit{background:rgba(255,255,255,.18);backdrop-filter:blur(10px);color:var(--text);border:1px solid rgba(255,255,255,.34)}
+.btn-edit:hover{background:rgba(255,255,255,.30);border-color:rgba(255,255,255,.55)}
+.btn-del{background:rgba(229,9,20,.88);backdrop-filter:blur(10px);color:#fff;border:1px solid rgba(255,255,255,.22)}
+.btn-del:hover{background:#ff2330;border-color:#ff2330}
+/* Light theme: frosted-white edit controls, solid red destructive controls. */
+.light .btn-edit{background:rgba(255,255,255,.96);color:var(--text);border-color:rgba(10,10,12,.16);box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.light .btn-edit:hover{background:var(--bg3);color:var(--accent);border-color:var(--accent)}
+.light .btn-del{background:var(--accent);color:#fff;border-color:var(--accent)}
+.light .btn-del:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
 
 /* ── MASTER UNIVERSAL ASSET CARD & GRID (DRY OPTIMIZED & NEW ANIMATIONS) ── */
 .res-grid{display:grid;grid-template-columns:1fr;gap:4px;margin-bottom:24px}
@@ -283,11 +288,11 @@ document.addEventListener('click',function(){
 });
 
 async function deleteFile(fid,col){
-    if(!confirm('Are you sure you want to delete this file?'))return;
+    if(!confirm('Move this file to the Recycle Bin? Admin can restore it later.'))return;
     try{
         var r=await fetch('/api/delete',{method:'POST',body:JSON.stringify({file_id:fid,collection:col}),headers:{'Content-Type':'application/json'}});
         var res=await r.json();
-        if(res.success){ showToast('✅ File deleted successfully!'); refreshGridAfterEdit(); }
+        if(res.success){ showToast('♻️ File moved to Recycle Bin'); refreshGridAfterEdit(); }
         else{ showToast(res.error||'Delete failed!','error'); }
     }catch(e){showToast('Delete failed','error');}
 }
@@ -561,6 +566,7 @@ NAV_MENU = (
     ("posts", "/posts", "📝", "Posts"),
     ("actors", "/actors", "🎭", "Actors"),
     ("stats", "/stats", "📊", "Database Stats"),
+    ("recycle", "/admin/recycle", "♻️", "Recycle Bin"),
     ("profile", "/profile", "⚙️", "Profile Settings"),
 )
 
@@ -633,7 +639,7 @@ def build_page(title, body, cls="", active_tab="", role=None):
         links = "".join(
             f'<a href="{href}" class="sb-link {"active" if active_tab == tab else ""}"><span class="sb-icon" aria-hidden="true">{icon}</span><span>{label}</span></a>'
             for tab, href, icon, label in NAV_MENU
-            if role == "admin" or tab != "stats"   # Database Stats admin-only है
+            if role == "admin" or tab not in ("stats", "recycle")   # Stats + Recycle Bin admin-only
         )
         nav = _NAV_SHELL.format(links=links)
     else:

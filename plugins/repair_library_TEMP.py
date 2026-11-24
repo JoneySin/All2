@@ -11,9 +11,9 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
-from hydrogram import Client, filters
-from hydrogram.errors import BadRequest, FloodWait, MessageNotModified
-from hydrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram import Client, filters
+from pyrogram.errors import BadRequest, FloodWait, MessageNotModified
+from keyboards import ui_button, ui_keyboard
 
 from database.ia_filterdb import (
     FILE_COLLECTIONS, META_SCHEMA_VERSION, apply_media_meta_update, groups,
@@ -66,7 +66,7 @@ def _needs_meta(doc):
 
 
 def _buttons(run):
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Cancel repair", callback_data=f"repair_cancel:{run.token}")]])
+    return ui_keyboard([[ui_button("🛑 Cancel repair", callback_data=f"repair_cancel:{run.token}")]])
 
 
 def _summary(run, heading):

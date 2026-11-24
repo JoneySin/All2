@@ -61,9 +61,11 @@ function inlinePlayerDownloadLink(download){
     if(!link)return;
     if(download){link.href=download;link.hidden=false;}else{link.hidden=true;link.removeAttribute('href');}
 }
-async function inlinePlayerPrepareStream(fileId){
-    var response=await fetch('/setup_stream',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({file_id:fileId,mode:'inline'}),signal:inlinePlayerAbort.signal});
+async function inlinePlayerPrepareStream(fileId,recycle){
+    var endpoint=recycle?'/api/recycle/stream':'/setup_stream';
+    var payload=recycle?{id:fileId}:{file_id:fileId,mode:'inline'};
+    var response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(payload),signal:inlinePlayerAbort.signal});
     var data=await response.json().catch(function(){return {};});
     if(!response.ok||data.error)throw new Error(data.error||'Unable to prepare this video.');
     var url=new URL(data.url,window.location.origin);
@@ -222,7 +224,7 @@ async function switchInlinePlayer(fileId,title,resetPosition){
         return false;
     }
 }
-async function openInlinePlayer(fileId,title){
+async function openInlinePlayer(fileId,title,recycle){
     var modal=document.getElementById('inlinePlayer'),video=document.getElementById('inlinePlayerVideo');
     var status=document.getElementById('inlinePlayerStatus');
     if(!modal||!fileId)return;
@@ -232,13 +234,14 @@ async function openInlinePlayer(fileId,title){
     inlinePlayerAbort=new AbortController();
     video.pause();video.removeAttribute('src');video.load();
     inlinePlayerFileId=fileId;inlinePlayerSwitches=null;inlinePlayerEpisode='';
+    inlinePlayerPaintSwitches();
     document.getElementById('inlinePlayerTitle').textContent=title||'Video';
     status.className='inline-player-status';status.textContent='Preparing your video…';
     inlinePlayerDownloadLink('');
     modal.hidden=false;modal.querySelector('.inline-player-close').focus();
-    inlinePlayerLoadSwitches(fileId,request);
+    if(!recycle)inlinePlayerLoadSwitches(fileId,request);
     try{
-        var prepared=await inlinePlayerPrepareStream(fileId);
+        var prepared=await inlinePlayerPrepareStream(fileId,!!recycle);
         if(request!==inlinePlayerRequest||modal.hidden)return;
         inlinePlayerDownloadLink(prepared.download);
         video.src=prepared.src;
