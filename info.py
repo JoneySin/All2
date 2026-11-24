@@ -183,6 +183,7 @@ else:
 # ─────────────────────────────────────────────
 # 💎 PREMIUM PAYMENT CONFIGURATIONS
 # ─────────────────────────────────────────────
+# Space- or comma-separated Telegram reaction emojis; empty disables them.
 REACTIONS = parse_reactions()
 
 PRE_DAY_AMOUNT = int(environ.get("PRE_DAY_AMOUNT", 10))

@@ -39,6 +39,8 @@ class temp(object):
 # ─────────────────────────────────────────────
 # 💬 TELEGRAM MESSAGE REACTIONS (optional, config-driven)
 # ─────────────────────────────────────────────
+_reaction_warnings = set()
+
 async def react_to_message(message, reactions, big=False):
     """React with one random configured emoji; never break the caller.
 
@@ -58,7 +60,14 @@ async def react_to_message(message, reactions, big=False):
     except FloodWait as e:
         logger.warning("Reaction skipped: FloodWait %ss", getattr(e, "value", "?"))
     except Exception as e:
-        logger.debug("Reaction skipped: %s", e)
+        # Surface a misconfigured/unsupported emoji once, but do not spam the
+        # log for every search in a chat where reactions are not permitted.
+        signature = f"{type(e).__name__}: {e}"
+        if signature not in _reaction_warnings:
+            _reaction_warnings.add(signature)
+            logger.warning("Reaction skipped (%s): %s", type(e).__name__, e)
+        else:
+            logger.debug("Reaction skipped: %s", e)
     return False
 
 
