@@ -1,7 +1,10 @@
 """Settings from info.py must have a real effect, not just a DB default."""
 import asyncio
 import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -12,6 +15,7 @@ for key, value in {
 }.items():
     os.environ.setdefault(key, value)
 
+from info import REQUIRED_ENV
 from plugins import commands
 from plugins import filter as bot_filter
 
@@ -28,6 +32,25 @@ def _start_message():
 def _file():
     return {"_id": "a", "file_name": "Film 720p.mkv", "file_size": 10,
             "file_ref": "ref-a", "group_id": "7"}
+
+
+class RequiredEnvTests(unittest.TestCase):
+    def test_compulsory_list_is_the_single_source_of_truth(self):
+        self.assertEqual(REQUIRED_ENV, (
+            "API_ID", "API_HASH", "BOT_TOKEN", "ADMINS",
+            "LOG_CHANNEL", "BIN_CHANNEL", "DATABASE_URL", "URL",
+        ))
+
+    def test_missing_required_variable_fails_before_anything_else(self):
+        env = os.environ.copy()
+        env.pop("URL", None)
+        result = subprocess.run(
+            [sys.executable, "-c", "import info"],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env, capture_output=True, text=True, timeout=20,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing required environment variable(s): URL", result.stderr)
 
 
 class ProtectContentTests(unittest.IsolatedAsyncioTestCase):

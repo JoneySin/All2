@@ -5,6 +5,13 @@ from Script import script
 
 logger = logging.getLogger(__name__)
 
+# Compulsory environment variables — single source of truth, all eight required.
+REQUIRED_ENV = ("API_ID", "API_HASH", "BOT_TOKEN", "ADMINS", "LOG_CHANNEL", "BIN_CHANNEL", "DATABASE_URL", "URL")
+_missing_env = [name for name in REQUIRED_ENV if not (environ.get(name) or "").strip()]
+if _missing_env:
+    logger.error("❌ Missing required environment variable(s): %s", ", ".join(_missing_env))
+    exit(1)
+
 # ─────────────────────────────────────────────
 # 🧠 HELPERS & BOOLEAN PARSERS (RAM Safe)
 # ─────────────────────────────────────────────
