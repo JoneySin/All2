@@ -5,6 +5,7 @@ for key, value in {
     "API_ID": "1", "API_HASH": "test", "BOT_TOKEN": "1:test", "ADMINS": "1",
     "LOG_CHANNEL": "-1001", "BIN_CHANNEL": "-1002",
     "DATABASE_URL": "mongodb://localhost:27017", "URL": "https://example.com",
+    "UPI_ID": "test@upi", "UPI_NAME": "Test Merchant", "RECEIPT_SEND_USERNAME": "@admin",
 }.items():
     os.environ.setdefault(key, value)
 

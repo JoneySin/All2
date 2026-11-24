@@ -9,6 +9,7 @@ for key, value in {
     'API_ID': '1', 'API_HASH': 'test', 'BOT_TOKEN': '1:test', 'ADMINS': '1',
     'LOG_CHANNEL': '-1001', 'BIN_CHANNEL': '-1002',
     'DATABASE_URL': 'mongodb://localhost:27017', 'URL': 'https://example.com',
+    'UPI_ID': 'test@upi', 'UPI_NAME': 'Test Merchant', 'RECEIPT_SEND_USERNAME': '@admin',
 }.items():
     os.environ.setdefault(key, value)
 
@@ -41,6 +42,20 @@ class PremiumCallbackTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         self.mongo.close()
+
+    async def test_buy_is_rejected_when_payment_config_is_missing(self):
+        q = query(); q.from_user.id = 55
+        bot = SimpleNamespace()
+        with patch.object(premium, 'UPI_ID', ''), \
+                patch.object(premium, 'UPI_NAME', ''), \
+                patch.object(premium, 'RECEIPT_SEND_USERNAME', ''), \
+                patch.object(premium, 'wait_for_user_message', AsyncMock()) as waiter:
+            await premium.buy_callback(bot, q)
+        q.answer.assert_awaited_once()
+        self.assertIn('not configured', q.answer.await_args.args[0])
+        self.assertTrue(q.answer.await_args.kwargs['show_alert'])
+        waiter.assert_not_awaited()
+        self.assertNotIn(55, premium.ACTIVE_PURCHASES)
 
     async def test_buy_already_displayed_prompt_and_timeout(self):
         q = query(); q.from_user.id = 55

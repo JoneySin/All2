@@ -213,6 +213,11 @@ def _payment_qr(upi_url):
 @Client.on_callback_query(filters.regex(r"^(buy_prem|activate_plan)$"))
 async def buy_callback(c, q):
     if q.from_user.id in ADMINS: return await q.answer(ADMIN_ALERT, show_alert=True)
+    if not (UPI_ID and UPI_NAME and RECEIPT_SEND_USERNAME):
+        return await q.answer(
+            "❌ Self-service payment is not configured. Please contact an admin to activate premium.",
+            show_alert=True,
+        )
 
     uid = q.from_user.id
     if uid in ACTIVE_PURCHASES:

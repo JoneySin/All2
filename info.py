@@ -12,6 +12,9 @@ if _missing_env:
     logger.error("❌ Missing required environment variable(s): %s", ", ".join(_missing_env))
     exit(1)
 
+# Needed for the self-service premium purchase flow, not for bot startup.
+PAYMENT_ENV = ("UPI_ID", "UPI_NAME", "RECEIPT_SEND_USERNAME")
+
 # ─────────────────────────────────────────────
 # 🧠 HELPERS & BOOLEAN PARSERS (RAM Safe)
 # ─────────────────────────────────────────────
@@ -202,5 +205,11 @@ RECEIPT_SEND_USERNAME = environ.get("RECEIPT_SEND_USERNAME", "").strip()
 if RECEIPT_SEND_USERNAME and not RECEIPT_SEND_USERNAME.startswith("@") and not RECEIPT_SEND_USERNAME.isnumeric():
     RECEIPT_SEND_USERNAME = "@" + RECEIPT_SEND_USERNAME
 
-if not UPI_ID or not UPI_NAME:
-    logger.warning("⚠️ UPI_ID or UPI_NAME is missing. Payment flow might get interrupted.")
+if IS_PREMIUM:
+    _missing_payment = [name for name in PAYMENT_ENV if not (environ.get(name) or "").strip()]
+    if _missing_payment:
+        logger.warning(
+            "⚠️ Premium is ON but self-service purchase is not configured "
+            "(missing: %s). Buy buttons will ask users to contact an admin; "
+            "/add_prm still works.", ", ".join(_missing_payment)
+        )

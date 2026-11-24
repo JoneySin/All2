@@ -15,7 +15,7 @@ for key, value in {
 }.items():
     os.environ.setdefault(key, value)
 
-from info import REQUIRED_ENV
+from info import PAYMENT_ENV, REQUIRED_ENV
 from plugins import commands
 from plugins import filter as bot_filter
 
@@ -40,6 +40,7 @@ class RequiredEnvTests(unittest.TestCase):
             "API_ID", "API_HASH", "BOT_TOKEN", "ADMINS",
             "LOG_CHANNEL", "BIN_CHANNEL", "DATABASE_URL", "URL",
         ))
+        self.assertEqual(PAYMENT_ENV, ("UPI_ID", "UPI_NAME", "RECEIPT_SEND_USERNAME"))
 
     def test_missing_required_variable_fails_before_anything_else(self):
         env = os.environ.copy()
