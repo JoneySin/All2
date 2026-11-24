@@ -10,6 +10,7 @@ from difflib import SequenceMatcher
 from struct import pack
 from bson.objectid import ObjectId
 from pymongo import AsyncMongoClient
+from pymongo.errors import DuplicateKeyError
 from pyrogram.file_id import FileId
 from pyrogram.errors import FloodWait
 from info import DATABASE_URL, DATABASE_NAME, USE_CAPTION_FILTER, DELETE_CHANNEL
@@ -43,6 +44,7 @@ posts   = db["Posts"]   # 📝 नया पोस्ट्स (CMS) कले�
 groups  = db["QualityGroups"]      # 🗂️ Quality/series groups; legacy collection name, separate from bot chats
 group_seq = db["QualityGroupSeq"]  # ग्रुप नंबर (1, 2, 3...) का counter
 group_search_cursors = db["GroupSearchCursors"]  # Expiring large grouped-search snapshots
+recycle_bin = db["RecycleBin"]  # 🗑 Deleted files kept for admin-only restore
 
 COLLECTIONS = {
     "primary": primary,
@@ -114,6 +116,15 @@ async def ensure_indexes():
                                                 name="group_search_cursor_ttl")
     except Exception as e:
         logger.warning(f"Group search cursor TTL index warning: {e}")
+
+    # Deleted files live outside the searchable collections; one entry per source copy.
+    try:
+        await recycle_bin.create_index([("source_col", 1), ("file_id", 1)],
+                                       unique=True, name="recycle_file_idx")
+        await recycle_bin.create_index([("deleted_at", -1)], name="recycle_deleted_idx")
+    except Exception as e:
+        if "already exists" not in str(e) and "IndexKeySpecsConflict" not in str(e):
+            logger.warning(f"Recycle Bin Index warning: {e}")
 
     # 3. Posts Specific Indexes (NEW)
     try:
@@ -967,56 +978,299 @@ async def _backup_before_delete(doc):
             return
 
 
-async def delete_files(query, collection_type="all"):
+async def _move_to_recycle(source_col, docs, deleted_by=None, group_snapshot=None):
+    """Move complete file documents into the admin-only RecycleBin collection.
+
+    The active collection still owns search; removing a file from it is what
+    hides the item everywhere. The RecycleBin keeps the full document so an
+    admin can put it back without depending on a Telegram backup channel.
+    """
+    if not docs:
+        return []
+    now = int(time.time())
+    payloads, ids = [], []
+    for original in docs:
+        fid = original.get("_id")
+        if fid is None:
+            continue
+        ids.append(fid)
+        payloads.append({
+            "source_col": source_col,
+            "file_id": str(fid),
+            "file_name": str(original.get("file_name") or ""),
+            "deleted_at": now,
+            "deleted_by": deleted_by,
+            "original": original,
+            "group_snapshot": group_snapshot,
+        })
+    if not payloads:
+        return []
+    keys = [payload["file_id"] for payload in payloads]
+    try:
+        # Replace any older bin entry for the same source+file, then bulk-insert
+        # this batch. This is one write pair per batch instead of one per file.
+        await recycle_bin.delete_many({"source_col": source_col, "file_id": {"$in": keys}})
+        await recycle_bin.insert_many(payloads, ordered=False)
+        return ids
+    except Exception as e:
+        logger.warning(f"Recycle Bin bulk write failed for {source_col}: {e}; retrying individually")
+        moved = []
+        try:
+            for payload in payloads:
+                await recycle_bin.replace_one(
+                    {"source_col": source_col, "file_id": payload["file_id"]},
+                    payload, upsert=True)
+                moved.append(payload["original"].get("_id"))
+            return [fid for fid in moved if fid is not None]
+        except Exception as e2:
+            # Do not delete active copies if their recycle entry could not be
+            # written; a failed move must never become an unrecoverable delete.
+            logger.error(f"Recycle Bin write failed for {source_col}: {e2}")
+            return []
+
+
+async def _recycle_and_delete(source_col, col, flt, *, backup=False,
+                              deleted_by=None, batch_size=200):
+    """Stream matching docs into the RecycleBin, then delete them by exact ID."""
+    deleted = 0
+    batch = []
+
+    async def flush():
+        nonlocal batch, deleted
+        if not batch:
+            return
+        ids = await _move_to_recycle(source_col, batch, deleted_by)
+        if ids:
+            res = await col.delete_many({"_id": {"$in": ids}})
+            deleted += res.deleted_count
+        batch = []
+
+    async for doc in col.find(flt):
+        if backup:
+            await _backup_before_delete(doc)
+        batch.append(doc)
+        if len(batch) >= batch_size:
+            await flush()
+    await flush()
+    return deleted
+
+
+async def delete_files(query, collection_type="all", deleted_by=None):
     deleted = 0
     try:
-        cols = [col for name, col in FILE_COLLECTIONS.items()
+        cols = [(name, col) for name, col in FILE_COLLECTIONS.items()
                 if collection_type == "all" or name == collection_type]
 
         if query == "*":
-            # ✅ /delete_all (पूरा collection wipe) — यहाँ DELETE_CHANNEL में बैकअप
-            # जानबूझकर नहीं भेजा जाता (हज़ारों फाइलें हो सकती हैं, flood/समय दोनों
-            # की समस्या होगी)। सिर्फ़ /delete (regex-आधारित) और web से backup होता है।
-            flt = {}
-            for col in cols:
-                res = await col.delete_many(flt)
-                deleted += res.deleted_count
+            # /delete_all is also recoverable now. Telegram backup is skipped
+            # for a whole-collection move (thousands of files would flood and
+            # stall the bot); the full database documents still go to the bin.
+            for name, col in cols:
+                deleted += await _recycle_and_delete(name, col, {}, backup=False,
+                                                     deleted_by=deleted_by)
             return deleted
 
         regex = _build_regex(str(query))
-        if not regex: return 0
+        if not regex:
+            return 0
         flt = {"file_name": regex}
 
-        for col in cols:
-            # ✅ /delete (regex मैच वाला targeted delete) — DB से हटाने से पहले
-            # हर matching फाइल का बैकअप DELETE_CHANNEL में भेजा जाता है
-            async for doc in col.find(flt, {"_id": 1, "file_name": 1, "file_ref": 1, "caption": 1}):
-                await _backup_before_delete(doc)
-            res = await col.delete_many(flt)
-            deleted += res.deleted_count
+        for name, col in cols:
+            # Keep the existing DELETE_CHANNEL media backup for targeted deletes.
+            deleted += await _recycle_and_delete(name, col, flt, backup=True,
+                                                 deleted_by=deleted_by)
         return deleted
     except Exception as e:
         logger.error(f"delete_files error: {e}")
         return deleted
 
 
-async def delete_single_file(file_id, collection_type="primary"):
-    """एक फाइल को डिलीट करने से पहले DELETE_CHANNEL में बैकअप भेजता है, फिर DB से हटाता है।
-    web/search_api.py के /api/delete endpoint से इस्तेमाल होता है (delete_files की
-    तरह ही _backup_before_delete reuse करता है, दोबारा नहीं लिखा)।"""
+async def delete_single_file(file_id, collection_type="primary", deleted_by=None):
+    """Move one file to the RecycleBin and remove it from its active collection.
+
+    The web /api/delete endpoint calls this. Non-file collections keep their
+    previous hard-delete behaviour because Actor documents are not media files.
+    """
     try:
         col = COLLECTIONS.get(collection_type)
         if col is None:
             return False
-        doc = await col.find_one({"_id": file_id}, {"_id": 1, "file_name": 1, "file_ref": 1, "caption": 1})
+        doc = await col.find_one({"_id": file_id})
         if not doc:
             return False
         await _backup_before_delete(doc)
+        if collection_type in FILE_COLLECTIONS:
+            # Keep the group document before the web cleanup below can dissolve
+            # a two-member group. A restore can then rebuild that group.
+            group_snapshot = await groups.find_one({"members": file_id})
+            ids = await _move_to_recycle(collection_type, [doc], deleted_by,
+                                         group_snapshot=group_snapshot)
+            if not ids:
+                return False
         res = await col.delete_one({"_id": file_id})
         return bool(res.deleted_count)
     except Exception as e:
         logger.error(f"delete_single_file error: {e}")
         return False
+
+
+async def list_recycle_files(query="", offset=0, limit=24):
+    """Admin Recycle Bin listing. Recycle documents are never in search paths."""
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    flt = {}
+    q = str(query or "").strip()
+    if q:
+        flt["file_name"] = re.compile(re.escape(q), re.IGNORECASE)
+    projection = {
+        "source_col": 1, "file_id": 1, "file_name": 1, "deleted_at": 1,
+        "deleted_by": 1, "original.file_name": 1, "original.file_size": 1,
+        "original.thumb_url": 1, "original.group_id": 1,
+    }
+    try:
+        total = await recycle_bin.count_documents(flt)
+        cursor = recycle_bin.find(flt, projection).sort([("deleted_at", -1), ("_id", -1)])
+        docs = await cursor.skip(offset).limit(limit).to_list(length=limit)
+        return total, docs
+    except Exception as e:
+        logger.error(f"list_recycle_files error: {e}")
+        return 0, []
+
+
+async def recycle_file_count():
+    try:
+        return await recycle_bin.count_documents({})
+    except Exception as e:
+        logger.warning(f"recycle_file_count error: {e}")
+        return 0
+
+
+async def _restore_group_membership(snapshot, original, fid):
+    """Re-add a restored file to its group and rebuild a dissolved group."""
+    gid = (snapshot or {}).get("_id") or original.get("group_id")
+    if gid in (None, ""):
+        return
+
+    existing = None
+    for candidate in (gid, str(gid)):
+        existing = await groups.find_one({"_id": candidate}, {"members": 1})
+        if existing:
+            break
+    if existing:
+        await groups.update_one({"_id": existing["_id"]},
+                                {"$addToSet": {"members": str(fid)}})
+        return
+
+    if not snapshot:
+        return
+
+    # Only rebuild with members that are still live somewhere. A group with
+    # fewer than two live files would not be a useful group.
+    live = {str(fid)}
+    for member in snapshot.get("members") or []:
+        mid = str(member)
+        for col in FILE_COLLECTIONS.values():
+            if await col.find_one({"_id": member}, {"_id": 1}):
+                live.add(mid)
+                break
+    if len(live) < 2:
+        return
+
+    rebuilt = dict(snapshot)
+    rebuilt["members"] = [str(m) for m in (snapshot.get("members") or [])
+                          if str(m) in live]
+    if str(fid) not in rebuilt["members"]:
+        rebuilt["members"].append(str(fid))
+    if rebuilt.get("files"):
+        rebuilt["files"] = [f for f in rebuilt["files"] if str(f.get("id")) in live]
+        if not any(str(f.get("id")) == str(fid) for f in rebuilt["files"]):
+            rebuilt["files"].append({"id": str(fid),
+                                     "name": str(original.get("file_name") or "")})
+    if rebuilt.get("episode_order"):
+        rebuilt["episode_order"] = [str(x) for x in rebuilt["episode_order"]
+                                    if str(x) in live]
+    if rebuilt.get("episode_labels"):
+        rebuilt["episode_labels"] = [x for x in rebuilt["episode_labels"]
+                                     if str(x.get("id")) in live]
+    if str(rebuilt.get("thumb_fid") or "") not in live:
+        rebuilt["thumb_fid"] = str(fid)
+
+    try:
+        await groups.insert_one(rebuilt)
+    except DuplicateKeyError:
+        await groups.update_one({"_id": snapshot["_id"]},
+                                {"$addToSet": {"members": str(fid)}})
+        return
+
+    # The survivor may have had its sparse group_id cleared during cleanup.
+    for member in live:
+        for col in FILE_COLLECTIONS.values():
+            if await col.find_one({"_id": member}, {"_id": 1}):
+                await col.update_one({"_id": member}, {"$set": {"group_id": gid}})
+                break
+
+
+async def restore_recycle_file(recycle_id):
+    """Restore one file to its original collection, avoiding duplicate copies."""
+    try:
+        rid = ObjectId(str(recycle_id))
+    except Exception:
+        return {"ok": False, "error": "Invalid Recycle Bin ID."}
+    try:
+        item = await recycle_bin.find_one({"_id": rid})
+        if not item:
+            return {"ok": False, "error": "This item is no longer in the Recycle Bin."}
+        source_col = str(item.get("source_col") or "")
+        original = item.get("original") or {}
+        fid = original.get("_id")
+        if fid is None:
+            return {"ok": False, "error": "The stored file record is incomplete."}
+        if source_col not in FILE_COLLECTIONS:
+            return {"ok": False, "error": "The original collection is no longer valid."}
+
+        # A second copy may still be live in another collection. In that case
+        # the file is already searchable; just clear the stale bin entry.
+        for name, col in FILE_COLLECTIONS.items():
+            if await col.find_one({"_id": fid}, {"_id": 1}):
+                await recycle_bin.delete_one({"_id": rid})
+                return {"ok": True, "already": True, "collection": name}
+
+        restored = dict(original)
+        restored["_id"] = fid
+        try:
+            await FILE_COLLECTIONS[source_col].insert_one(restored)
+        except DuplicateKeyError:
+            await recycle_bin.delete_one({"_id": rid})
+            return {"ok": True, "already": True, "collection": source_col}
+
+        await recycle_bin.delete_one({"_id": rid})
+
+        # Re-join a surviving group, or rebuild one that was dissolved when a
+        # two-member group lost this file. A failed group repair never rolls
+        # back the file restore.
+        try:
+            await _restore_group_membership(item.get("group_snapshot"), original, fid)
+        except Exception as e:
+            logger.warning(f"Recycle restore group update failed: {e}")
+        return {"ok": True, "collection": source_col}
+    except Exception as e:
+        logger.error(f"restore_recycle_file error: {e}")
+        return {"ok": False, "error": "Could not restore this file. Please retry."}
+
+
+async def purge_recycle_file(recycle_id):
+    """Permanently remove one Recycle Bin record (never touches active files)."""
+    try:
+        rid = ObjectId(str(recycle_id))
+    except Exception:
+        return False
+    try:
+        res = await recycle_bin.delete_one({"_id": rid})
+        return bool(res.deleted_count)
+    except Exception as e:
+        logger.error(f"purge_recycle_file error: {e}")
+        return False
+
 
 async def get_file_details(file_id):
     try:

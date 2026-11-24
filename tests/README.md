@@ -27,6 +27,18 @@ scans, completion, failures and status retry with the in-memory fixture. Saved-g
 changes, admin access and database failures. Counts represent stored records,
 including preserved legacy singletons, not the number of visible search cards.
 
+The admin Recycle Bin is a separate MongoDB collection (`RecycleBin`), not a flag on
+searchable files. Targeted bot deletes, whole-collection bot deletes and web deletes
+move the full file document (including its group snapshot) out of Primary/Cloud/Archive
+before removing it, so bot PM/group search, web search and the mini app cannot return
+it. `/admin/recycle` is admin-only and supports searching, restoring one record and
+permanently purging it. Restore checks every active collection first so a surviving
+copy is not duplicated, and it repairs a dissolved two-member group when the surviving
+member is still live. The test suite covers moving, hidden search, restore, duplicate
+protection, group rebuild, pagination and admin-only page/API access. A restored record
+still depends on Telegram access; if the original media/file reference is no longer
+valid, the database record is restored but playback can still fail.
+
 Opening a file in the web player lists its saved group below the video, with a chip
 for the file being played. `/api/file/switches` requires an authenticated web
 session and resolves the live saved group that owns that database file ID. Series

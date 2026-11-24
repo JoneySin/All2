@@ -49,6 +49,15 @@ MINI_APP_URL = _build_mini_app_url(URL)
 _GROUP_SEND_ACTIVE = set()
 
 
+def _clear_web_search_cache():
+    """Drop web catalogue/page caches after a bot-side delete or restore."""
+    try:
+        from web.search_api import _invalidate_search_caches
+        _invalidate_search_caches()
+    except Exception:
+        pass
+
+
 async def load_send_all_setting():
     """Load the admin's global Send All switch after the DB is ready."""
     temp.SEND_ALL_ENABLED = await db.get_send_all_enabled()
@@ -415,10 +424,13 @@ async def delete_file_cmd(client, message):
     if storage not in ["primary", "cloud", "archive"]:
         return await message.reply("❌ Invalid Storage! Use: primary, cloud, archive")
 
-    msg = await message.reply("🗑 Deleting target strings...")
-    count = await delete_files(" ".join(message.command[2:]), storage)
+    msg = await message.reply("♻️ Moving matching files to Recycle Bin...")
+    count = await delete_files(" ".join(message.command[2:]), storage,
+                               deleted_by=message.from_user.id)
+    _clear_web_search_cache()
     await msg.edit(
-        f"✅ Deleted `{count}` files from `{storage}`." if count else "❌ No files found match."
+        f"♻️ Moved `{count}` files to Recycle Bin from `{storage}`."
+        if count else "❌ No files found match."
     )
 
 
@@ -431,9 +443,10 @@ async def delete_all_cmd(client, message):
         return await message.reply("❌ Invalid Collection Target!")
 
     await message.reply(
-        f"⚠️ <b>DANGER ZONE WARNING!</b>\n\nYou are wiping out ALL documents from `{storage}`.\nAre you absolutely sure?",
+        f"⚠️ <b>DANGER ZONE WARNING!</b>\n\nYou are moving ALL documents from `{storage}` to the Recycle Bin.\nThey can be restored from Web → Recycle Bin.\nAre you absolutely sure?",
         reply_markup=ui_keyboard([[
-            ui_button("💥 CONFIRM DESTROY ALL", callback_data=f"confirm_del#{storage}"),
+            ui_button("♻️ MOVE ALL TO RECYCLE BIN", callback_data=f"confirm_del#{storage}",
+                      style=enums.ButtonStyle.DANGER),
             ui_button("❌ ABORT", callback_data=f"close_{message.from_user.id}")
         ]])
     )
@@ -573,9 +586,13 @@ async def confirm_del(client, query):
     await query.answer()
 
     storage = query.data.split("#")[1]
-    await query.message.edit("🗑 Destroying collection blocks... Please stand by.")
-    count = await delete_files("*", storage)
-    await query.message.edit(f"✅ Successfully Wiped `{count}` files from `{storage}`.")
+    await query.message.edit("♻️ Moving collection blocks to Recycle Bin... Please stand by.")
+    count = await delete_files("*", storage, deleted_by=query.from_user.id)
+    _clear_web_search_cache()
+    await query.message.edit(
+        f"♻️ Moved `{count}` files to Recycle Bin from `{storage}`. "
+        "Restore them from Web → Recycle Bin."
+    )
 
 
 @Client.on_callback_query(filters.regex(r"^stream#"))

@@ -288,11 +288,11 @@ document.addEventListener('click',function(){
 });
 
 async function deleteFile(fid,col){
-    if(!confirm('Are you sure you want to delete this file?'))return;
+    if(!confirm('Move this file to the Recycle Bin? Admin can restore it later.'))return;
     try{
         var r=await fetch('/api/delete',{method:'POST',body:JSON.stringify({file_id:fid,collection:col}),headers:{'Content-Type':'application/json'}});
         var res=await r.json();
-        if(res.success){ showToast('✅ File deleted successfully!'); refreshGridAfterEdit(); }
+        if(res.success){ showToast('♻️ File moved to Recycle Bin'); refreshGridAfterEdit(); }
         else{ showToast(res.error||'Delete failed!','error'); }
     }catch(e){showToast('Delete failed','error');}
 }
@@ -566,6 +566,7 @@ NAV_MENU = (
     ("posts", "/posts", "📝", "Posts"),
     ("actors", "/actors", "🎭", "Actors"),
     ("stats", "/stats", "📊", "Database Stats"),
+    ("recycle", "/admin/recycle", "♻️", "Recycle Bin"),
     ("profile", "/profile", "⚙️", "Profile Settings"),
 )
 
@@ -638,7 +639,7 @@ def build_page(title, body, cls="", active_tab="", role=None):
         links = "".join(
             f'<a href="{href}" class="sb-link {"active" if active_tab == tab else ""}"><span class="sb-icon" aria-hidden="true">{icon}</span><span>{label}</span></a>'
             for tab, href, icon, label in NAV_MENU
-            if role == "admin" or tab != "stats"   # Database Stats admin-only है
+            if role == "admin" or tab not in ("stats", "recycle")   # Stats + Recycle Bin admin-only
         )
         nav = _NAV_SHELL.format(links=links)
     else:
