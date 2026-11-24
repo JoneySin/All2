@@ -142,6 +142,20 @@ class EditorPlayerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved['thumb_url'], 'TG_ID:same-photo')
         self.assertEqual(len(api._GH_CACHE), 0)
 
+    async def test_thumbnail_is_retryable_while_telegram_connects(self):
+        with patch.object(api.temp, 'BOT', None), \
+                patch.object(api, '_wait_for_telegram', AsyncMock(return_value=None)):
+            response = await self.client.get('/api/thumb?file_id=f1')
+        self.assertEqual(response.status, 503)
+        self.assertEqual(response.headers['Retry-After'], '5')
+
+    async def test_stream_reports_telegram_connecting_instead_of_none_type(self):
+        with patch.object(api, '_wait_for_telegram', AsyncMock(return_value=None)):
+            response = await self.client.post('/setup_stream',
+                                              json={'file_id': 'stored-id', 'mode': 'inline'})
+        self.assertEqual(response.status, 500)
+        self.assertIn('still connecting', (await response.json())['error'])
+
     async def test_versioned_thumbnail_cache_cannot_reuse_an_old_revision(self):
         await self.cols['primary'].insert_one({'_id': 'f1', 'thumb_url': 'TG_ID:new'})
         api.thumb_cache['primary:f1:old-version'] = b'old'

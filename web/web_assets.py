@@ -227,8 +227,26 @@ function targetPreviewHtml(g){
 var activeFid = '', activeCol = '', cropperInstance = null, fileSaveInProgress = false, fileImageReading = false;
 var fileEditorSeq=0,fileEditorLoaded=false,fileGroupReady=false,fileEditorGroup='',fileEditorTarget=null,fileGroupSeq=0,fileGroupAbort=null;
 
+var _thumbRetries = {};
 function handleThumbError(fileId) {
     var img = document.getElementById('img-poster-' + fileId);
+    var tries = _thumbRetries[fileId] || 0;
+    // Telegram auth can finish a few seconds after the web port opens. Retry
+    // the poster quietly instead of leaving a permanent "thumbnail failed"
+    // card on a page that was opened during that startup window.
+    if (img && tries < 8) {
+        _thumbRetries[fileId] = tries + 1;
+        var oldErr = document.getElementById('thumb-err-' + fileId);
+        if (oldErr) oldErr.remove();
+        img.style.opacity = '0';
+        var col = 'primary';
+        try { col = new URL(img.src, window.location.origin).searchParams.get('col') || 'primary'; } catch (e) {}
+        setTimeout(function () {
+            var current = document.getElementById('img-poster-' + fileId);
+            if (current) current.src = freshThumbUrl(fileId, col);
+        }, Math.min(15000, 2000 + tries * 2000));
+        return;
+    }
     if (img) { img.style.opacity = '0'; }
     var errBox = document.getElementById('thumb-err-' + fileId);
     if (!errBox) {

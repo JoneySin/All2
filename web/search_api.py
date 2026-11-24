@@ -1810,6 +1810,10 @@ async def get_telegram_thumb(req):
     is_retry = req.query.get("retry", "false").lower() == "true"
     if not fid:
         return web.Response(status=400)
+    if await _wait_for_telegram(2.0) is None:
+        # The web port is intentionally up before Telegram login (Koyeb health),
+        # so thumbnail requests can arrive while the client is still connecting.
+        return web.Response(status=503, headers={"Retry-After": "5", "Cache-Control": "no-store"})
 
     headers = {
         "Content-Disposition": 'inline; filename="poster.jpg"',
@@ -1977,8 +1981,24 @@ def stream_target_path(msg_id: int, mode: str) -> str:
     return f"/{'download' if mode in ('download', 'inline') else 'watch'}/{msg_id}"
 
 
+async def _wait_for_telegram(timeout: float = 6.0):
+    """Wait briefly for the bot client while Koyeb finishes Telegram auth."""
+    client = getattr(temp, "BOT", None)
+    if client is not None:
+        return client
+    deadline = time.monotonic() + max(0.0, timeout)
+    while time.monotonic() < deadline:
+        await asyncio.sleep(0.25)
+        client = getattr(temp, "BOT", None)
+        if client is not None:
+            return client
+    return None
+
+
 async def _tunnel_stream(fid: str, mode: str) -> str:
     """Resolve stored IDs to Telegram's current file reference, then sign a link."""
+    if await _wait_for_telegram(6.0) is None:
+        raise RuntimeError("Telegram client is still connecting. Please retry in a few seconds.")
     docs = await get_files_by_ids([fid])
     if docs:
         fid = docs[0].get("file_ref") or fid

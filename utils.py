@@ -25,6 +25,9 @@ class temp(object):
     START_TIME = 0
     BANNED_USERS, BANNED_CHATS = [], []
     ME, BOT, U_NAME, B_NAME = None, None, None, None
+    # Web thumbnails/streaming depend on the Kurigram client. Keep this flag
+    # False until Telegram auth has actually completed.
+    BOT_READY = False
     CANCEL = False
     SEND_ALL_ENABLED = True
     FILES, PM_FILES = {}, {}

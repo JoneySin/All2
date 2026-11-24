@@ -1127,5 +1127,6 @@ async def koyeb_health_check(req):
     return web.json_response({
         "status": "alive",
         "platform": "koyeb",
+        "telegram_ready": bool(getattr(temp, "BOT_READY", False)),
         "uptime_seconds": round(time.time() - temp.START_TIME, 2),
     })

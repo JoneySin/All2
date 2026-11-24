@@ -401,6 +401,8 @@ async def api_recycle_stream(req):
         # Telegram may reject an old file reference or the media may be gone.
         from web.search_api import logger as search_logger
         search_logger.warning("Recycle preview failed for %s: %s", data.get('id'), e)
+        if "still connecting" in str(e):
+            return web.json_response({'error': str(e)}, status=503, dumps=fast_json)
         return web.json_response({'error': 'Telegram could not open this media. It may have expired.'},
                                  status=502, dumps=fast_json)
     return web.json_response({'url': url}, dumps=fast_json, headers={'Cache-Control': 'no-store'})

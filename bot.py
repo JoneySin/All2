@@ -160,6 +160,14 @@ class Bot(Client):
                 self.plugins = None
             try:
                 await super().start()
+                # Publish the client immediately. Index sync, settings and the
+                # rest of start() can take many seconds on a small Koyeb worker;
+                # until this assignment existed, /api/thumb and /setup_stream
+                # raised "NoneType has no attribute send_cached_media" while the
+                # web server was already accepting requests.
+                temp.BOT = self
+                temp.BOT_READY = True
+                logger.info("✅ Telegram client connected; media APIs are live")
                 return
             except FloodWait as e:
                 wait = max(30, int(getattr(e, "value", 0) or 0))
@@ -307,6 +315,7 @@ class Bot(Client):
     # ✅ GRACEFUL SHUTDOWN (Protects Database Pools & Containers)
     async def stop(self, *args):
         logger.info("Initiating Graceful Shutdown Pipeline...")
+        temp.BOT_READY = False
         
         if getattr(self, '_runner', None):
             await self._runner.cleanup()
