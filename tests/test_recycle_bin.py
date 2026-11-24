@@ -184,6 +184,8 @@ class RecyclePageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('id="rbColMenu"', body)
         self.assertIn('id="rbModeMenu"', body)
         self.assertIn('rb-grid mode-poster', body)
+        self.assertIn('.rb-grid.mode-poster .rb-thumb-wrap', body)
+        self.assertIn('padding-top:56.25%', body)
         self.assertIn('data-play', body)
         self.assertIn('data-action="restore"', body)
 

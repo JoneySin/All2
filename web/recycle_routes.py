@@ -25,7 +25,7 @@ from web.web_assets import (
 recycle_routes = web.RouteTableDef()
 
 _CSS = """<style>
-.rb-page{max-width:1240px;margin:0 auto;padding:34px 4% 70px;color:var(--text)}
+.rb-page{max-width:1400px;margin:0 auto;padding:34px 4% 70px;color:var(--text)}
 .rb-page *{box-sizing:border-box}
 .rb-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:22px}
 .rb-eyebrow{font-size:10px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent);margin-bottom:7px}
@@ -98,6 +98,16 @@ _CSS = """<style>
 .rb-grid.mode-text .rb-body{padding-right:34px}
 .rb-grid.mode-text .rb-more{display:inline-flex}
 .rb-grid.mode-text .rb-actions{top:42px}
+/* Poster mode mirrors the main catalogue: a full-width 16:9 poster on top,
+   with the filename and metadata underneath. */
+@media(min-width:600px){.rb-grid.mode-poster{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}}
+.rb-grid.mode-poster .rb-card{gap:0;padding:0;flex-direction:column}
+.rb-grid.mode-poster .rb-card:hover{border-color:var(--accent)}
+.rb-grid.mode-poster .rb-thumb-wrap{display:block;width:100%;height:auto;padding-top:56.25%;flex:none;border:0;border-radius:10px 10px 0 0}
+.rb-grid.mode-poster .rb-thumb{position:absolute;inset:0;width:100%;height:100%;font-size:34px}
+.rb-grid.mode-poster .rb-body{position:static;padding:10px 12px 12px;gap:6px}
+.rb-grid.mode-poster .rb-actions{top:8px;right:8px;bottom:auto;left:auto;flex-direction:column;min-width:156px}
+.rb-grid.mode-poster .rb-actions .rb-btn{flex:0 0 auto;width:100%}
 @media(max-width:560px){.rb-page{padding:25px 16px 55px}.rb-head{align-items:flex-start;flex-direction:column}.rb-headside{justify-content:flex-start}.rb-search{font-size:13px}.rb-thumb-wrap{width:78px;height:64px}.rb-actions{left:8px;right:8px;top:auto;bottom:8px;min-width:0;flex-direction:row}.rb-actions .rb-btn{flex:1;min-width:0;width:auto}.rb-grid.mode-text .rb-actions{top:auto}}
 @media(prefers-reduced-motion:reduce){.rb-page *{transition:none!important}}
 </style>"""
