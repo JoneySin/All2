@@ -9,3 +9,7 @@ __pycache__
 .ruff_cache
 .mypy_cache
 node_modules
+# Telegram session files contain an auth key and must never be committed/shipped.
+*.session
+*.session-journal
+*.session-wal

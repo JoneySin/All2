@@ -27,13 +27,33 @@ def is_valid_ip(ip):
 # ─────────────────────────────────────────────
 # 🤖 BOT CREDENTIALS
 # ─────────────────────────────────────────────
-API_ID = int(environ.get("API_ID", "0"))
-API_HASH = environ.get("API_HASH", "")
-BOT_TOKEN = environ.get("BOT_TOKEN", "")
+API_ID = int((environ.get("API_ID") or "0").strip())
+API_HASH = (environ.get("API_HASH") or "").strip()
+BOT_TOKEN = (environ.get("BOT_TOKEN") or "").strip()
 
 if not API_ID or not API_HASH or not BOT_TOKEN:
     logger.error("❌ API_ID / API_HASH / BOT_TOKEN missing")
     exit(1)
+
+# A bot token is exactly "<numeric bot id>:<secret>". Pasting a Koyeb secret
+# with a trailing newline/space is a common mistake and would otherwise surface
+# as a misleading Telegram authorization timeout.
+if ":" not in BOT_TOKEN or not BOT_TOKEN.split(":", 1)[0].isdigit():
+    logger.error("❌ BOT_TOKEN format invalid (expected 123456789:AA...)")
+    exit(1)
+
+# Optional Telegram transport settings. Keep these empty unless needed:
+#   PROXY          socks5://user:pass@host:port (or an MTProxy link)
+#   SESSION_STRING a previously exported Kurigram/Pyrogram session string
+#   SESSION_DIR    writable directory for Auto_Filter_Bot.session (use a volume)
+PROXY = (environ.get("PROXY") or "").strip()
+SESSION_STRING = (environ.get("SESSION_STRING") or "").strip()
+SESSION_DIR = (environ.get("SESSION_DIR") or "").strip()
+
+# Telegram occasionally answers bot authorization with a temporary 500/timeout.
+# Retry a few times instead of restarting the whole Koyeb instance immediately.
+AUTH_RETRY_ATTEMPTS = int(environ.get("AUTH_RETRY_ATTEMPTS", "5"))
+AUTH_RETRY_DELAY = int(environ.get("AUTH_RETRY_DELAY", "30"))
 
 PORT = int(environ.get("PORT", 8080)) # कोएब (Koyeb) के डायनेमिक बाइंडिंग के लिए 8080 यूनिवर्सल बेस्ट पोर्ट है
 
