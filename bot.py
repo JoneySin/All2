@@ -145,14 +145,20 @@ class Bot(Client):
         logger.info(f"🌐 Web Server & Mini App Stream Live on Port {PORT}")
 
     async def _start_telegram(self):
-        """Start Kurigram, retrying only transport/Telegram-side failures.
+        """Start Kurigram, keeping the web instance alive across an outage.
 
-        Invalid credentials are deliberately not retried: Pyrogram raises a
-        BadRequest for those, which should fail fast with an actionable message.
+        Telegram's auth backend can return 500/RPC_CALL_FAIL for minutes (and
+        FloodWait after repeated retries). Exiting here would make Koyeb restart
+        the whole container, start a fresh auth attempt and lose any chance to
+        recover automatically. Instead, keep the already-healthy web port up and
+        retry with backoff. Invalid credentials still fail fast because
+        Pyrogram raises a non-transport BadRequest for those.
         """
-        attempts = max(1, AUTH_RETRY_ATTEMPTS)
+        fast_attempts = max(1, AUTH_RETRY_ATTEMPTS)
         configured_plugins = getattr(self, "plugins", None)
-        for attempt in range(1, attempts + 1):
+        attempt = 0
+        while True:
+            attempt += 1
             # Client.start() loads plugins itself. On a retry the first attempt
             # already registered those handlers, so loading them again would
             # duplicate every command in the dispatcher.
@@ -171,32 +177,22 @@ class Bot(Client):
                 return
             except FloodWait as e:
                 wait = max(30, int(getattr(e, "value", 0) or 0))
-                if attempt >= attempts:
-                    logger.error(
-                        "Telegram FloodWait during startup: no retries left after %ss. "
-                        "Do not redeploy repeatedly; it only extends the wait.", wait)
-                    raise
                 logger.error(
-                    "Telegram FloodWait during startup: waiting %ss before retry %s/%s. "
-                    "Do not redeploy repeatedly; it only extends the wait.", wait, attempt, attempts
+                    "Telegram FloodWait during startup: waiting %ss before retry %s. "
+                    "Web is still up; do not redeploy repeatedly.", wait, attempt,
                 )
                 await asyncio.sleep(wait)
             except (TimeoutError, OSError) as e:
                 detail = str(e) or repr(e)
-                if attempt >= attempts:
-                    logger.error(
-                        "Telegram authorization failed after %s attempt(s): %s. "
-                        "This is a Telegram/network failure before any MongoDB or web "
-                        "startup; check the Pyrogram retry lines above.",
-                        attempt, detail,
-                    )
-                    raise
-                delay = max(5, AUTH_RETRY_DELAY * attempt)
+                # First few retries are close together, then back off to five
+                # minutes. This avoids hammering Telegram while still letting a
+                # recovered session connect without another deployment.
+                delay = max(5, AUTH_RETRY_DELAY * attempt) if attempt < fast_attempts else 300
                 logger.error(
-                    "Telegram authorization attempt %s/%s failed: %s. "
-                    "This is a Telegram/network failure before any MongoDB or web "
-                    "startup; check the Pyrogram retry lines above. Retrying in %ss.",
-                    attempt, attempts, detail, delay,
+                    "Telegram authorization attempt %s failed: %s. "
+                    "This is a Telegram/network failure; web stays healthy and "
+                    "will retry in %ss. Do not redeploy repeatedly.",
+                    attempt, detail, delay,
                 )
                 await asyncio.sleep(delay)
             finally:

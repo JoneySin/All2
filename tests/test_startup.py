@@ -1,8 +1,9 @@
-"""Bounded Telegram authorization retries during Koyeb startup.
+"""Telegram authorization retries during Koyeb startup.
 
 Telegram can answer a cold bot login with a temporary 500/timeout. Koyeb must
 not restart the whole instance for every such answer, and a retry must not load
-the plugin handlers twice.
+the plugin handlers twice. The web port stays healthy and retries until the
+client is actually authorized.
 """
 import os
 import unittest
@@ -16,6 +17,7 @@ for key, value in {
     os.environ.setdefault(key, value)
 
 from bot import Bot
+from utils import temp
 
 
 class StartupRetryTests(unittest.IsolatedAsyncioTestCase):
@@ -45,17 +47,26 @@ class StartupRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(seen[1])
         self.assertEqual(instance.plugins, {"root": "plugins"})
 
-    async def test_exhausted_retries_surface_the_transport_error(self):
+    async def test_transport_failures_keep_retrying_until_telegram_recovers(self):
         instance = self._instance()
+        calls = 0
 
-        async def always_timeout(client):
-            raise TimeoutError("no answer")
+        async def flaky_start(client):
+            nonlocal calls
+            calls += 1
+            if calls < 4:
+                raise TimeoutError("no answer")
+            return client
 
-        with patch('bot.Client.start', always_timeout), \
+        with patch('bot.Client.start', flaky_start), \
                 patch('bot.AUTH_RETRY_ATTEMPTS', 2), \
                 patch('bot.AUTH_RETRY_DELAY', 0), \
-                patch('bot.asyncio.sleep', AsyncMock()):
-            with self.assertRaises(TimeoutError):
-                await instance._start_telegram()
+                patch('bot.asyncio.sleep', AsyncMock()), \
+                patch.object(temp, 'BOT', None), \
+                patch.object(temp, 'BOT_READY', False):
+            await instance._start_telegram()
+            self.assertIs(temp.BOT, instance)
+            self.assertTrue(temp.BOT_READY)
 
+        self.assertEqual(calls, 4)
         self.assertEqual(instance.plugins, {"root": "plugins"})
