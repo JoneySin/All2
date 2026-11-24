@@ -120,17 +120,33 @@ class RecycleBinTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((await db_layer.restore_recycle_file("not-an-id"))["ok"])
         self.assertFalse((await db_layer.restore_recycle_file("64b000000000000000000000"))["ok"])
 
+    async def test_server_side_stream_lookup_returns_original_file_ref(self):
+        await self._file()
+        await db_layer.delete_single_file("a", "primary", deleted_by=1)
+        _, docs = await db_layer.list_recycle_files()
+        original = await db_layer.get_recycle_original(str(docs[0]["_id"]))
+        self.assertEqual(original["file_ref"], "ref-a")
+        self.assertIsNone(await db_layer.get_recycle_original("not-an-id"))
+        self.assertIsNone(await db_layer.get_recycle_original("64b000000000000000000000"))
+
     async def test_recycle_list_is_searchable_and_paginated(self):
         await self._file(name="Bravo")
         await self._file(fid="b", name="Charlie")
+        await self._file("cloud", fid="c", name="Cloud Only")
         await db_layer.delete_single_file("a", "primary")
         await db_layer.delete_single_file("b", "primary")
+        await db_layer.delete_single_file("c", "cloud")
         total, docs = await db_layer.list_recycle_files("brav")
         self.assertEqual(total, 1)
         self.assertEqual(docs[0]["file_name"], "Bravo")
         total, docs = await db_layer.list_recycle_files("", offset=0, limit=1)
-        self.assertEqual(total, 2)
+        self.assertEqual(total, 3)
         self.assertEqual(len(docs), 1)
+        total, docs = await db_layer.list_recycle_files("", collection="cloud")
+        self.assertEqual(total, 1)
+        self.assertEqual(docs[0]["file_name"], "Cloud Only")
+        total, _ = await db_layer.list_recycle_files("", collection="all")
+        self.assertEqual(total, 3)
 
 
 class RecyclePageTests(unittest.IsolatedAsyncioTestCase):
@@ -158,13 +174,61 @@ class RecyclePageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(denied.status, 403)
             self.assertIn("Admin", (await denied.json())["error"])
 
+    def test_page_has_auto_search_and_both_filters(self):
+        body = recycle_web._page_body()
+        self.assertIn('id="rbSearch"', body)
+        self.assertNotIn('id="rbSearchBtn"', body)
+        self.assertNotIn('id="rbClear"', body)
+        self.assertIn('data-filter="col"', body)
+        self.assertIn('data-filter="mode"', body)
+        self.assertIn('id="rbColMenu"', body)
+        self.assertIn('id="rbModeMenu"', body)
+        self.assertIn('rb-grid mode-poster', body)
+        self.assertIn('data-play', body)
+        self.assertIn('data-action="restore"', body)
+
+    async def test_admin_page_renders_filters_and_inline_player(self):
+        with patch.object(recycle_web, "get_auth", AsyncMock(return_value=("admin", 1))):
+            response = await self.client.get("/admin/recycle")
+        self.assertEqual(response.status, 200)
+        page = await response.text()
+        self.assertIn('id="rbSearch"', page)
+        self.assertIn('id="rbColMenu"', page)
+        self.assertIn('id="rbModeMenu"', page)
+        self.assertIn('id="inlinePlayer"', page)
+        self.assertNotIn('id="rbSearchBtn"', page)
+
+    async def test_stream_requires_admin_and_uses_server_side_file_ref(self):
+        with patch.object(recycle_web, "get_auth", AsyncMock(return_value=("user", 5))):
+            denied = await self.client.post("/api/recycle/stream", json={"id": "a"})
+            self.assertEqual(denied.status, 403)
+        with patch.object(recycle_web, "get_auth", AsyncMock(return_value=("admin", 1))), \
+                patch.object(recycle_web, "get_recycle_original",
+                             AsyncMock(return_value={"file_ref": "ref-a", "file_name": "Film.mkv"})), \
+                patch("web.search_api._tunnel_stream",
+                      AsyncMock(return_value="/download/9?sig&inline=1")):
+            response = await self.client.post("/api/recycle/stream",
+                                              json={"id": "64b000000000000000000001"})
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["url"], "/download/9?sig&inline=1")
+
+    async def test_stream_rejects_record_without_telegram_reference(self):
+        with patch.object(recycle_web, "get_auth", AsyncMock(return_value=("admin", 1))), \
+                patch.object(recycle_web, "get_recycle_original",
+                             AsyncMock(return_value={"file_name": "Only metadata"})):
+            response = await self.client.post("/api/recycle/stream",
+                                              json={"id": "64b000000000000000000001"})
+        self.assertEqual(response.status, 400)
+        self.assertIn("media reference", (await response.json())["error"])
+
     async def test_admin_list_returns_only_safe_metadata(self):
         doc = {
             "_id": "64b000000000000000000001", "source_col": "primary",
             "file_id": "a", "file_name": "Film.mkv", "deleted_at": 1700000000,
             "deleted_by": 42,
             "original": {"file_name": "Film.mkv", "file_size": 2048,
-                         "thumb_url": "https://example.com/t.jpg", "group_id": "7"},
+                         "thumb_url": "https://example.com/t.jpg", "group_id": "7",
+                         "file_ref": "tg-ref"},
         }
         with patch.object(recycle_web, "get_auth", AsyncMock(return_value=("admin", 1))), \
                 patch.object(recycle_web, "list_recycle_files",
@@ -176,7 +240,9 @@ class RecyclePageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["items"][0]["file_name"], "Film.mkv")
         self.assertEqual(data["items"][0]["group_id"], "7")
         self.assertIn("2.00 KB", data["items"][0]["file_size"])
+        self.assertTrue(data["items"][0]["playable"])
         self.assertNotIn("original", data["items"][0])
+        self.assertNotIn("file_ref", data["items"][0])
 
 
 if __name__ == "__main__":

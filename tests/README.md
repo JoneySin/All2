@@ -34,10 +34,14 @@ before removing it, so bot PM/group search, web search and the mini app cannot r
 it. `/admin/recycle` is admin-only and supports searching, restoring one record and
 permanently purging it. Restore checks every active collection first so a surviving
 copy is not duplicated, and it repairs a dissolved two-member group when the surviving
-member is still live. The test suite covers moving, hidden search, restore, duplicate
-protection, group rebuild, pagination and admin-only page/API access. A restored record
-still depends on Telegram access; if the original media/file reference is no longer
-valid, the database record is restored but playback can still fail.
+member is still live. The admin page has live/debounced search, collection and
+Poster/Text filters, a thumbnail action popover for restore/permanent delete, and an
+admin-only inline preview that reads the original Telegram file reference server-side.
+The test suite covers moving, hidden search, restore, duplicate protection, group
+rebuild, pagination, filters, playback preparation and admin-only page/API access. A
+restored or previewed record still depends on Telegram access; if the original
+media/file reference is no longer valid, the database record is restored but playback
+can still fail.
 
 Opening a file in the web player lists its saved group below the video, with a chip
 for the file being played. `/api/file/switches` requires an authenticated web

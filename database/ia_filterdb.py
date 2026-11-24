@@ -1114,7 +1114,7 @@ async def delete_single_file(file_id, collection_type="primary", deleted_by=None
         return False
 
 
-async def list_recycle_files(query="", offset=0, limit=24):
+async def list_recycle_files(query="", offset=0, limit=24, collection="all"):
     """Admin Recycle Bin listing. Recycle documents are never in search paths."""
     limit = max(1, min(int(limit), 100))
     offset = max(0, int(offset))
@@ -1122,10 +1122,13 @@ async def list_recycle_files(query="", offset=0, limit=24):
     q = str(query or "").strip()
     if q:
         flt["file_name"] = re.compile(re.escape(q), re.IGNORECASE)
+    collection = str(collection or "all").lower()
+    if collection in FILE_COLLECTIONS:
+        flt["source_col"] = collection
     projection = {
         "source_col": 1, "file_id": 1, "file_name": 1, "deleted_at": 1,
         "deleted_by": 1, "original.file_name": 1, "original.file_size": 1,
-        "original.thumb_url": 1, "original.group_id": 1,
+        "original.thumb_url": 1, "original.group_id": 1, "original.file_ref": 1,
     }
     try:
         total = await recycle_bin.count_documents(flt)
@@ -1208,6 +1211,20 @@ async def _restore_group_membership(snapshot, original, fid):
             if await col.find_one({"_id": member}, {"_id": 1}):
                 await col.update_one({"_id": member}, {"$set": {"group_id": gid}})
                 break
+
+
+async def get_recycle_original(recycle_id):
+    """Return the original file document for one Recycle Bin record."""
+    try:
+        rid = ObjectId(str(recycle_id))
+    except Exception:
+        return None
+    try:
+        item = await recycle_bin.find_one({"_id": rid}, {"original": 1})
+        return (item or {}).get("original") or None
+    except Exception as e:
+        logger.error(f"get_recycle_original error: {e}")
+        return None
 
 
 async def restore_recycle_file(recycle_id):
