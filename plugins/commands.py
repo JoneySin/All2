@@ -24,7 +24,7 @@ from info import (
 )
 from utils import (
     is_premium, get_settings, get_size, temp,
-    get_readable_time, get_wish, get_seconds
+    get_readable_time, get_wish, get_seconds, react_to_message
 )
 from stream_security import sign_params, USER_LINK_TTL, STREAM_TTL, MAX_ADMIN_TTL
 
@@ -160,6 +160,8 @@ async def build_stats_texts():
 # ─────────────────────────────────────────────
 @Client.on_message(filters.command("start") & filters.incoming)
 async def start(client, message):
+    await react_to_message(message, REACTIONS, big=True)
+
     if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
         if not await db.get_chat(message.chat.id):
             total = await client.get_chat_members_count(message.chat.id)
@@ -171,10 +173,6 @@ async def start(client, message):
         return await message.reply(
             f"<b>Hey {message.from_user.mention}, <i>{get_wish()}</i>\nHow can I help you?</b>"
         )
-
-    if REACTIONS:
-        try: await message.react(random.choice(REACTIONS), big=True)
-        except: pass
 
     if not await db.is_user_exist(message.from_user.id):
         await db.add_user(message.from_user.id, message.from_user.first_name)

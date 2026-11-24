@@ -24,6 +24,16 @@ def is_valid_ip(ip):
     )
     return re.match(ip_pattern, ip) is not None
 
+def parse_reactions(raw=None, default="👍 ❤️ 🔥 😍 🤝"):
+    """Parse REACTIONS from either space- or comma-separated values.
+
+    Empty values intentionally disable reactions. Duplicates are removed so
+    one accidentally repeated emoji does not skew the random choice.
+    """
+    source = environ.get("REACTIONS", default) if raw is None else raw
+    tokens = str(source or "").replace(",", " ").split()
+    return list(dict.fromkeys(token for token in tokens if token))
+
 # ─────────────────────────────────────────────
 # 🤖 BOT CREDENTIALS
 # ─────────────────────────────────────────────
@@ -173,7 +183,7 @@ else:
 # ─────────────────────────────────────────────
 # 💎 PREMIUM PAYMENT CONFIGURATIONS
 # ─────────────────────────────────────────────
-REACTIONS = environ.get("REACTIONS", "👍 ❤️ 🔥 😍 🤝").split()
+REACTIONS = parse_reactions()
 
 PRE_DAY_AMOUNT = int(environ.get("PRE_DAY_AMOUNT", 10))
 UPI_ID = environ.get("UPI_ID", "").strip()

@@ -1,9 +1,11 @@
 import logging
+import random
 import re
 import time
 from zoneinfo import ZoneInfo
 from datetime import datetime
 from pyrogram import enums
+from pyrogram.errors import FloodWait
 
 from info import ADMINS, IS_PREMIUM, TIME_ZONE
 # ✅ DRY: premium plan का reset-state dict database layer से ही आता है (एक ही जगह
@@ -33,6 +35,32 @@ class temp(object):
     FILES, PM_FILES = {}, {}
     USER_SESSIONS = {}   # web dashboard login sessions  (web/login_routes.py)
     REG_PENDING = {}     # web registration OTP flow      (web/login_routes.py)
+
+# ─────────────────────────────────────────────
+# 💬 TELEGRAM MESSAGE REACTIONS (optional, config-driven)
+# ─────────────────────────────────────────────
+async def react_to_message(message, reactions, big=False):
+    """React with one random configured emoji; never break the caller.
+
+    Telegram may reject a reaction (invalid emoji, old message, FloodWait, or
+    missing permission), so a failed reaction is intentionally non-fatal.
+    """
+    if not reactions or message is None:
+        return False
+    choices = reactions.split() if isinstance(reactions, str) else list(reactions)
+    choices = [str(item) for item in choices if str(item).strip()]
+    react = getattr(message, "react", None)
+    if not choices or not callable(react):
+        return False
+    try:
+        await react(random.choice(choices), big=big)
+        return True
+    except FloodWait as e:
+        logger.warning("Reaction skipped: FloodWait %ss", getattr(e, "value", "?"))
+    except Exception as e:
+        logger.debug("Reaction skipped: %s", e)
+    return False
+
 
 # ─────────────────────────────────────────────
 # 🛡️ RATE LIMITER UTILITY (Aggressive RAM Flush Sync)

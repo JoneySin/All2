@@ -9,8 +9,8 @@ from pyrogram import Client, ContinuePropagation, filters, enums
 from pyrogram.types import LinkPreviewOptions
 from keyboards import ui_button, ui_keyboard
 
-from info import ADMINS, MAX_BOT_RESULTS, IS_PREMIUM, PICS, SPELL_CHECK
-from utils import is_premium, get_size, is_check_admin, temp, get_settings, save_group_settings
+from info import ADMINS, MAX_BOT_RESULTS, IS_PREMIUM, PICS, SPELL_CHECK, REACTIONS
+from utils import is_premium, get_size, is_check_admin, temp, get_settings, save_group_settings, react_to_message
 from database.ia_filterdb import get_search_results, get_db_spell_suggestions
 from database.users_chats_db import db
 from Script import script  
@@ -253,6 +253,9 @@ async def group_search(client, message):
 async def auto_filter(client, msg, collection_type="all", settings=None):
     check_cache_limit() 
     search = msg.text.strip()
+    if REACTIONS and getattr(msg, "react", None):
+        # Fire-and-forget: an acknowledgement must never delay search results.
+        asyncio.create_task(react_to_message(msg, REACTIONS))
     
     counts_out = {}
     files, next_offset, total, act_src = await get_search_results(search, MAX_BOT_RESULTS, 0, collection_type=collection_type, counts_out=counts_out)
