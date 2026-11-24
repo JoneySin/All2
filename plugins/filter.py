@@ -262,6 +262,7 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
 
     if not settings: settings = await get_settings(msg.chat.id)
     is_simple_mode = settings.get("simple_mode", True)
+    auto_delete = settings.get("auto_delete", True)
 
     if not files:
         # ✅ FIX: पहले सिर्फ़ global SPELL_CHECK env flag चेक होता था, group का अपना
@@ -296,13 +297,15 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
                 cap = "🤔 **Did you mean?**"
                 try:
                     await m.edit_text(cap, reply_markup=ui_keyboard(btn))
-                    asyncio.create_task(start_auto_delete_timer(client, m.chat.id, m.id, delay=300))
+                    if auto_delete:
+                        asyncio.create_task(start_auto_delete_timer(client, m.chat.id, m.id, delay=300))
                 except: pass
                 return
 
         try:
             m = await msg.reply(script.NOT_FILE_TXT.format(msg.from_user.mention, search))
-            asyncio.create_task(start_auto_delete_timer(client, m.chat.id, m.id, delay=15))
+            if auto_delete:
+                asyncio.create_task(start_auto_delete_timer(client, m.chat.id, m.id, delay=15))
         except: pass
         return
 
@@ -314,7 +317,8 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
 
     try:
         res = await msg.reply(cap, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
-        asyncio.create_task(start_auto_delete_timer(client, res.chat.id, res.id, delay=300))
+        if auto_delete:
+            asyncio.create_task(start_auto_delete_timer(client, res.chat.id, res.id, delay=300))
     except Exception as e: 
         logger.error(f"Auto filter response error: {e}")
 
@@ -413,7 +417,8 @@ async def spell_check_handler(client, query):
         cap, markup = get_filter_ui(suggestion, files, total, act_src, 0, query.message.chat.id, query.from_user.id, key, next_offset, is_simple_mode, delay=300)
         await query.message.edit_text(cap, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
         
-        asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))
+        if settings.get("auto_delete", True):
+            asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))
             
     except Exception as e:
         logger.error(f"Spellcheck Callback Error: {e}")
@@ -468,12 +473,15 @@ async def pagination_handler(client, query):
     temp.FILES[key] = files
     settings = await get_settings(query.message.chat.id)
     is_simple_mode = settings.get("simple_mode", True)
+    auto_delete = settings.get("auto_delete", True)
     
     cap, markup = get_filter_ui(search, files, total, act_src, offset, query.message.chat.id, req, key, next_off, is_simple_mode, delay=300)
 
     try: 
         await query.message.edit_text(cap, reply_markup=markup, link_preview_options=LinkPreviewOptions(is_disabled=True))
-        asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))
+        if auto_delete:
+            asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))
     except Exception as e:
         logger.error(f"Pagination delivery failure: {e}")
-        asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))
+        if auto_delete:
+            asyncio.create_task(start_auto_delete_timer(client, query.message.chat.id, query.message.id, delay=300))

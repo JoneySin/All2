@@ -20,7 +20,8 @@ from database.users_chats_db import db
 
 from info import (
     IS_PREMIUM, URL, BIN_CHANNEL, ADMINS,
-    LOG_CHANNEL, PICS, IS_STREAM, REACTIONS, PM_FILE_DELETE_TIME
+    LOG_CHANNEL, PICS, IS_STREAM, REACTIONS, PM_FILE_DELETE_TIME,
+    PROTECT_CONTENT
 )
 from utils import (
     is_premium, get_settings, get_size, temp,
@@ -223,6 +224,7 @@ async def start(client, message):
                     message.chat.id,
                     target_media,
                     caption=caption,
+                    protect_content=settings.get("file_secure", PROTECT_CONTENT),
                     reply_markup=ui_keyboard(btn)
                 )
                 if PM_FILE_DELETE_TIME > 0:
@@ -333,6 +335,7 @@ async def send_group_files(client, query):
 
         settings = await get_settings(query.message.chat.id)
         template = settings.get("caption", script.FILE_CAPTION)
+        protect_content = settings.get("file_secure", PROTECT_CONTENT)
         target = uid
         sent = 0
         sent_messages = []
@@ -349,7 +352,9 @@ async def send_group_files(client, query):
             for attempt in range(2):
                 try:
                     message = await client.send_cached_media(
-                        target, media, caption=caption, reply_markup=ui_keyboard(buttons)
+                        target, media, caption=caption,
+                        protect_content=protect_content,
+                        reply_markup=ui_keyboard(buttons)
                     )
                     break
                 except FloodWait as e:
