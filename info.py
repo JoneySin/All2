@@ -173,7 +173,8 @@ elif is_valid_ip(URL):
     URL = f"https://{URL}/"
     logger.warning("⚠️ IP-based URL detected. Telegram WebApp requires a valid HTTPS domain.")
 else:
-    if not URL.startswith("https://") and "." in URL:
+    # No http(s) scheme reached this branch, so only a dotted host is valid.
+    if "." in URL:
         URL = "https://" + URL.rstrip("/") + "/"
         logger.info(f"✅ Auto-Formatted incomplete URL string to valid domain structure: {URL}")
     else:
