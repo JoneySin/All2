@@ -7,6 +7,7 @@ client is actually authorized.
 """
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 for key, value in {
@@ -24,6 +25,7 @@ class StartupRetryTests(unittest.IsolatedAsyncioTestCase):
     def _instance(self):
         instance = Bot.__new__(Bot)
         instance.plugins = {"root": "plugins"}
+        instance.dispatcher = SimpleNamespace(groups={})
         return instance
 
     async def test_timeout_is_retried_without_reloading_plugins(self):
@@ -33,6 +35,9 @@ class StartupRetryTests(unittest.IsolatedAsyncioTestCase):
         async def fake_start(client):
             seen.append(client.plugins)
             if len(seen) == 1:
+                # Kurigram's load_plugins() runs before authorize(), so handlers
+                # already exist when the failed auth attempt returns.
+                client.dispatcher.groups = {0: [object()]}
                 raise TimeoutError('Failed to invoke "auth.ImportBotAuthorization"')
             return client
 
@@ -46,6 +51,25 @@ class StartupRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen[0], {"root": "plugins"})
         self.assertIsNone(seen[1])
         self.assertEqual(instance.plugins, {"root": "plugins"})
+
+    async def test_retry_reloads_plugins_if_failure_happened_before_loading(self):
+        instance = self._instance()
+        seen = []
+
+        async def fake_start(client):
+            seen.append(client.plugins)
+            if len(seen) == 1:
+                raise TimeoutError("connect failed before plugins loaded")
+            return client
+
+        with patch('bot.Client.start', fake_start), \
+                patch('bot.AUTH_RETRY_ATTEMPTS', 2), \
+                patch('bot.AUTH_RETRY_DELAY', 0), \
+                patch('bot.asyncio.sleep', AsyncMock()):
+            await instance._start_telegram()
+
+        self.assertEqual(seen[0], {"root": "plugins"})
+        self.assertEqual(seen[1], {"root": "plugins"})
 
     async def test_transport_failures_keep_retrying_until_telegram_recovers(self):
         instance = self._instance()
@@ -70,3 +94,15 @@ class StartupRetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(calls, 4)
         self.assertEqual(instance.plugins, {"root": "plugins"})
+
+    async def test_stop_is_idempotent_and_safe_before_connected(self):
+        instance = self._instance()
+        instance._runner = None
+        instance._premium_task = None
+        instance._delete_task = None
+        instance.is_connected = False
+        with patch('bot.stop_group_scan', AsyncMock()), \
+                patch('bot.Client.stop', AsyncMock()) as client_stop:
+            await instance.stop()
+            await instance.stop()
+        client_stop.assert_not_awaited()

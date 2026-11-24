@@ -115,6 +115,18 @@ class Bot(Client):
         except OSError as e:
             logger.error(f"SESSION_DIR is not writable ({session_dir}): {e}")
             raise
+        if SESSION_STRING:
+            logger.info("📁 Telegram session: using SESSION_STRING")
+        else:
+            session_file = os.path.join(session_dir, "Auto_Filter_Bot.session")
+            logger.info("📁 Telegram session directory: %s (existing session: %s)",
+                        session_dir, os.path.exists(session_file))
+            if session_dir == "." and not SESSION_DIR:
+                logger.warning(
+                    "⚠️ No persistent /data volume for the Telegram session. "
+                    "Every redeploy will create a new auth key; mount a volume at /data "
+                    "and set SESSION_DIR=/data to keep it."
+                )
         super().__init__(
             name="Auto_Filter_Bot",
             api_id=API_ID,
@@ -159,11 +171,16 @@ class Bot(Client):
         attempt = 0
         while True:
             attempt += 1
-            # Client.start() loads plugins itself. On a retry the first attempt
-            # already registered those handlers, so loading them again would
-            # duplicate every command in the dispatcher.
+            # Kurigram 2.2.27's Client.start() calls self.load_plugins() before
+            # connect()/authorize() (initialize() only starts the dispatcher).
+            # A retry must therefore skip plugin loading only when the dispatcher
+            # actually contains handlers; otherwise re-enable plugins so a failure
+            # that happened before loading cannot leave the bot without commands.
             if attempt > 1:
-                self.plugins = None
+                handlers_loaded = bool(
+                    getattr(getattr(self, "dispatcher", None), "groups", None)
+                )
+                self.plugins = None if handlers_loaded else configured_plugins
             try:
                 await super().start()
                 # Publish the client immediately. Index sync, settings and the
@@ -310,6 +327,9 @@ class Bot(Client):
 
     # ✅ GRACEFUL SHUTDOWN (Protects Database Pools & Containers)
     async def stop(self, *args):
+        if getattr(self, "_stopped", False):
+            return
+        self._stopped = True
         logger.info("Initiating Graceful Shutdown Pipeline...")
         temp.BOT_READY = False
         
@@ -332,7 +352,8 @@ class Bot(Client):
             except asyncio.CancelledError: pass
             logger.info("✅ Auto-Delete Engine Flushed & Stopped")
 
-        await super().stop()
+        if getattr(self, "is_connected", False):
+            await super().stop()
         logger.info("System Halted Gracefully. All Memory Freed ✅")
 
     async def iter_messages(self, chat_id: Union[int, str], limit: int, offset: int = 0) -> AsyncGenerator["types.Message", None]:
@@ -365,8 +386,14 @@ async def main():
         except NotImplementedError:
             pass # Windows डेवलपमेंट फॉलबैक के लिए
             
-    await bot.start()
-    await idle()
+    try:
+        await bot.start()
+        await idle()
+    finally:
+        # idle() restores the previous signal handlers and returns; it does not
+        # stop the client itself. Close the web runner, background tasks and
+        # Telegram session explicitly on SIGTERM/SIGINT.
+        await bot.stop()
 
 if __name__ == "__main__":
     try:
