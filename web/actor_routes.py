@@ -6,8 +6,9 @@ from utils import temp
 from info import MAX_WEB_RESULTS, ACTOR_STORAGE_CHANNEL
 from database.ia_filterdb import actors, get_actor_search_results, delete_actor_profile, delete_gallery_image_by_index
 # ✅ DRY: fast_json + DIRECTORY_CSS अब web_assets से आते हैं (पहले दोनों यहाँ copy थे)
-from web.web_assets import build_page, get_auth, require_active_plan, fast_json, DIRECTORY_CSS, DEFAULT_CATALOG_MODE, DEFAULT_MEDIA_MODE
-from web.search_api import _build_results_list, _annotate_raw_groups
+from web.web_assets import build_page, get_auth, require_active_plan, fast_json, DIRECTORY_CSS, DIRECTORY_FILTER_CSS, DEFAULT_CATALOG_MODE, DEFAULT_MEDIA_MODE
+from web.search_api import actor_search_page, _invalidate_search_caches, _GroupCursorLimitError, _GroupCursorStorageError
+from web.dashboard_routes import SEARCH_PANEL_CSS, GROUP_CARD_CSS, GROUP_ENGINE_JS
 from web.catalog_cards import render_catalog_card
 from web.catalog_search import CATALOG_PAGE_SIZE, catalog_page
 
@@ -571,18 +572,157 @@ async def actor_profile_display(req):
       </div>
     </div>''' if role == 'admin' else ""
     
-    # 🎛️ Default media mode (centralized via DEFAULT_MEDIA_MODE in web_assets.py)
-    ap_mode_tg_lbl = "🖼️ Original TG Thumb"
-    ap_mode_none_lbl = "⚡ Text Only (Fastest)"
+    # 🎛️ Default media mode (centralized via DEFAULT_MEDIA_MODE in web_assets.py, synced with main page)
+    ap_mode_tg_lbl = "🖼️ Poster"
+    ap_mode_none_lbl = "📄 Text"
     ap_mode_lbl = ap_mode_none_lbl if DEFAULT_MEDIA_MODE == "none" else ap_mode_tg_lbl
     ap_sel_tg = " selected" if DEFAULT_MEDIA_MODE == "tg" else ""
     ap_sel_none = " selected" if DEFAULT_MEDIA_MODE == "none" else ""
 
+    actor_page_markup = f'''<style>.actor-tab-bar{{display:flex;gap:10px;border-bottom:2px solid var(--border);margin-bottom:25px}}.actor-tab{{background:0 0;border:none;color:var(--muted);padding:12px 20px;font-size:15px;font-weight:700;cursor:pointer;transition:.2s;position:relative;font-family:inherit}}.actor-tab.active{{color:var(--text)!important}}.actor-tab.active::after{{content:'';position:absolute;bottom:-2px;left:0;right:0;height:2px;background:var(--accent)}}.actor-panel{{display:none}}.actor-panel.active{{display:block!important}}.gallery-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px}}@media(min-width:600px){{.gallery-grid{{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}}}}.gallery-item-wrap{{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--border);aspect-ratio:1;cursor:pointer}}.gallery-item{{width:100%;height:100%;object-fit:cover;transition:transform .2s}}.gallery-item-wrap:hover .gallery-item{{transform:scale(1.04)}}.gallery-del-btn{{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);background:var(--accent);border:1px solid var(--accent);color:#fff;padding:4px 10px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;z-index:5;opacity:0;transition:opacity .15s}}.gallery-del-btn:hover{{background:var(--accent-hover);border-color:var(--accent-hover)}}.gallery-item-wrap:hover .gallery-del-btn{{opacity:1}}.lightbox{{position:fixed;inset:0;background:rgba(0,0,0,.92);backdrop-filter:blur(15px);z-index:99999;display:none;align-items:center;justify-content:center;opacity:0;transition:opacity .2s ease}}.lightbox.open{{display:flex;opacity:1}}.lightbox-img{{max-width:92%;max-height:88vh;object-fit:contain;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.8);transform:scale(.95);transition:transform .2s cubic-bezier(.4,0,.2,1)}}.lightbox.open .lightbox-img{{transform:scale(1)}}.lightbox-close{{position:absolute;top:20px;right:25px;background:none;border:none;color:#fff;font-size:32px;cursor:pointer;opacity:.7}}.lightbox-close:hover{{opacity:1}}.actor-header-wrap{{display:flex;gap:25px;background:var(--card);border:1px solid var(--border);padding:25px;border-radius:12px;margin-bottom:35px;flex-direction:column;align-items:center;width:100%;box-sizing:border-box}}.avatar-box-master{{width:100%;max-width:340px;height:auto;aspect-ratio:3/4;background:var(--bg3);border-radius:8px;overflow:hidden;border:1px solid var(--border);flex-shrink:0}}@media(min-width:768px){{.actor-header-wrap{{flex-direction:row;align-items:stretch}}.avatar-box-master{{width:260px;height:350px;max-width:none;aspect-ratio:auto}}}}</style>{ACTOR_PROFILE_CSS}<main class="actor-page"><a class="actor-back" href="/actors">← Back to profiles</a><div class="actor-header-wrap"><div class="avatar-box-master"><img id="actorMasterAvatarImage" src="/api/actor/photo?id={actor_id}&v={photo_v}" alt="{html.escape(actor_name, quote=True)} profile photo"></div><div class="actor-identity"><div class="actor-eyebrow">Profile</div><h1>{html.escape(actor_name)}</h1>{tags_chips_html}{social_html}{admin_actions_html}</div></div><div class="actor-tab-bar"><button class="actor-tab active" onclick="switchActorTab(event,'tab-info')">ℹ️ Info</button><button class="actor-tab" onclick="switchActorTab(event,'tab-video')">🎬 Linked Media</button><button class="actor-tab" onclick="switchActorTab(event,'tab-gallery')">🖼️ Gallery</button></div><div id="tab-info" class="actor-panel active"><section class="actor-bio"><div class="actor-panel-kicker">The story</div><h2>About</h2><div class="actor-bio-copy">{safe_bio}</div></section></div><div id="tab-video" class="actor-panel"><div class="search-box actor-search-panel"><div class="search-row1"><div class="search-wrap" id="actMovieWrap"><input type="text" id="actor_movie_q" value="" placeholder="Search inside this profile..." class="search-input"><span class="search-spinner" id="actMovieSpinner"></span></div><div class="cdd-wrap gf-wrap" id="cddGfWrapActor" onclick="toggleActorCdd('gf',event)"><button type="button" class="cdd-btn" id="cddGfBtnActor" aria-label="Group filter: All" aria-expanded="false" aria-controls="cddGfMenuActor"><span id="cddGfLabelActor">All</span></button><span class="cdd-arrow" aria-hidden="true">&#9660;</span><div class="cdd-menu" id="cddGfMenuActor" style="display:none"><button type="button" class="cdd-item selected" data-val="all" onclick="pickActorGF('all','All',this,event)">All</button><button type="button" class="cdd-item" data-val="group" onclick="pickActorGF('group','Group',this,event)">Group</button><button type="button" class="cdd-item" data-val="single" onclick="pickActorGF('single','UnGroup',this,event)">UnGroup</button></div></div></div><div class="search-row2"><div class="cdd-wrap" id="cddColWrapActor" onclick="toggleActorCdd('col',event)"><button type="button" class="cdd-btn" id="cddColBtnActor" aria-label="Collection filter: All" aria-expanded="false" aria-controls="cddColMenuActor"><span id="cddColLabelActor">All</span></button><span class="cdd-arrow" aria-hidden="true">&#9660;</span><div class="cdd-menu" id="cddColMenuActor" style="display:none"><button type="button" class="cdd-item selected" data-val="all" onclick="pickActorCol('all','All',this,event)">All</button><button type="button" class="cdd-item" data-val="primary" onclick="pickActorCol('primary','🟢 Primary',this,event)">🟢 Primary</button><button type="button" class="cdd-item" data-val="cloud" onclick="pickActorCol('cloud','🔵 Cloud',this,event)">🔵 Cloud</button><button type="button" class="cdd-item" data-val="archive" onclick="pickActorCol('archive','🟠 Archive',this,event)">🟠 Archive</button></div></div><div class="cdd-wrap" id="cddModeWrapActor" onclick="toggleActorCdd('mode',event)"><button type="button" class="cdd-btn" id="cddModeBtnActor" aria-label="View mode filter" aria-expanded="false" aria-controls="cddModeMenuActor"><span id="cddModeLabelActor">{ap_mode_lbl}</span></button><span class="cdd-arrow" aria-hidden="true">&#9660;</span><div class="cdd-menu" id="cddModeMenuActor" style="display:none"><button type="button" class="cdd-item{ap_sel_tg}" data-val="tg" onclick="pickActorMode('tg','🖼️ Poster',this,event)">🖼️ Poster</button><button type="button" class="cdd-item{ap_sel_none}" data-val="none" onclick="pickActorMode('none','📄 Text',this,event)">📄 Text</button></div></div></div></div><div id="actor_video_results" class="res-grid"></div><div class="pagination" id="actor_page_box" style="display:none"><button class="pg-btn" id="actor_pBtn" onclick="actorPagePrev()" disabled>Previous</button><span class="pg-info" id="actor_pgInfo">Page 1</span><button class="pg-btn" id="actor_nBtn" onclick="actorPageNext()">Next</button></div></div><div id="tab-gallery" class="actor-panel">{gallery_grid_html}</div></main><div id="actorLightboxModal" class="lightbox" onclick="closeLightbox()"><button class="lightbox-close" onclick="closeLightbox()">&times;</button><img id="lightboxTargetImg" class="lightbox-img" src="" onclick="event.stopPropagation()"></div><input type="hidden" id="actor_master_tags_payload" value="{tags_json_payload}">{profile_edit_modal}'''
 
-    # ✅ CSS MINIFIED (DUPLICATES REMOVED)
-    css_js_minified = f'''<style>.actor-tab-bar{{display:flex;gap:10px;border-bottom:2px solid var(--border);margin-bottom:25px}}.actor-tab{{background:0 0;border:none;color:var(--muted);padding:12px 20px;font-size:15px;font-weight:700;cursor:pointer;transition:.2s;position:relative;font-family:inherit}}.actor-tab.active{{color:var(--text)!important}}.actor-tab.active::after{{content:'';position:absolute;bottom:-2px;left:0;right:0;height:2px;background:var(--accent)}}.actor-panel{{display:none}}.actor-panel.active{{display:block!important}}.gallery-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px}}@media(min-width:600px){{.gallery-grid{{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}}}}.gallery-item-wrap{{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--border);aspect-ratio:1;cursor:pointer}}.gallery-item{{width:100%;height:100%;object-fit:cover;transition:transform .2s}}.gallery-item-wrap:hover .gallery-item{{transform:scale(1.04)}}.gallery-del-btn{{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);background:var(--accent);border:1px solid var(--accent);color:#fff;padding:4px 10px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;z-index:5;opacity:0;transition:opacity .15s}}.gallery-del-btn:hover{{background:var(--accent-hover);border-color:var(--accent-hover)}}.gallery-item-wrap:hover .gallery-del-btn{{opacity:1}}.lightbox{{position:fixed;inset:0;background:rgba(0,0,0,.92);backdrop-filter:blur(15px);z-index:99999;display:none;align-items:center;justify-content:center;opacity:0;transition:opacity .2s ease}}.lightbox.open{{display:flex;opacity:1}}.lightbox-img{{max-width:92%;max-height:88vh;object-fit:contain;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.8);transform:scale(.95);transition:transform .2s cubic-bezier(.4,0,.2,1)}}.lightbox.open .lightbox-img{{transform:scale(1)}}.lightbox-close{{position:absolute;top:20px;right:25px;background:none;border:none;color:#fff;font-size:32px;cursor:pointer;opacity:.7}}.lightbox-close:hover{{opacity:1}}.search-zone-actor{{padding:16px 0 0}}.search-row1-actor{{display:flex;align-items:center;gap:10px;margin-bottom:10px}}.search-row2-actor{{display:flex;align-items:center;justify-content:flex-start;gap:10px;margin-bottom:16px}}@media(min-width:768px){{.search-zone-actor{{display:flex;align-items:center;gap:10px;flex-wrap:nowrap;padding-bottom:16px}}.search-row1-actor{{flex:1;margin-bottom:0}}.search-row2-actor{{margin-bottom:0;flex-shrink:0}}}}.search-wrap-actor{{flex:1;min-width:0;display:flex;align-items:center;background:var(--bg3);border:1.5px solid var(--border);border-radius:12px;padding:0 6px 0 18px;gap:8px;overflow:hidden;min-height:38px}}.search-spinner-actor{{display:none;width:15px;height:15px;flex-shrink:0;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:searchSpinActor .6s linear infinite}}.search-wrap-actor.loading .search-spinner-actor{{display:inline-block}}@keyframes searchSpinActor{{to{{transform:rotate(360deg)}}}}.search-input-actor{{flex:1;min-width:0;width:100%;background:0 0;border:none;outline:none;color:var(--text);font-size:14px;font-weight:600;padding:6px 0;font-family:inherit}}.search-input-actor::placeholder{{color:var(--muted);font-weight:400}}.search-btn-actor{{flex-shrink:0;background:var(--accent);color:#fff;border:none;border-radius:12px;padding:0 20px;height:38px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;transition:transform .15s,background .15s}}.search-btn-actor:hover{{background:var(--accent-hover);transform:scale(1.03)}}.cdd-wrap-actor{{flex:0 1 auto;min-width:0;position:relative;user-select:none}}.cdd-btn-actor{{width:auto;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:999px;padding:8px 28px 8px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;box-sizing:border-box;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:border-color .15s}}.cdd-btn-actor.open,.cdd-btn-actor:hover{{border-color:var(--accent)}}.cdd-arrow-actor{{position:absolute;right:12px;top:50%;transform:translateY(-50%);pointer-events:none;font-size:9px;color:var(--muted);transition:transform .2s}}.cdd-btn-actor.open+.cdd-arrow-actor{{transform:translateY(-50%) rotate(180deg)}}.cdd-menu-actor{{position:absolute;top:calc(100% + 7px);left:50%;transform:translateX(-50%);min-width:max-content;background:var(--bg2);border:1.5px solid var(--border);border-radius:16px;overflow:hidden;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.45);display:none}}.cdd-item-actor{{display:flex;align-items:center;gap:10px;padding:11px 14px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;transition:background .12s;border-bottom:1px solid var(--border)}}.cdd-item-actor:last-child{{border-bottom:none}}.cdd-item-actor:hover{{background:var(--bg3)}}.cdd-item-actor.selected{{color:var(--accent)}}.cdd-radio-actor{{width:16px;height:16px;border-radius:50%;border:2px solid var(--border);margin-left:auto;flex-shrink:0;display:flex;align-items:center;justify-content:center}}.cdd-item-actor.selected .cdd-radio-actor{{border-color:var(--accent)}}.cdd-radio-dot-actor{{width:6px;height:6px;border-radius:50%;background:var(--accent);display:none}}.cdd-item-actor.selected .cdd-radio-dot-actor{{display:block}}.actor-header-wrap{{display:flex;gap:25px;background:var(--card);border:1px solid var(--border);padding:25px;border-radius:12px;margin-bottom:35px;flex-direction:column;align-items:center;width:100%;box-sizing:border-box}}.avatar-box-master{{width:100%;max-width:340px;height:auto;aspect-ratio:3/4;background:var(--bg3);border-radius:8px;overflow:hidden;border:1px solid var(--border);flex-shrink:0}}@media(min-width:768px){{.actor-header-wrap{{flex-direction:row;align-items:stretch}}.avatar-box-master{{width:260px;height:350px;max-width:none;aspect-ratio:auto}}}}</style>{ACTOR_PROFILE_CSS}<main class="actor-page"><a class="actor-back" href="/actors">← Back to profiles</a><div class="actor-header-wrap"><div class="avatar-box-master"><img id="actorMasterAvatarImage" src="/api/actor/photo?id={actor_id}&v={photo_v}" alt="{html.escape(actor_name, quote=True)} profile photo"></div><div class="actor-identity"><div class="actor-eyebrow">Profile</div><h1>{html.escape(actor_name)}</h1>{tags_chips_html}{social_html}{admin_actions_html}</div></div><div class="actor-tab-bar"><button class="actor-tab active" onclick="switchActorTab(event,'tab-info')">ℹ️ Info</button><button class="actor-tab" onclick="switchActorTab(event,'tab-video')">🎬 Linked Media</button><button class="actor-tab" onclick="switchActorTab(event,'tab-gallery')">🖼️ Gallery</button></div><div id="tab-info" class="actor-panel active"><section class="actor-bio"><div class="actor-panel-kicker">The story</div><h2>About</h2><div class="actor-bio-copy">{safe_bio}</div></section></div><div id="tab-video" class="actor-panel"><div class="search-zone-actor"><div class="search-row1-actor"><div class="search-wrap-actor" id="actMovieWrap"><input type="text" id="actor_movie_q" value="" placeholder="Search inside this profile..." class="search-input-actor"><span class="search-spinner-actor" id="actMovieSpinner"></span></div></div><div class="search-row2-actor"><div class="cdd-wrap-actor"><div class="cdd-btn-actor" id="cddColBtnActor" onclick="toggleActorCdd('col',event)"><span id="cddColLabelActor">All</span></div><span class="cdd-arrow-actor">&#9660;</span><div class="cdd-menu-actor" id="cddColMenuActor"><div class="cdd-item-actor selected" data-val="all" onclick="pickActorCol('all','All',this,event)">All<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor" data-val="primary" onclick="pickActorCol('primary','🟢 Primary',this,event)">🟢 Primary<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor" data-val="cloud" onclick="pickActorCol('cloud','🔵 Cloud',this,event)">🔵 Cloud<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor" data-val="archive" onclick="pickActorCol('archive','🟠 Archive',this,event)">🟠 Archive<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div></div></div><div class="cdd-wrap-actor"><div class="cdd-btn-actor" id="cddModeBtnActor" onclick="toggleActorCdd('mode',event)"><span id="cddModeLabelActor">{ap_mode_lbl}</span></div><span class="cdd-arrow-actor">&#9660;</span><div class="cdd-menu-actor" id="cddModeMenuActor"><div class="cdd-item-actor{ap_sel_tg}" data-val="tg" onclick="pickActorMode('tg','🖼️ Original TG Thumb',this,event)">🖼️ Original TG Thumb<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div><div class="cdd-item-actor{ap_sel_none}" data-val="none" onclick="pickActorMode('none','⚡ Text Only (Fastest)',this,event)">⚡ Text Only (Fastest)<span class="cdd-radio-actor"><span class="cdd-radio-dot-actor"></span></span></div></div></div></div></div><div id="actor_video_results" class="res-grid"></div><div class="pagination" id="actor_page_box" style="display:none"><button class="pg-btn" id="actor_pBtn" onclick="actorPagePrev()" disabled>Previous</button><span class="pg-info" id="actor_pgInfo">Page 1</span><button class="pg-btn" id="actor_nBtn" onclick="actorPageNext()">Next</button></div></div><div id="tab-gallery" class="actor-panel">{gallery_grid_html}</div></main><div id="actorLightboxModal" class="lightbox" onclick="closeLightbox()"><button class="lightbox-close" onclick="closeLightbox()">&times;</button><img id="lightboxTargetImg" class="lightbox-img" src="" onclick="event.stopPropagation()"></div><input type="hidden" id="actor_master_tags_payload" value="{tags_json_payload}">{profile_edit_modal}<script>var actCurPage=1,actOffset=0,actNextOffset="",actLimit={MAX_WEB_RESULTS},actCol="all",actMode=MediaView.media("{DEFAULT_MEDIA_MODE}"),actMovieReqId=0;document.getElementById('cddModeLabelActor').textContent=actMode==='none'?'⚡ Text Only (Fastest)':'🖼️ Original TG Thumb';document.querySelectorAll('#cddModeMenuActor .cdd-item-actor').forEach(i=>i.classList.toggle('selected',i.dataset.val===actMode));MediaView.subscribe(function(value){{var mode=value==='text'?'none':'tg';if(mode===actMode)return;actMode=mode;document.getElementById('cddModeLabelActor').textContent=mode==='none'?'⚡ Text Only (Fastest)':'🖼️ Original TG Thumb';document.querySelectorAll('#cddModeMenuActor .cdd-item-actor').forEach(i=>i.classList.toggle('selected',i.dataset.val===mode));resetActorSearchPage();if(document.getElementById('actor_video_results').innerHTML)triggerActorSearchAjax();}});function closeActorCdds(){{document.getElementById('cddColMenuActor').style.display='none';document.getElementById('cddColBtnActor').classList.remove('open');document.getElementById('cddModeMenuActor').style.display='none';document.getElementById('cddModeBtnActor').classList.remove('open');}}function toggleActorCdd(w,e){{if(e)e.stopPropagation();var mid=w==='col'?'cddColMenuActor':'cddModeMenuActor',bid=w==='col'?'cddColBtnActor':'cddModeBtnActor',oid=w==='col'?'cddModeMenuActor':'cddColMenuActor',obid=w==='col'?'cddModeBtnActor':'cddColBtnActor';document.getElementById(oid).style.display='none';document.getElementById(obid).classList.remove('open');var m=document.getElementById(mid),b=document.getElementById(bid);if(m.style.display==='block'){{m.style.display='none';b.classList.remove('open');}}else{{m.style.display='block';b.classList.add('open');}}}}function pickActorCol(v,l,el,e){{if(e)e.stopPropagation();actCol=v;document.getElementById('cddColLabelActor').textContent=l;document.querySelectorAll('#cddColMenuActor .cdd-item-actor').forEach(i=>i.classList.remove('selected'));el.classList.add('selected');closeActorCdds();resetActorSearchPage();triggerActorSearchAjax();}}function pickActorMode(v,l,el,e){{if(e)e.stopPropagation();actMode=v;MediaView.set(v);document.getElementById('cddModeLabelActor').textContent=l;document.querySelectorAll('#cddModeMenuActor .cdd-item-actor').forEach(i=>i.classList.remove('selected'));el.classList.add('selected');closeActorCdds();resetActorSearchPage();triggerActorSearchAjax();}}document.addEventListener('click',closeActorCdds);function openLightbox(s){{document.getElementById('lightboxTargetImg').src=s;var lb=document.getElementById('actorLightboxModal');lb.style.display='flex';setTimeout(()=>lb.classList.add('open'),10);}}function closeLightbox(){{var lb=document.getElementById('actorLightboxModal');lb.classList.remove('open');setTimeout(()=>lb.style.display='none',200);}}function switchActorTab(ev,tId){{document.querySelectorAll('.actor-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.actor-tab').forEach(t=>t.classList.remove('active'));document.getElementById(tId).classList.add('active');ev.currentTarget.classList.add('active');if(tId==='tab-video'&&!document.getElementById('actor_video_results').innerHTML)triggerActorSearchAjax();}}function openActorEditModal(){{document.getElementById('actorEditModal').classList.add('open');}}function closeActorEditModal(){{var m=document.getElementById('actorEditModal'),f=m&&m.querySelector('form[data-profile-form]');if(f&&f.dataset.saving==='true'){{showToast('Please wait for the save to finish.');return;}}if(m)m.classList.remove('open');}}function resetActorSearchPage(){{actCurPage=1;actOffset=0;}}async function triggerActorSearchAjax(){{var q=document.getElementById('actor_movie_q').value.trim(),grid=document.getElementById('actor_video_results');var wrap=document.getElementById('actMovieWrap');var myReq=++actMovieReqId;var loadTimer=setTimeout(function(){{if(myReq!==actMovieReqId)return;if(wrap)wrap.classList.add('loading');}},150);try{{var r=await fetch('/api/actor/search?q='+encodeURIComponent(q)+'&offset='+actOffset+'&col='+actCol+'&mode='+actMode+'&id={actor_id}');if(myReq!==actMovieReqId){{clearTimeout(loadTimer);return;}}clearTimeout(loadTimer);if(wrap)wrap.classList.remove('loading');if(!r.ok)throw new Error('HTTP '+r.status);var d=await r.json();if(myReq!==actMovieReqId)return;grid.className='res-grid mode-'+actMode;if(!d.results||!d.results.length){{grid.innerHTML='<div class="empty"><p>No video assets matching filters found.</p></div>';document.getElementById('actor_page_box').style.display='none';return;}}var h='';d.results.forEach(f=>{{h+=renderActorMediaCard(f,actMode,document.getElementById('editCombinedModal')!==null);}});grid.innerHTML=h;staggerCards(grid);actNextOffset=d.next_offset;document.getElementById('actor_page_box').style.display='flex';document.getElementById('actor_pBtn').disabled=(actOffset===0);document.getElementById('actor_nBtn').disabled=!actNextOffset;document.getElementById('actor_pgInfo').textContent='Page '+actCurPage;}}catch(e){{clearTimeout(loadTimer);if(myReq!==actMovieReqId)return;if(wrap)wrap.classList.remove('loading');grid.innerHTML='<div class="empty"><p>Could not load linked videos. Please retry.</p></div>';}}}}var actorAvatarInProgress=false;async function updateActorAvatar(aid,input){{var field=input,f=field&&field.files[0];if(!f)return;if(actorAvatarInProgress){{field.value='';showToast('Please wait for the current photo upload.');return;}}actorAvatarInProgress=true;var save=document.querySelector('#actorEditModal button[type=submit]'),oldLabel=save&&save.textContent;if(save){{save.disabled=true;save.textContent='Uploading photo…';}}var fd=new FormData();fd.append('actor_id',aid);fd.append('photo',f);field.disabled=true;try{{var r=await fetch('/api/actor/update_avatar',{{method:'POST',body:fd}}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||'Upload failed');var src='/api/actor/photo?id='+encodeURIComponent(aid)+'&v='+encodeURIComponent(d.photo_revision||Date.now());document.getElementById('actorMasterAvatarImage').src=src;var preview=document.getElementById('actorEditPreview');if(preview)preview.src=src;showToast('Profile photo updated.');}}catch(e){{showToast(e.message||'Network update error','error');}}finally{{field.value='';field.disabled=false;actorAvatarInProgress=false;if(save){{save.disabled=false;save.textContent=oldLabel;}}}}}}async function deleteGalleryImage(aid,idx,e){{if(e)e.stopPropagation();if(!confirm("Delete this photo from gallery permanently?"))return;try{{var r=await fetch('/api/actor/gallery_delete',{{method:'POST',body:JSON.stringify({{actor_id:aid,index:idx}}),headers:{{'Content-Type':'application/json'}}}}),d=await r.json();if(d.success){{alert("Image removed from gallery!");window.location.reload();}}else alert(d.error||"Delete failed!");}}catch(e){{alert("Network deletion error!");}}}}async function deleteActorProfile(id){{if(!confirm("Are you sure you want to permanently delete this profile?"))return;try{{var r=await fetch('/api/actor/delete?id='+id,{{method:'POST'}}),d=await r.json();if(d.success){{alert("Profile deleted successfully!");window.location.href='/actors';}}else alert(d.error||"Deletion failed!");}}catch(e){{alert("Network communication error!");}}}}function actorPageNext(){{if(actNextOffset){{actCurPage++;actOffset=actNextOffset;triggerActorSearchAjax();window.scrollTo(0,350);}}}}function actorPagePrev(){{if(actCurPage>1){{actCurPage--;actOffset=Math.max(0,actOffset-actLimit);triggerActorSearchAjax();window.scrollTo(0,350);}}}}document.getElementById('actor_movie_q').addEventListener('keydown',function(e){{if(e.key==='Enter'){{clearTimeout(actMovieLiveTimer);resetActorSearchPage();triggerActorSearchAjax();}}}});var actMovieLiveTimer;document.getElementById('actor_movie_q').addEventListener('input',function(){{clearTimeout(actMovieLiveTimer);actMovieLiveTimer=setTimeout(function(){{resetActorSearchPage();triggerActorSearchAjax();}},350);}});</script>'''
-    
-    return build_page(f"{actor_name} - Directory Profile", ACTOR_FORM_CSS + css_js_minified + ACTOR_MEDIA_SCRIPT + PROFILE_FORM_JS, "", "actors", role)
+    actor_page_js = f'''
+var hideSelFab=true;
+var actCurPage=1,actOffset=0,actNextOffset="",actOffHist=[],actPageGroups={{}},actLimit={MAX_WEB_RESULTS},actCol="all",actGF="all",actMovieReqId=0,actVideosLoaded=false;
+var actMode=MediaView.media("{DEFAULT_MEDIA_MODE}");
+var pMode=actMode;
+document.addEventListener('DOMContentLoaded',function(){{isAdminView=(document.getElementById('editCombinedModal')!==null);}});
+document.getElementById('cddModeLabelActor').textContent=actMode==='none'?'📄 Text':'🖼️ Poster';
+document.getElementById('cddModeBtnActor').setAttribute('aria-label','View mode filter: '+(actMode==='none'?'Text':'Poster'));
+document.querySelectorAll('#cddModeMenuActor .cdd-item').forEach(function(i){{i.classList.toggle('selected',i.dataset.val===actMode);}});
+MediaView.subscribe(function(value){{
+    var mode=value==='text'?'none':'tg';if(mode===actMode)return;
+    actMode=mode;pMode=mode;
+    document.getElementById('cddModeLabelActor').textContent=mode==='none'?'📄 Text':'🖼️ Poster';
+    document.getElementById('cddModeBtnActor').setAttribute('aria-label','View mode filter: '+(mode==='none'?'Text':'Poster'));
+    document.querySelectorAll('#cddModeMenuActor .cdd-item').forEach(function(i){{i.classList.toggle('selected',i.dataset.val===mode);}});
+    if(actVideosLoaded)triggerActorSearchAjax();
+}});
+var ACTOR_CDDS={{gf:['cddGfMenuActor','cddGfBtnActor'],col:['cddColMenuActor','cddColBtnActor'],mode:['cddModeMenuActor','cddModeBtnActor']}};
+function closeActorCdds(){{
+    Object.keys(ACTOR_CDDS).forEach(function(k){{
+        var m=document.getElementById(ACTOR_CDDS[k][0]),b=document.getElementById(ACTOR_CDDS[k][1]);
+        if(m)m.style.display='none';if(b){{b.classList.remove('open');b.setAttribute('aria-expanded','false');}}
+    }});
+}}
+function toggleActorCdd(w,e){{
+    if(e)e.stopPropagation();
+    var pair=ACTOR_CDDS[w];if(!pair)return;
+    var m=document.getElementById(pair[0]),b=document.getElementById(pair[1]);
+    var isOpen=m.style.display!=='none';
+    closeActorCdds();
+    if(!isOpen){{m.style.display='block';b.classList.add('open');b.setAttribute('aria-expanded','true');}}
+}}
+function pickActorGF(v,l,el,e){{
+    if(e)e.stopPropagation();
+    actGF=v;
+    document.getElementById('cddGfLabelActor').textContent=l;
+    document.getElementById('cddGfBtnActor').setAttribute('aria-label','Group filter: '+l);
+    document.querySelectorAll('#cddGfMenuActor .cdd-item').forEach(function(i){{i.classList.remove('selected');}});
+    el.classList.add('selected');
+    closeActorCdds();
+    if(e&&e.detail===0)document.getElementById('cddGfBtnActor').focus();
+    resetActorSearchPage();
+    triggerActorSearchAjax();
+}}
+function pickActorCol(v,l,el,e){{
+    if(e)e.stopPropagation();
+    actCol=v;
+    document.getElementById('cddColLabelActor').textContent=l;
+    document.getElementById('cddColBtnActor').setAttribute('aria-label','Collection filter: '+l);
+    document.querySelectorAll('#cddColMenuActor .cdd-item').forEach(function(i){{i.classList.remove('selected');}});
+    el.classList.add('selected');
+    closeActorCdds();
+    if(e&&e.detail===0)document.getElementById('cddColBtnActor').focus();
+    resetActorSearchPage();
+    triggerActorSearchAjax();
+}}
+function pickActorMode(v,l,el,e){{
+    if(e)e.stopPropagation();
+    actMode=v;pMode=v;MediaView.set(v);
+    document.getElementById('cddModeLabelActor').textContent=l;
+    document.getElementById('cddModeBtnActor').setAttribute('aria-label','View mode filter: '+l);
+    document.querySelectorAll('#cddModeMenuActor .cdd-item').forEach(function(i){{i.classList.remove('selected');}});
+    el.classList.add('selected');
+    closeActorCdds();
+    if(e&&e.detail===0)document.getElementById('cddModeBtnActor').focus();
+    triggerActorSearchAjax();
+}}
+document.addEventListener('click',function(e){{if(!e.target.closest('.actor-search-panel .cdd-wrap'))closeActorCdds();}});
+document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{var open=document.querySelector('.actor-search-panel .cdd-btn[aria-expanded="true"]');if(open){{closeActorCdds();open.focus();}}}}}});
+document.querySelectorAll('.actor-search-panel .cdd-menu').forEach(function(m){{m.addEventListener('click',function(e){{e.stopPropagation();}});}});
+function openLightbox(s){{document.getElementById('lightboxTargetImg').src=s;var lb=document.getElementById('actorLightboxModal');lb.style.display='flex';setTimeout(()=>lb.classList.add('open'),10);}}
+function closeLightbox(){{var lb=document.getElementById('actorLightboxModal');lb.classList.remove('open');setTimeout(()=>lb.style.display='none',200);}}
+function switchActorTab(ev,tId){{
+    if(tId!=='tab-video'&&selMode)toggleSelMode(false);
+    document.querySelectorAll('.actor-panel').forEach(p=>p.classList.remove('active'));
+    document.querySelectorAll('.actor-tab').forEach(t=>t.classList.remove('active'));
+    document.getElementById(tId).classList.add('active');
+    ev.currentTarget.classList.add('active');
+    if(tId==='tab-video'&&!actVideosLoaded)triggerActorSearchAjax();
+}}
+function openActorEditModal(){{document.getElementById('actorEditModal').classList.add('open');}}
+function closeActorEditModal(){{var m=document.getElementById('actorEditModal'),f=m&&m.querySelector('form[data-profile-form]');if(f&&f.dataset.saving==='true'){{showToast('Please wait for the save to finish.');return;}}if(m)m.classList.remove('open');}}
+function resetActorSearchPage(){{actCurPage=1;actOffset=0;actOffHist=[];actPageGroups={{}};}}
+async function triggerActorSearchAjax(fresh){{
+    if(fresh&&typeof actOffset==='string'&&/^g[12]_/.test(actOffset)){{actOffset=0;actCurPage=1;actOffHist=[];actPageGroups={{}};}}
+    var q=document.getElementById('actor_movie_q').value.trim(),grid=document.getElementById('actor_video_results');
+    var wrap=document.getElementById('actMovieWrap');var myReq=++actMovieReqId;
+    var loadTimer=setTimeout(function(){{if(myReq!==actMovieReqId)return;if(wrap)wrap.classList.add('loading');}},150);
+    try{{
+        var url='/api/actor/search?q='+encodeURIComponent(q)+'&offset='+encodeURIComponent(actOffset)+'&col='+actCol+'&mode='+actMode+'&group=1&gf='+actGF+'&id={actor_id}'+(fresh?'&fresh=1':'');
+        var r=await fetch(url,{{cache:'no-store'}});
+        if(myReq!==actMovieReqId){{clearTimeout(loadTimer);return;}}
+        clearTimeout(loadTimer);if(wrap)wrap.classList.remove('loading');
+        var d=null;try{{d=await r.json();}}catch(_){{d=null;}}
+        if(myReq!==actMovieReqId)return;
+        if(!r.ok||(d&&d.error))throw new Error((d&&d.error)||('HTTP '+r.status));
+        actVideosLoaded=true;
+        if(typeof d.is_admin==='boolean')isAdminView=d.is_admin;
+        pMode=actMode;
+        grid.className='res-grid mode-'+actMode+(selMode?' sel-mode':'');
+        if(!d.results||!d.results.length){{
+            actNextOffset=d.next_offset||'';actPageGroups[actOffset]=[];
+            grid.innerHTML='<div class="empty"><p>No video assets matching filters found.</p>'+(actNextOffset?'<p>More results may be on the next page.</p>':'')+'</div>';
+            document.getElementById('actor_page_box').style.display=(actNextOffset||actCurPage>1)?'flex':'none';
+            document.getElementById('actor_pBtn').disabled=(actCurPage<=1);
+            document.getElementById('actor_nBtn').disabled=!actNextOffset;
+            document.getElementById('actor_pgInfo').textContent='Page '+actCurPage;
+            renderSelBar();return;
+        }}
+        var earlier={{}};
+        actOffHist.forEach(function(oo){{(actPageGroups[oo]||[]).forEach(function(k){{earlier[k]=1;}});}});
+        var rows=d.results.filter(function(f){{return !(f.group&&earlier[f.key]);}});
+        actPageGroups[actOffset]=rows.filter(function(f){{return f.group;}}).map(function(f){{return f.key;}});
+        var h='';rows.forEach(function(f){{h+=f.group?groupHtml(f):cardHtml(f,false);}});
+        grid.innerHTML=h;renderSelBar();staggerCards(grid);
+        actNextOffset=d.next_offset||'';
+        document.getElementById('actor_page_box').style.display='flex';
+        document.getElementById('actor_pBtn').disabled=(actCurPage<=1);
+        document.getElementById('actor_nBtn').disabled=!actNextOffset;
+        document.getElementById('actor_pgInfo').textContent='Page '+actCurPage;
+    }}catch(e){{
+        clearTimeout(loadTimer);if(myReq!==actMovieReqId)return;if(wrap)wrap.classList.remove('loading');
+        grid.innerHTML='<div class="empty"><p>Could not load linked videos. Please retry.</p></div>';
+    }}
+}}
+var actorAvatarInProgress=false;async function updateActorAvatar(aid,input){{var field=input,f=field&&field.files[0];if(!f)return;if(actorAvatarInProgress){{field.value='';showToast('Please wait for the current photo upload.');return;}}actorAvatarInProgress=true;var save=document.querySelector('#actorEditModal button[type=submit]'),oldLabel=save&&save.textContent;if(save){{save.disabled=true;save.textContent='Uploading photo…';}}var fd=new FormData();fd.append('actor_id',aid);fd.append('photo',f);field.disabled=true;try{{var r=await fetch('/api/actor/update_avatar',{{method:'POST',body:fd}}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||'Upload failed');var src='/api/actor/photo?id='+encodeURIComponent(aid)+'&v='+encodeURIComponent(d.photo_revision||Date.now());document.getElementById('actorMasterAvatarImage').src=src;var preview=document.getElementById('actorEditPreview');if(preview)preview.src=src;showToast('Profile photo updated.');}}catch(e){{showToast(e.message||'Network update error','error');}}finally{{field.value='';field.disabled=false;actorAvatarInProgress=false;if(save){{save.disabled=false;save.textContent=oldLabel;}}}}}}
+async function deleteGalleryImage(aid,idx,e){{if(e)e.stopPropagation();if(!confirm("Delete this photo from gallery permanently?"))return;try{{var r=await fetch('/api/actor/gallery_delete',{{method:'POST',body:JSON.stringify({{actor_id:aid,index:idx}}),headers:{{'Content-Type':'application/json'}}}}),d=await r.json();if(d.success){{alert("Image removed from gallery!");window.location.reload();}}else alert(d.error||"Delete failed!");}}catch(e){{alert("Network deletion error!");}}}}
+async function deleteActorProfile(id){{if(!confirm("Are you sure you want to permanently delete this profile?"))return;try{{var r=await fetch('/api/actor/delete?id='+id,{{method:'POST'}}),d=await r.json();if(d.success){{alert("Profile deleted successfully!");window.location.href='/actors';}}else alert(d.error||"Deletion failed!");}}catch(e){{alert("Network communication error!");}}}}
+function actorPageNext(){{if(actNextOffset){{actOffHist.push(actOffset);actCurPage++;actOffset=actNextOffset;triggerActorSearchAjax();window.scrollTo(0,350);}}}}
+function actorPagePrev(){{if(actCurPage>1){{actCurPage--;actOffset=actOffHist.length?actOffHist.pop():0;triggerActorSearchAjax();window.scrollTo(0,350);}}}}
+document.getElementById('actor_movie_q').addEventListener('keydown',function(e){{if(e.key==='Enter'){{clearTimeout(actMovieLiveTimer);resetActorSearchPage();triggerActorSearchAjax();}}}});
+var actMovieLiveTimer;document.getElementById('actor_movie_q').addEventListener('input',function(){{clearTimeout(actMovieLiveTimer);actMovieLiveTimer=setTimeout(function(){{resetActorSearchPage();triggerActorSearchAjax();}},350);}});'''
+
+    css_js_minified = actor_page_markup + f"<script>{GROUP_ENGINE_JS}{actor_page_js}</script>"
+
+    return build_page(
+        f"{actor_name} - Directory Profile",
+        DIRECTORY_FILTER_CSS + SEARCH_PANEL_CSS + GROUP_CARD_CSS + ACTOR_FORM_CSS + css_js_minified + PROFILE_FORM_JS,
+        "",
+        "actors",
+        role,
+    )
 
 # ─────────────────────────────────────────────────────────
 # ⚙️ PROFILE PAGE: INTERNAL FILE SEARCH API
@@ -592,31 +732,43 @@ async def api_actor_search_handler(req):
     role, tg_id = await get_auth(req)
     if not role or not await require_active_plan(role, tg_id):
         return web.json_response({"error": "Unauthorized"}, status=403, dumps=fast_json)
+    if role == "admin" and req.query.get("fresh") == "1":
+        _invalidate_search_caches()
+
     actor_id, q_custom = req.query.get("id"), req.query.get("q", "").strip()
-    # नोट: `mode` query-param अब पढ़ा नहीं जाता — इस handler में thumbnail हमेशा
-    # tg_thumb के तौर पर भेजा जाता है, इसलिए variable bind करना dead code था।
-    off, col = req.query.get("offset", "0"), req.query.get("col", "all").lower()
-    
-    if not actor_id: return web.json_response({"results": []}, dumps=fast_json)
-    try: off = max(0, int(off))
-    except: off = 0
-        
+    off = req.query.get("offset", "0")
+    col = req.query.get("col", "all").lower()
+    mode = req.query.get("mode", DEFAULT_MEDIA_MODE).lower()
+    want_group = req.query.get("group", "1") == "1"
+    gf = req.query.get("gf", "all").lower()
+
+    if not actor_id:
+        return web.json_response({"results": [], "next_offset": "", "is_admin": role == "admin"}, dumps=fast_json)
     if not ObjectId.is_valid(actor_id):
         return web.json_response({"error": "Invalid profile ID"}, status=400, dumps=fast_json)
     actor = await actors.find_one({"_id": ObjectId(actor_id)})
-    if not actor: return web.json_response({"results": []}, dumps=fast_json)
-    
+    if not actor:
+        return web.json_response({"results": [], "next_offset": "", "is_admin": role == "admin"}, dumps=fast_json)
+
     tags_list = actor.get("tags", [])
     search_query, final_tags = (q_custom, []) if q_custom else (tags_list[0] if tags_list else "", tags_list)
-    if not search_query: return web.json_response({"results": [], "next_offset": ""}, dumps=fast_json)
-        
-    lim = MAX_WEB_RESULTS
-    all_m, next_offset = await get_actor_search_results(search_query, final_tags, max_results=lim, offset=off, collection_type=col)
-    
-    # Use the same thumbnail revision and file-reference logic as the dashboard.
-    results_list = await _annotate_raw_groups(_build_results_list(all_m, "tg"))
-        
-    return web.json_response({"results": results_list, "next_offset": next_offset}, dumps=fast_json)
+    if not search_query:
+        return web.json_response({"results": [], "next_offset": "", "is_admin": role == "admin"}, dumps=fast_json)
+
+    try:
+        results_list, next_offset = await actor_search_page(
+            actor_id, search_query, final_tags, col, off, MAX_WEB_RESULTS, mode, gf, want_group
+        )
+    except ValueError:
+        return web.json_response({"error": "Invalid or expired pagination cursor. Start the search again."}, status=400, dumps=fast_json)
+    except _GroupCursorLimitError:
+        return web.json_response({"error": "Too many results to continue. Please narrow your search."}, status=400, dumps=fast_json)
+    except _GroupCursorStorageError:
+        return web.json_response({"error": "Pagination is temporarily unavailable. Please try again."}, status=503, dumps=fast_json)
+    except Exception:
+        return web.json_response({"error": "Search is temporarily unavailable."}, status=503, dumps=fast_json)
+
+    return web.json_response({"results": results_list, "next_offset": next_offset, "is_admin": role == "admin"}, dumps=fast_json)
 
 # ─────────────────────────────────────────────────────────
 # ⚙️ PROFILE: UPDATE PROFILE DATA

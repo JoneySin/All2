@@ -522,7 +522,7 @@ async function saveAllChanges(){
 
 function refreshGridAfterEdit() {
     if(typeof doSearch==='function')return doSearch(curOff,true,true);
-    if(typeof triggerActorSearchAjax==='function')return triggerActorSearchAjax();
+    if(typeof triggerActorSearchAjax==='function')return triggerActorSearchAjax(true);
     window.location.reload();
 }
 function staggerCards(container){

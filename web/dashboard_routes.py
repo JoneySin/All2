@@ -9,22 +9,24 @@ dashboard_routes = web.RouteTableDef()
 # ─────────────────────────────────────────────────────────────────────────────
 # 🎨 DASHBOARD SPECIFIC CSS (सिर्फ सर्च बार और ड्रॉपडाउन के लिए, कार्ड्स ग्लोबल हैं)
 # ─────────────────────────────────────────────────────────────────────────────
-CARD_CSS = """
+SEARCH_PANEL_CSS = """
 <style>
 /* ── Search zone ── */
 .search-zone{padding:16px 20px 0;max-width:1400px;margin:0 auto}
 .search-row1{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .search-row2{display:flex;align-items:center;justify-content:center;gap:10px}
 .home-search-panel{margin-bottom:0}
+.actor-search-panel{margin-bottom:16px}
 @media(min-width:768px){
   .search-zone{padding:24px 24px 10px}
   /* Keep the mobile markup/order but place every desktop filter below search. */
-  .home-search-panel{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-areas:'search search search' 'group collection mode';gap:10px}
-  .home-search-panel .search-row1,.home-search-panel .search-row2{display:contents}
-  .home-search-panel #qWrap{grid-area:search}
-  .home-search-panel #cddGfWrap{grid-area:group}
-  .home-search-panel #cddColWrap{grid-area:collection}
-  .home-search-panel #cddModeWrap{grid-area:mode}
+  .home-search-panel,.actor-search-panel{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-areas:'search search search' 'group collection mode';gap:10px}
+  .home-search-panel .search-row1,.home-search-panel .search-row2,
+  .actor-search-panel .search-row1,.actor-search-panel .search-row2{display:contents}
+  .home-search-panel #qWrap,.actor-search-panel #actMovieWrap{grid-area:search}
+  .home-search-panel #cddGfWrap,.actor-search-panel #cddGfWrapActor{grid-area:group}
+  .home-search-panel #cddColWrap,.actor-search-panel #cddColWrapActor{grid-area:collection}
+  .home-search-panel #cddModeWrap,.actor-search-panel #cddModeWrapActor{grid-area:mode}
 }
 @media(max-width:767px){.search-row2 .cdd-wrap{flex:1 1 0;min-width:0}.search-row1 .gf-wrap{flex:0 0 100px}}
 
@@ -47,13 +49,19 @@ CARD_CSS = """
   transition:background-color 9999s ease-in-out 0s;
 }
 /* The surrounding control and menu use the same shared directory filter CSS. */
-.home-search-panel .cdd-btn{background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;min-width:0;flex:1;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.home-search-panel .cdd-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
-.home-search-panel .cdd-arrow{pointer-events:none;margin-left:8px}
-.home-search-panel button.cdd-item{display:block;width:100%;background:none;border:0;border-bottom:1px solid var(--border);color:var(--text);font:inherit;text-align:left;cursor:pointer}
-.home-search-panel button.cdd-item:last-child{border-bottom:0}.home-search-panel button.cdd-item:hover{background:var(--bg3);color:var(--accent)}
-.home-search-panel button.cdd-item.selected{color:var(--accent)}
-.home-search-panel button.cdd-item:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.home-search-panel .cdd-btn,.actor-search-panel .cdd-btn{background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;min-width:0;flex:1;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-search-panel .cdd-btn:focus-visible,.actor-search-panel .cdd-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+.home-search-panel .cdd-arrow,.actor-search-panel .cdd-arrow{pointer-events:none;margin-left:8px}
+.home-search-panel button.cdd-item,.actor-search-panel button.cdd-item{display:block;width:100%;background:none;border:0;border-bottom:1px solid var(--border);color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.home-search-panel button.cdd-item:last-child,.actor-search-panel button.cdd-item:last-child{border-bottom:0}
+.home-search-panel button.cdd-item:hover,.actor-search-panel button.cdd-item:hover{background:var(--bg3);color:var(--accent)}
+.home-search-panel button.cdd-item.selected,.actor-search-panel button.cdd-item.selected{color:var(--accent)}
+.home-search-panel button.cdd-item:focus-visible,.actor-search-panel button.cdd-item:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+</style>
+"""
+
+GROUP_CARD_CSS = """
+<style>
 .source-pill.mixed{background:#78350f;color:#fcd34d;border:1px solid #f59e0b}
 .source-pill.mixed .source-dot{background:#fcd34d}
 /* ── Quality group card (master thumbnail = single file jaisa bada poster) ── */
@@ -184,84 +192,12 @@ CARD_CSS = """
 @media(max-width:480px){.gm-card,.merge-card{padding:18px!important}.gm-type-option{padding:10px}.grp-openhead .grp-oadmin{width:100%;flex-wrap:wrap}.gm-row{flex-wrap:wrap}.gm-row .gm-btn{min-width:100px}}
 </style>
 """
+CARD_CSS = SEARCH_PANEL_CSS + GROUP_CARD_CSS
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 🎬 JS ENGINE — Smart Double Pre-fetching Engine Live Live
+# 🎬 SHARED GROUP & CARD ENGINE JS (Dashboard + Actor Profile Linked Media)
 # ─────────────────────────────────────────────────────────────────────────────
-JS_ENGINE = """
-var curOff=0,nextOff='',curCol='all',curPage=1;
-var searchReqId=0, nextPagePrefetch=null;
-// Shared preference keeps media and catalogue views in sync.
-var pMode=MediaView.media('__DEFAULT_MEDIA_MODE__');
-
-var CDDS={col:['cddColMenu','cddColBtn'],mode:['cddModeMenu','cddModeBtn'],gf:['cddGfMenu','cddGfBtn']};
-function closeCdds(){
-    Object.keys(CDDS).forEach(function(k){
-        var m=document.getElementById(CDDS[k][0]),b=document.getElementById(CDDS[k][1]);
-        if(m)m.style.display='none';if(b){b.classList.remove('open');b.setAttribute('aria-expanded','false');}
-    });
-}
-function toggleCdd(which,e){
-    if(e){e.stopPropagation();}
-    var menu=document.getElementById(CDDS[which][0]);
-    var btn=document.getElementById(CDDS[which][1]);
-    var isOpen=menu.style.display!=='none';
-    closeCdds();
-    if(!isOpen){menu.style.display='block';btn.classList.add('open');btn.setAttribute('aria-expanded','true');}
-}
-var curGF='all';
-function pickGF(val,label,el,e){
-    if(e){e.stopPropagation();}
-    curGF=val;curPage=1;
-    document.getElementById('cddGfLabel').textContent=label;
-    document.getElementById('cddGfBtn').setAttribute('aria-label','Group filter: '+label);
-    document.querySelectorAll('#cddGfMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
-    el.classList.add('selected');
-    closeCdds();
-    if(e&&e.detail===0)document.getElementById('cddGfBtn').focus();
-    doSearch(0,true);
-}
-function pickCol(val,label,el,e){
-    if(e){e.stopPropagation();}
-    curCol=val;
-    document.getElementById('cddColLabel').textContent=label;
-    document.getElementById('cddColBtn').setAttribute('aria-label','Collection filter: '+label);
-    document.querySelectorAll('#cddColMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
-    el.classList.add('selected');
-    closeCdds();
-    if(e&&e.detail===0)document.getElementById('cddColBtn').focus();
-    doSearch(0,true);
-}
-function pickMode(val,label,el,e){
-    if(e){e.stopPropagation();}
-    pMode=val;
-    MediaView.set(pMode);
-    document.getElementById('cddModeLabel').textContent=label;
-    document.getElementById('cddModeBtn').setAttribute('aria-label','View mode filter: '+label);
-    document.querySelectorAll('#cddModeMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
-    el.classList.add('selected');
-    closeCdds();
-    if(e&&e.detail===0)document.getElementById('cddModeBtn').focus();
-    doSearch(curOff,true);
-}
-document.addEventListener('click',function(e){
-    if(!e.target.closest('.cdd-wrap')){closeCdds();}
-});
-document.addEventListener('keydown',function(e){
-    if(e.key==='Escape'){var open=document.querySelector('.home-search-panel .cdd-btn[aria-expanded=\"true\"]');if(open){closeCdds();open.focus();}}
-});
-document.querySelectorAll('.cdd-menu').forEach(function(m){
-    m.addEventListener('click',function(e){e.stopPropagation();});
-});
-
-/* ✅ DUPLICATE REMOVED: handleThumbError() यहाँ दोबारा defined था, जबकि
-   web_assets.py के global JS में यह पहले से है (और वहाँ वाला version बेहतर है —
-   पूरा poster-box overlay करता है, सिर्फ़ छोटा span नहीं)। build_page() global JS
-   <head> में डालता है और यह script <body> में बाद में आता है, इसलिए यही कमज़ोर
-   copy global वाली को shadow कर रही थी — यानी dashboard पर thumbnail-fail हमेशा
-   घटिया दिखता था। अब सिर्फ़ global version चलता है। */
-
-
+GROUP_ENGINE_JS = """
 var isAdminView=false;
 var openGroups={};
 
@@ -393,7 +329,7 @@ function selCount(){return Object.keys(SEL).length;}
 var scanTimer=null;
 async function scanAllGroups(e){
     if(e)e.stopPropagation();
-    closeCdds();
+    if(typeof closeCdds==='function')closeCdds();
     if(!confirm('Poori library scan karke permanent groups banayein? (40k files me kuch minute lag sakte hain)'))return;
     try{
         var r=await fetch('/api/group/scan_all',{method:'POST'}),d=await r.json();
@@ -416,9 +352,12 @@ async function scanAllGroups(e){
 function renderSelBar(){
     var bar=document.getElementById('selBar'),fab=document.getElementById('selFab');
     if(!isAdminView){if(bar)bar.remove();if(fab)fab.remove();return;}
-    if(!fab){fab=document.createElement('button');fab.id='selFab';fab.className='sel-fab';fab.onclick=function(){toggleSelMode();};document.body.appendChild(fab);}
-    fab.style.display=selMode?'none':'block';
-    fab.innerHTML='&#9745; Group Mode';
+    if(typeof hideSelFab!=='undefined'&&hideSelFab){if(fab)fab.remove();}
+    else{
+        if(!fab){fab=document.createElement('button');fab.id='selFab';fab.className='sel-fab';fab.onclick=function(){toggleSelMode();};document.body.appendChild(fab);}
+        fab.style.display=selMode?'none':'block';
+        fab.innerHTML='&#9745; Group Mode';
+    }
     if(!selMode){if(bar)bar.remove();return;}
     if(!bar){bar=document.createElement('div');bar.id='selBar';bar.className='sel-bar';document.body.appendChild(bar);}
     var n=selCount();
@@ -429,7 +368,7 @@ function renderSelBar(){
 }
 function toggleSelMode(on){
     selMode=(typeof on==='boolean')?on:!selMode;
-    var rd=document.getElementById('results');
+    var rd=document.getElementById('results')||document.getElementById('actor_video_results');
     if(rd)rd.classList.toggle('sel-mode',selMode);
     if(!selMode){SEL={};document.querySelectorAll('.file-card.sel').forEach(function(c){c.classList.remove('sel');});}
     renderSelBar();
@@ -872,7 +811,77 @@ async function saveGroupModal(){
         else{btn.disabled=false;btn.textContent='Save group';gmSyncSaveButton();}
     }
 }
+"""
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 🎬 JS ENGINE — Smart Double Pre-fetching Engine Live Live
+# ─────────────────────────────────────────────────────────────────────────────
+JS_ENGINE = ("""
+var curOff=0,nextOff='',curCol='all',curPage=1;
+var searchReqId=0, nextPagePrefetch=null;
+// Shared preference keeps media and catalogue views in sync.
+var pMode=MediaView.media('__DEFAULT_MEDIA_MODE__');
+
+var CDDS={col:['cddColMenu','cddColBtn'],mode:['cddModeMenu','cddModeBtn'],gf:['cddGfMenu','cddGfBtn']};
+function closeCdds(){
+    Object.keys(CDDS).forEach(function(k){
+        var m=document.getElementById(CDDS[k][0]),b=document.getElementById(CDDS[k][1]);
+        if(m)m.style.display='none';if(b){b.classList.remove('open');b.setAttribute('aria-expanded','false');}
+    });
+}
+function toggleCdd(which,e){
+    if(e){e.stopPropagation();}
+    var menu=document.getElementById(CDDS[which][0]);
+    var btn=document.getElementById(CDDS[which][1]);
+    var isOpen=menu.style.display!=='none';
+    closeCdds();
+    if(!isOpen){menu.style.display='block';btn.classList.add('open');btn.setAttribute('aria-expanded','true');}
+}
+var curGF='all';
+function pickGF(val,label,el,e){
+    if(e){e.stopPropagation();}
+    curGF=val;curPage=1;
+    document.getElementById('cddGfLabel').textContent=label;
+    document.getElementById('cddGfBtn').setAttribute('aria-label','Group filter: '+label);
+    document.querySelectorAll('#cddGfMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
+    el.classList.add('selected');
+    closeCdds();
+    if(e&&e.detail===0)document.getElementById('cddGfBtn').focus();
+    doSearch(0,true);
+}
+function pickCol(val,label,el,e){
+    if(e){e.stopPropagation();}
+    curCol=val;
+    document.getElementById('cddColLabel').textContent=label;
+    document.getElementById('cddColBtn').setAttribute('aria-label','Collection filter: '+label);
+    document.querySelectorAll('#cddColMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
+    el.classList.add('selected');
+    closeCdds();
+    if(e&&e.detail===0)document.getElementById('cddColBtn').focus();
+    doSearch(0,true);
+}
+function pickMode(val,label,el,e){
+    if(e){e.stopPropagation();}
+    pMode=val;
+    MediaView.set(pMode);
+    document.getElementById('cddModeLabel').textContent=label;
+    document.getElementById('cddModeBtn').setAttribute('aria-label','View mode filter: '+label);
+    document.querySelectorAll('#cddModeMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
+    el.classList.add('selected');
+    closeCdds();
+    if(e&&e.detail===0)document.getElementById('cddModeBtn').focus();
+    doSearch(curOff,true);
+}
+document.addEventListener('click',function(e){
+    if(!e.target.closest('.cdd-wrap')){closeCdds();}
+});
+document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'){var open=document.querySelector('.home-search-panel .cdd-btn[aria-expanded="true"]');if(open){closeCdds();open.focus();}}
+});
+document.querySelectorAll('.cdd-menu').forEach(function(m){
+    m.addEventListener('click',function(e){e.stopPropagation();});
+});
+""".replace("__DEFAULT_MEDIA_MODE__", DEFAULT_MEDIA_MODE)) + GROUP_ENGINE_JS + ("""
 async function doSearch(o,allowEmpty,fresh){
     // After an edit, start a fresh snapshot so moved/new groups appear immediately.
     if(fresh&&typeof o==='string'&&/^g[12]_/.test(o))o=0;
@@ -988,7 +997,7 @@ document.addEventListener('DOMContentLoaded',function(){
     var savedQ=sessionStorage.getItem('ff_dash_q');
     if(savedQ && q){q.value=savedQ;doSearch(0);}else{doSearch(0,true);}
 });
-""".replace("__DEFAULT_MEDIA_MODE__", DEFAULT_MEDIA_MODE)
+""")
 
 # 🎛️ Default mode dropdown state (centralized via DEFAULT_MEDIA_MODE in web_assets.py)
 _MODE_TG_LBL = '\U0001f5bc\ufe0f Poster'

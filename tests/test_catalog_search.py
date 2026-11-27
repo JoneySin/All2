@@ -100,3 +100,214 @@ class GroupFilterTests(unittest.TestCase):
                          {'$and': [query, {'group_id': {'$exists': True}}]})
         self.assertEqual(db._apply_group_filter(query, True, True),
                          {'$and': [query, {'group_id': {'$exists': False}}]})
+
+
+class ActorSearchSyncTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        import asyncio
+        from web import search_api as api
+        self.api = api
+        self.mongo = AsyncMongoMockClient()
+        self.db = self.mongo['actor_search_sync_test']
+        self.cols = {name: self.db[name.capitalize()] for name in ('primary', 'cloud', 'archive')}
+        self.groups = self.db.QualityGroups
+        self.seq = self.db.QualityGroupSeq
+        self.actors = self.db.Actors
+        self.actor_id = '65ab12345678901234567890'
+        await self.actors.insert_one({
+            '_id': ObjectId(self.actor_id),
+            'name': 'Maya Lin',
+            'bio': 'Test bio',
+            'tags': ['Maya', 'Lin'],
+            'gallery': [],
+        })
+        async def mock_find_phrase_files(phrase, limit=100):
+            import re
+            words = str(phrase or '').split()[:12]
+            if not words:
+                return []
+            pattern = '^' + ''.join('(?=.*' + re.escape(w) + ')' for w in words)
+            q = {'file_name': re.compile(pattern, re.I)}
+            out = []
+            for cname, c in self.cols.items():
+                docs = await c.find(q, db.FILE_PROJECTION).limit(limit).to_list(length=limit)
+                for d in docs:
+                    d['source_col'] = cname
+                out.extend(docs)
+            return out
+
+        self.patches = [
+            patch.object(actor_routes, 'actors', self.actors),
+            patch.object(actor_routes, 'get_auth', AsyncMock(return_value=('admin', 1))),
+            patch.object(actor_routes, 'require_active_plan', AsyncMock(return_value=True)),
+            patch.object(api, 'groups', self.groups),
+            patch.object(api, 'group_seq', self.seq),
+            patch.object(api, 'group_search_cursors', self.db.GroupSearchCursors),
+            patch.object(api, 'FILE_COLLECTIONS', self.cols),
+            patch.object(api, 'COLLECTIONS', {**self.cols, 'actors': self.actors}),
+            patch.object(api, 'find_phrase_files', mock_find_phrase_files),
+            patch.object(api, 'get_user_role', AsyncMock(return_value=('admin', 1))),
+            patch.object(api, '_AUTO_GROUP_LOCK', asyncio.Lock()),
+            patch.object(db, 'primary', self.cols['primary']),
+            patch.object(db, 'cloud', self.cols['cloud']),
+            patch.object(db, 'archive', self.cols['archive']),
+            patch.object(db, 'groups', self.groups),
+            patch.object(db, 'FILE_COLLECTIONS', self.cols),
+            patch.object(db, 'COLLECTIONS', {**self.cols, 'actors': self.actors}),
+        ]
+        for p in self.patches:
+            p.start()
+            self.addCleanup(p.stop)
+        api._GH_CACHE.clear()
+        api._SIB_CACHE.clear()
+        api.PREFETCH_CACHE.clear()
+        api.TRENDING_CACHE.clear()
+        app = web.Application()
+        app.add_routes(actor_routes.actor_routes)
+        self.client = TestClient(TestServer(app))
+        await self.client.start_server()
+
+    async def asyncTearDown(self):
+        await self.client.close()
+        self.mongo.close()
+
+    async def _seed_media(self):
+        await self.groups.insert_one({
+            '_id': '9', 'num': 9, 'name': 'Maya Anthology',
+            'members': ['g1', 'g2'], 'group_type': 'series',
+        })
+        await self.cols['primary'].insert_many([
+            {'_id': 'g1', 'file_ref': 'g1', 'file_name': 'Anthology Episode 1.mkv',
+             'caption': 'Maya starring part 1', 'file_size': 1000, 'file_type': 'video',
+             'duration': 1800, 'group_id': '9'},
+            {'_id': 's1', 'file_ref': 's1', 'file_name': 'Maya Solo Clip.mp4',
+             'caption': '', 'file_size': 500, 'file_type': 'video', 'duration': 600},
+        ])
+        await self.cols['cloud'].insert_many([
+            {'_id': 'g2', 'file_ref': 'g2', 'file_name': 'Anthology Episode 2.mkv',
+             'caption': '', 'file_size': 1200, 'file_type': 'video',
+             'duration': 1900, 'group_id': '9'},
+            {'_id': 'a1', 'file_ref': 'a1', 'file_name': 'Lin Feature 720p.mkv',
+             'caption': '', 'file_size': 2000, 'file_type': 'video', 'duration': 3600},
+            {'_id': 'a2', 'file_ref': 'a2', 'file_name': 'Lin Feature 1080p.mkv',
+             'caption': '', 'file_size': 3000, 'file_type': 'video', 'duration': 3600},
+        ])
+        await self.cols['archive'].insert_many([
+            {'_id': 'a3', 'file_ref': 'a3', 'file_name': 'Lin Feature 480p.mkv',
+             'caption': '', 'file_size': 1500, 'file_type': 'video', 'duration': 3600},
+            {'_id': 's2', 'file_ref': 's2', 'file_name': 'Maya Archive Reel.mp4',
+             'caption': '', 'file_size': 700, 'file_type': 'video', 'duration': 900},
+        ])
+
+    async def test_actor_profile_renders_all_three_synced_filters(self):
+        resp = await self.client.get(f'/actor/{self.actor_id}')
+        self.assertEqual(resp.status, 200)
+        html = await resp.text()
+        for needle in (
+            'actor-search-panel',
+            'id="cddGfWrapActor"', 'id="cddGfBtnActor"', 'id="cddGfLabelActor"', 'id="cddGfMenuActor"',
+            'data-val="all"', 'data-val="group"', 'data-val="single"',
+            'id="cddColWrapActor"', 'id="cddModeWrapActor"',
+            'pickActorGF', 'pickActorCol', 'pickActorMode', 'groupHtml(', 'cardHtml(',
+        ):
+            self.assertIn(needle, html)
+
+    async def test_actor_search_group_filters_and_collections(self):
+        await self._seed_media()
+
+        # gf=all: saved group #9 + auto-group (a1,a2,a3) + standalone files (s1, s2)
+        r = await self.client.get('/api/actor/search', params={
+            'id': self.actor_id, 'gf': 'all', 'col': 'all', 'mode': 'tg', 'group': '1',
+        })
+        data = await r.json()
+        self.assertEqual(r.status, 200, data)
+        self.assertTrue(data['is_admin'])
+        groups = [x for x in data['results'] if x.get('group')]
+        singles = [x for x in data['results'] if not x.get('group')]
+        self.assertEqual(len(groups), 2)
+        self.assertEqual({x['file_id'] for x in singles}, {'s1', 's2'})
+        self.assertTrue(any(x.get('tg_thumb') for x in singles))
+
+        # gf=group: only groups, no standalone files
+        r = await self.client.get('/api/actor/search', params={
+            'id': self.actor_id, 'gf': 'group', 'col': 'all', 'mode': 'none', 'group': '1',
+        })
+        data = await r.json()
+        self.assertEqual(r.status, 200, data)
+        self.assertTrue(all(x.get('group') for x in data['results']))
+        self.assertEqual(len(data['results']), 2)
+        self.assertTrue(all(not v.get('tg_thumb') for g in data['results'] for v in g['variants']))
+
+        # gf=group + col=primary: only saved group #9 has a member in primary
+        r = await self.client.get('/api/actor/search', params={
+            'id': self.actor_id, 'gf': 'group', 'col': 'primary', 'mode': 'none', 'group': '1',
+        })
+        data = await r.json()
+        self.assertEqual(r.status, 200, data)
+        self.assertEqual([g['gid'] for g in data['results']], ['9'])
+
+        # gf=single (UnGroup): returns individual matching files ungrouped across collections
+        # (g2 does not mention Maya/Lin in its own file_name/caption, only in its group name)
+        r = await self.client.get('/api/actor/search', params={
+            'id': self.actor_id, 'gf': 'single', 'col': 'all', 'mode': 'none', 'group': '0',
+        })
+        data = await r.json()
+        self.assertEqual(r.status, 200, data)
+        self.assertTrue(all(not x.get('group') for x in data['results']))
+        self.assertEqual({x['file_id'] for x in data['results']}, {'g1', 's1', 'a1', 'a2', 'a3', 's2'})
+
+        # gf=single + col=archive: only archive files
+        r = await self.client.get('/api/actor/search', params={
+            'id': self.actor_id, 'gf': 'single', 'col': 'archive', 'mode': 'none', 'group': '0',
+        })
+        data = await r.json()
+        self.assertEqual(r.status, 200, data)
+        self.assertEqual({x['file_id'] for x in data['results']}, {'a3', 's2'})
+
+    async def test_actor_search_pagination_for_grouped_and_single(self):
+        await self._seed_media()
+        with patch.object(actor_routes, 'MAX_WEB_RESULTS', 1):
+            # Grouped pagination via opaque cursors
+            collected, offset, first_cursor = [], '0', None
+            for _ in range(8):
+                r = await self.client.get('/api/actor/search', params={
+                    'id': self.actor_id, 'gf': 'group', 'col': 'all', 'mode': 'none',
+                    'group': '1', 'offset': offset,
+                })
+                data = await r.json()
+                self.assertEqual(r.status, 200, data)
+                collected.extend(data['results'])
+                offset = data['next_offset']
+                if first_cursor is None:
+                    first_cursor = offset
+                if not offset:
+                    break
+            else:
+                self.fail('actor grouped cursor did not terminate')
+            self.assertEqual(len(collected), 2)
+            self.assertTrue(first_cursor)
+            # Cursor bound to actor/col/gf rejects mismatched filter
+            bad = await self.client.get('/api/actor/search', params={
+                'id': self.actor_id, 'gf': 'all', 'col': 'all', 'mode': 'none',
+                'group': '1', 'offset': first_cursor,
+            })
+            self.assertEqual(bad.status, 400)
+
+            # Single (UnGroup) numeric pagination
+            single_ids, off = [], '0'
+            for _ in range(10):
+                r = await self.client.get('/api/actor/search', params={
+                    'id': self.actor_id, 'gf': 'single', 'col': 'all', 'mode': 'none',
+                    'group': '0', 'offset': off,
+                })
+                data = await r.json()
+                self.assertEqual(r.status, 200, data)
+                single_ids.extend(x['file_id'] for x in data['results'])
+                off = str(data['next_offset'] or '')
+                if not off:
+                    break
+            else:
+                self.fail('actor single pagination did not terminate')
+            self.assertEqual(set(single_ids), {'g1', 's1', 'a1', 'a2', 'a3', 's2'})
+            self.assertEqual(len(single_ids), 6)
+

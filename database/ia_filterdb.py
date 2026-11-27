@@ -1452,30 +1452,37 @@ def unpack_new_file_id(new_file_id: str):
 # ─────────────────────────────────────────────────────────
 # 🎭 ACTOR TAGS MULTI-PIPELINE SEARCH ENGINE (100% ISOLATED & DOUBLE CHECKED)
 # ─────────────────────────────────────────────────────────
-async def get_actor_search_results(actor_name, tags_list, max_results, offset=0, collection_type="all"):
-    """नाम और सभी कस्टमाइज्ड टैग्स को मिलाकर सिंक करता है ताकि वाइल्डकार्ड क्रैश न हो।"""
+def build_actor_search_filter(actor_name, tags_list=None):
+    """Build a safe compiled regex and Mongo filter from an actor query and tag list."""
     all_terms = []
-    
     if actor_name and str(actor_name).strip():
         all_terms.append(str(actor_name).strip())
-        
     if tags_list and isinstance(tags_list, list):
         for t in tags_list:
             if t and str(t).strip():
-                all_terms.append(str(t).strip())
-                
+                t_str = str(t).strip()
+                if t_str not in all_terms:
+                    all_terms.append(t_str)
     if not all_terms:
-        return [], ""
-                
-    escaped_terms = [re.escape(term) for term in all_terms if term]
+        return None, None, []
+
+    escaped_terms = [re.escape(term) for term in all_terms]
     combined_raw = r'(' + '|'.join(escaped_terms) + r')'
-    
     try:
         regex = re.compile(combined_raw, flags=re.IGNORECASE)
     except Exception:
-        regex = re.compile(re.escape(actor_name) if actor_name else "NO_ACTOR_MATCH_FOUND", flags=re.IGNORECASE)
-        
+        regex = re.compile(re.escape(all_terms[0]), flags=re.IGNORECASE)
+
     reg_flt = {"$or": [{"file_name": regex}, {"caption": regex}]} if USE_CAPTION_FILTER else {"file_name": regex}
+    return regex, reg_flt, all_terms
+
+
+async def get_actor_search_results(actor_name, tags_list, max_results, offset=0, collection_type="all"):
+    """नाम और सभी कस्टमाइज्ड टैग्स को मिलाकर सिंक करता है ताकि वाइल्डकार्ड क्रैश न हो।"""
+    _, reg_flt, _ = build_actor_search_filter(actor_name, tags_list)
+    if not reg_flt:
+        return [], ""
+
     results = []
     cols = [primary, cloud, archive] if collection_type == "all" else [COLLECTIONS.get(collection_type, primary)]
     

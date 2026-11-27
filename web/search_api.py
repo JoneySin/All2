@@ -27,7 +27,7 @@ from utils import temp, get_size, is_premium, get_duration_str
 from stream_security import sign_params, STREAM_TTL
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
-from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, group_search_cursors, get_files_by_ids, find_phrase_files, search_groups, get_groups_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media, FILE_PROJECTION, FILE_PROJECTION_SCORED, GROUP_PROJECTION, _build_regex, _strict_text_query, build_query_filter
+from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, group_search_cursors, get_files_by_ids, find_phrase_files, search_groups, get_groups_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media, FILE_PROJECTION, FILE_PROJECTION_SCORED, GROUP_PROJECTION, _build_regex, _strict_text_query, build_query_filter, build_actor_search_filter
 from media_probe import probe_telegram_file, should_probe_media
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
@@ -1412,14 +1412,13 @@ def _card_cursor_token(card):
     return "f:" + hashlib.blake2s(fid.encode(), digest_size=16).hexdigest()
 
 
-async def _grouped_cursor_page(q, col, offset, lim, mode, gf):
-    """Page a stable raw-file stream, with saved groups first for all-source search.
+async def _cursor_search_page(context, col, offset, lim, mode, gf, initial_groups, raw_fetch):
+    """Page a stable raw-file stream, with saved groups first.
 
     The cursor records which groups have already appeared. Raw positions never
     depend on group_id marks, so saving a new group between page requests cannot
     shift the file stream or skip unrelated files.
     """
-    context = _cursor_context(q, col, gf)
     value = str(offset or "0")
     if value.startswith((_GROUP_CURSOR_PREFIX, _GROUP_CURSOR_STORED_PREFIX)):
         state = await _decode_group_cursor(value, context)
@@ -1428,7 +1427,7 @@ async def _grouped_cursor_page(q, col, offset, lim, mode, gf):
             legacy_offset = max(0, int(value))
         except (TypeError, ValueError) as exc:
             raise ValueError("Invalid group pagination offset.") from exc
-        found = await _group_hits(q) if q and col == "all" else []
+        found = await initial_groups()
         found = found or []
         if gf in ("quality", "series"):
             found = [group for group in found if group_type(group) == gf]
@@ -1451,6 +1450,12 @@ async def _grouped_cursor_page(q, col, offset, lim, mode, gf):
         state["seen"] = sorted(seen)
 
     def eligible(card):
+        if col != "all":
+            if card.get("group"):
+                if not any(v.get("raw_collection") == col for v in card.get("variants", [])):
+                    return False
+            elif card.get("raw_collection") != col:
+                return False
         if gf == "group":
             return bool(card.get("group"))
         if gf in ("quality", "series"):
@@ -1472,12 +1477,6 @@ async def _grouped_cursor_page(q, col, offset, lim, mode, gf):
     if state["gp"] < len(state["groups"]):
         save_seen()
         return cards, await _encode_group_cursor(state)
-
-    async def raw_fetch(pos, count):
-        if not q:
-            return await get_recent_files(count, offset=pos, collection_type=col)
-        docs, nxt, _, _ = await get_search_results(q, count, offset=pos, collection_type=col, bypass_count=True)
-        return docs, nxt
 
     # The finite hop cap keeps a selective group filter responsive on a very
     # large library; a continuation may legitimately lead to an empty page.
@@ -1518,6 +1517,76 @@ async def _grouped_cursor_page(q, col, offset, lim, mode, gf):
         save_seen()
         return cards, await _encode_group_cursor(state)
     return cards, ""
+
+
+async def _grouped_cursor_page(q, col, offset, lim, mode, gf):
+    context = _cursor_context(q, col, gf)
+
+    async def initial_groups():
+        return await _group_hits(q) if q and col == "all" else []
+
+    async def raw_fetch(pos, count):
+        if not q:
+            return await get_recent_files(count, offset=pos, collection_type=col)
+        docs, nxt, _, _ = await get_search_results(q, count, offset=pos, collection_type=col, bypass_count=True)
+        return docs, nxt
+
+    return await _cursor_search_page(context, col, offset, lim, mode, gf, initial_groups, raw_fetch)
+
+
+async def actor_ordered_file_page(reg_flt, col, offset, limit):
+    """Read actor-matched files in Primary → Cloud → Archive order with cross-collection skip."""
+    sources = ('primary', 'cloud', 'archive') if col == 'all' else (col,)
+    result, skip = [], offset
+    target = limit + 1
+    for source in sources:
+        collection = FILE_COLLECTIONS.get(source)
+        if collection is None or len(result) >= target:
+            continue
+        take = target - len(result)
+        cursor = collection.find(reg_flt, FILE_PROJECTION).sort('_id', -1)
+        docs = await cursor.skip(skip).limit(take).to_list(length=take)
+        if docs:
+            for doc in docs:
+                doc['file_id'] = doc['_id']
+                doc['source_col'] = source
+            result.extend(docs)
+            skip = 0
+        elif skip:
+            skip = max(0, skip - await collection.count_documents(reg_flt))
+    return result[:limit], (offset + limit if len(result) > limit else '')
+
+
+async def actor_search_page(actor_id, search_query, final_tags, col, offset, limit, mode, gf, want_group=True):
+    """Search actor-linked media with the same All / Group / UnGroup semantics as /api/search."""
+    col = col if col in ('all', 'primary', 'cloud', 'archive') else 'all'
+    gf = {'ungroup': 'single', 'single': 'single', 'group': 'group',
+          'quality': 'quality', 'series': 'series'}.get(gf, 'all') if want_group else 'all'
+    regex, reg_flt, all_terms = build_actor_search_filter(search_query, final_tags)
+    if not reg_flt:
+        return [], ''
+
+    if not want_group or gf == 'single':
+        file_offset = max(0, int(offset))
+        docs, nxt = await actor_ordered_file_page(reg_flt, col, file_offset, limit)
+        return await _annotate_raw_groups(_build_results_list(docs, mode)), nxt
+
+    context = _cursor_context(f"actor:{actor_id}:{'|'.join(t.lower() for t in all_terms)}", col, gf)
+
+    async def initial_groups():
+        try:
+            return await groups.find(
+                {'$or': [{'name': regex}, {'files.name': regex}]},
+                GROUP_PROJECTION,
+            ).sort([('updated_at', -1), ('_id', -1)]).limit(600).to_list(length=600)
+        except Exception as exc:
+            logger.warning(f"actor group lookup failed: {exc}")
+            return []
+
+    async def raw_fetch(pos, count):
+        return await actor_ordered_file_page(reg_flt, col, pos, count)
+
+    return await _cursor_search_page(context, col, offset, limit, mode, gf, initial_groups, raw_fetch)
 
 
 async def _ordered_file_page(q, col, offset, limit, plans=None):
