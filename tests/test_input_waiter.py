@@ -31,9 +31,12 @@ class FakeClient:
 class InputWaiterTests(unittest.IsolatedAsyncioTestCase):
     async def test_requirements_pin_latest_kurigram(self):
         import pyrogram
+        import pymongo
         requirements = (Path(__file__).resolve().parents[1] / "requirements.txt").read_text()
         self.assertIn("kurigram==2.2.28", requirements)
         self.assertEqual(pyrogram.__version__, "2.2.28")
+        self.assertIn("pymongo==4.20.2", requirements)
+        self.assertEqual(pymongo.__version__, "4.20.2")
         self.assertIn("kuricrypt==0.1.2", requirements)
         self.assertNotIn("TgCrypto", requirements)
 

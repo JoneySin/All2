@@ -1,5 +1,6 @@
-# Local credentials, build tooling and interpreter caches must not enter images.
+# Local credentials, build tooling, tests, and interpreter caches must not enter images.
 .git
+.github
 .env
 .env.*
 .venv
@@ -9,6 +10,10 @@ __pycache__
 .ruff_cache
 .mypy_cache
 node_modules
+tests
+*.md
+*.log
+Unselected files
 # Telegram session files contain an auth key and must never be committed/shipped.
 *.session
 *.session-journal
