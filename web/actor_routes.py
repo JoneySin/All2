@@ -504,11 +504,13 @@ ACTOR_PROFILE_CSS = '''<style>
 .actor-top-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}
 .actor-back{margin-bottom:0}
 .actor-top-actions{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
-.actor-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--accent);color:#fff;border:0;border-radius:9px;padding:10px 18px;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;transition:transform .16s,background .16s,box-shadow .16s}
+.actor-btn{position:relative;overflow:hidden;display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--accent);color:#fff;border:0;border-radius:9px;padding:10px 18px;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;transition:transform .16s,background .16s,box-shadow .16s}
 .actor-btn:hover{background:var(--accent-hover);transform:translateY(-2px);box-shadow:0 8px 22px rgba(229,9,20,.35)}
 .actor-btn:active{transform:scale(.96)}
 .actor-btn.ghost{background:var(--bg3);border:1px solid var(--border);color:var(--text)}
 .actor-btn.ghost:hover{background:var(--bg2);border-color:var(--accent);box-shadow:none}
+.actor-btn i.actor-rip{position:absolute;border-radius:50%;background:rgba(255,255,255,.42);transform:scale(0);animation:actorRipple .5s ease-out forwards;pointer-events:none}
+@keyframes actorRipple{to{transform:scale(2.8);opacity:0}}
 .actor-tab-bar{display:flex;align-items:stretch;gap:2px;flex-wrap:nowrap;border-bottom:2px solid var(--border);margin:20px 0 20px;position:relative;overflow-x:auto;scrollbar-width:none}
 .actor-tab-bar::-webkit-scrollbar{display:none}
 .actor-tab{position:relative;display:inline-flex;flex-direction:row;align-items:center;justify-content:center;gap:6px;background:none;border:0;color:var(--muted);padding:12px 16px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;transition:color .18s,transform .18s}
@@ -521,10 +523,11 @@ ACTOR_PROFILE_CSS = '''<style>
 .actor-tab-label{display:inline-flex;align-items:center;gap:6px;min-width:0}
 .actor-tab-badge{display:inline-block;min-width:19px;padding:1px 6px;border-radius:20px;background:var(--bg3);border:1px solid var(--border);font-size:10px;font-weight:800;color:var(--muted);line-height:1.4;text-align:center;transition:background .2s,color .2s,border-color .2s}
 .actor-tab.active .actor-tab-badge{background:var(--accent);border-color:var(--accent);color:#fff}
-.actor-panel{display:none;animation:actorPanelIn .36s cubic-bezier(.25,.8,.25,1) both}
+.actor-panel{display:none;animation:actorPanelIn .42s cubic-bezier(.25,.8,.25,1) both}
 .actor-panel.active{display:block!important}
-@keyframes actorPanelIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
-.actor-header-wrap{display:flex;gap:26px;flex-wrap:wrap;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;margin-bottom:18px;width:100%;box-sizing:border-box}
+@keyframes actorPanelIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@keyframes actorFade{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.actor-header-wrap{display:flex;gap:26px;flex-wrap:wrap;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;margin-bottom:18px;width:100%;box-sizing:border-box;animation:actorFade .5s ease both}
 .avatar-box-master{position:relative;flex:0 0 240px;width:240px;max-width:100%;aspect-ratio:3/4;background:var(--bg3);border-radius:12px;overflow:hidden;border:1px solid var(--border);cursor:zoom-in}
 .avatar-box-master img{display:block;width:100%;height:100%;object-fit:cover;transition:transform .3s ease}
 .avatar-box-master:hover img{transform:scale(1.03)}
@@ -559,8 +562,13 @@ ACTOR_PROFILE_CSS = '''<style>
 .gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 @media(min-width:700px){.gallery-grid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}}
 .gallery-item-wrap{position:relative;border-radius:11px;overflow:hidden;border:1px solid var(--border);aspect-ratio:1;cursor:pointer;background:var(--bg3)}
-.gallery-item{width:100%;height:100%;object-fit:cover;transition:transform .3s ease}
+.gallery-item-wrap:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.gallery-item{width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .35s,transform .3s ease}
+.gallery-item.on{opacity:1}
 .gallery-item-wrap:hover .gallery-item{transform:scale(1.06)}
+.actor-gal-enter{opacity:0}
+.actor-gal-enter.in{animation:actorGalIn .55s cubic-bezier(.34,1.2,.64,1) forwards}
+@keyframes actorGalIn{0%{opacity:0;transform:translateY(26px) scale(.94)}60%{opacity:1;transform:translateY(-4px) scale(1.01)}100%{opacity:1;transform:none}}
 .gallery-del-btn{position:absolute;top:7px;right:7px;background:rgba(160,8,8,.92);border:0;color:#fff;padding:4px 8px;border-radius:6px;font-size:10px;font-weight:800;cursor:pointer;z-index:5;opacity:0;transition:opacity .2s}
 .gallery-item-wrap:hover .gallery-del-btn,.gallery-item-wrap:focus-within .gallery-del-btn{opacity:1}
 @media(hover:none){.gallery-del-btn{opacity:1;min-width:34px;min-height:34px}}
@@ -569,6 +577,7 @@ ACTOR_PROFILE_CSS = '''<style>
 .profile-modal-card{border-radius:18px!important;box-shadow:0 24px 70px rgba(0,0,0,.5)}.profile-modal-card .profile-section{border-radius:12px}.profile-field .em-input:focus{box-shadow:0 0 0 3px rgba(229,9,20,.12)}.profile-link-add:hover,.profile-cancel:hover{border-color:var(--accent)}
 @media(max-width:767px){.actor-header-wrap{flex-direction:column;align-items:stretch;gap:18px;padding:16px;margin-bottom:20px;border-radius:16px}.avatar-box-master{flex:0 1 100%;width:100%;max-width:100%;height:auto;aspect-ratio:3/4;border-radius:12px}.actor-identity{flex-basis:100%}}
 @media(max-width:600px){.actor-page{padding:16px 12px 50px}.actor-identity h1{font-size:24px;letter-spacing:-.5px}.actor-tab-bar{justify-content:space-around;margin:16px 0 18px}.actor-tab{flex:1;min-width:0;padding:12px 6px;font-size:12.5px;gap:4px}.actor-tab::after{left:8px;right:8px}.lightbox-nav{width:38px;height:38px;font-size:20px}.lightbox-prev{left:10px}.lightbox-next{right:10px}}
+@media(prefers-reduced-motion:reduce){.actor-header-wrap,.actor-panel,.actor-tab,.actor-tab::after,.gallery-item,.actor-gal-enter,.actor-gal-enter.in,.lightbox,.lightbox-img{animation:none!important;transition:none!important;opacity:1!important;transform:none!important}}
 </style>'''
 
 
@@ -613,7 +622,7 @@ async def actor_profile_display(req):
         # हर बदलाव पर URL बदल देता है।
         gallery_v = actor.get("gallery_revision") or int(actor.get("gallery_updated_at") or actor.get("photo_updated_at") or actor.get("created_at") or 0)
         gallery_urls = [f"/api/actor/photo?id={actor_id}&gallery_idx={i}&v={gallery_v}" for i in range(len(gallery_list))]
-        g_items = "".join([f'<div class="gallery-item-wrap" onclick="openLightbox(\'{gallery_urls[i]}\',{i})"><img src="{gallery_urls[i]}" class="gallery-item" loading="lazy">' + (f'<button class="gallery-del-btn" title="Remove" onclick="deleteGalleryImage(\'{actor_id}\', {i}, event)">✕</button>' if role=='admin' else "") + '</div>' for i in range(len(gallery_list))])
+        g_items = "".join([f'<div class="gallery-item-wrap actor-gal-enter" role="button" tabindex="0" aria-label="Enlarge image" data-src="{gallery_urls[i]}" data-idx="{i}" onclick="openLightbox(\'{gallery_urls[i]}\',{i})"><img src="{gallery_urls[i]}" class="gallery-item" loading="lazy" onload="this.classList.add(\'on\')" onerror="this.classList.add(\'on\')">' + (f'<button class="gallery-del-btn" title="Remove" onclick="deleteGalleryImage(\'{actor_id}\', {i}, event)">✕</button>' if role=='admin' else "") + '</div>' for i in range(len(gallery_list))])
         gallery_grid_html += f'<div class="gallery-grid">{g_items}</div>'
 
     admin_top_btns = (
@@ -656,7 +665,7 @@ async def actor_profile_display(req):
     ap_sel_none = " selected" if DEFAULT_MEDIA_MODE == "none" else ""
 
     gallery_badge = f'<span class="actor-tab-badge">{len(gallery_list)}</span>'
-    actor_page_markup = f'''{ACTOR_PROFILE_CSS}<main class="actor-page"><div class="actor-top-bar"><a class="actor-back back-pill-btn" href="/actors" onclick="return openBackNav(this,event)" onpointerenter="prefetchCatalogUrl('/actors')" ontouchstart="prefetchCatalogUrl('/actors')">← Back</a>{admin_top_btns}</div><div class="actor-tab-bar" role="tablist"><button type="button" id="actorInfoTabBtn" class="actor-tab active" aria-pressed="true" onclick="switchActorTab(event,'tab-info')"><span class="actor-tab-ico" aria-hidden="true">ℹ️</span><span class="actor-tab-label">Overview</span></button><button type="button" id="actorMediaTabBtn" class="actor-tab" aria-pressed="false" onclick="switchActorTab(event,'tab-video')"><span class="actor-tab-ico" aria-hidden="true">🎬</span><span class="actor-tab-label">Videos</span></button><button type="button" id="actorGalleryTabBtn" class="actor-tab" aria-pressed="false" onclick="switchActorTab(event,'tab-gallery')"><span class="actor-tab-ico" aria-hidden="true">🖼️</span><span class="actor-tab-label">Gallery{gallery_badge}</span></button></div><div id="tab-info" class="actor-panel active"><div class="actor-header-wrap"><div class="avatar-box-master" onclick="openLightbox('/api/actor/photo?id={actor_id}&v={photo_v}',-1)"><img id="actorMasterAvatarImage" src="/api/actor/photo?id={actor_id}&v={photo_v}" alt="{html.escape(actor_name, quote=True)} profile photo"><span class="avatar-zoom-pill" aria-hidden="true">🔍 Enlarge</span></div><div class="actor-identity"><h1>{html.escape(actor_name)}</h1>{tags_chips_html}<div class="actor-bio-copy">{bio_html}</div>{social_html}</div></div><div class="actor-overview-ctas"><button type="button" class="actor-btn ghost" onclick="openActorMediaTab()">🎬 View Videos →</button><button type="button" class="actor-btn ghost" onclick="openActorGalleryTab()">🖼️ Gallery ({len(gallery_list)}) →</button></div></div><div id="tab-video" class="actor-panel"><div class="actor-subhead"><h3>🏷️ From the Library — based on Search Tags</h3></div><div class="actor-tagline">{video_tag_pills}</div><div class="search-box actor-search-panel"><div class="search-row1"><div class="search-wrap" id="actMovieWrap"><input type="text" id="actor_movie_q" value="" placeholder="Search inside this profile..." class="search-input"><button type="button" class="search-clear" id="actMovieClear" aria-label="Clear search" hidden>&times;</button><span class="search-spinner" id="actMovieSpinner"></span></div><div class="cdd-wrap gf-wrap" id="cddGfWrapActor" onclick="toggleActorCdd('gf',event)"><button type="button" class="cdd-btn" id="cddGfBtnActor" aria-label="Group filter: All" aria-expanded="false" aria-controls="cddGfMenuActor"><span class="cdd-kicker">Group:</span><span id="cddGfLabelActor">All</span></button><span class="cdd-arrow" aria-hidden="true">&#9660;</span><div class="cdd-menu" id="cddGfMenuActor" style="display:none"><button type="button" class="cdd-item selected" data-val="all" onclick="pickActorGF('all','All',this,event)">All</button><button type="button" class="cdd-item" data-val="group" onclick="pickActorGF('group','Group',this,event)">Group</button><button type="button" class="cdd-item" data-val="single" onclick="pickActorGF('single','UnGroup',this,event)">UnGroup</button></div></div></div><div class="search-row2"><div class="cdd-wrap" id="cddColWrapActor" onclick="toggleActorCdd('col',event)"><button type="button" class="cdd-btn" id="cddColBtnActor" aria-label="Collection filter: All" aria-expanded="false" aria-controls="cddColMenuActor"><span class="cdd-kicker">Source:</span><span id="cddColLabelActor">All</span></button><span class="cdd-arrow" aria-hidden="true">&#9660;</span><div class="cdd-menu" id="cddColMenuActor" style="display:none"><button type="button" class="cdd-item selected" data-val="all" onclick="pickActorCol('all','All',this,event)">All</button><button type="button" class="cdd-item" data-val="primary" onclick="pickActorCol('primary','🟢 Primary',this,event)">🟢 Primary</button><button type="button" class="cdd-item" data-val="cloud" onclick="pickActorCol('cloud','🔵 Cloud',this,event)">🔵 Cloud</button><button type="button" class="cdd-item" data-val="archive" onclick="pickActorCol('archive','🟠 Archive',this,event)">🟠 Archive</button></div></div><div class="cdd-wrap" id="cddModeWrapActor" onclick="toggleActorCdd('mode',event)"><button type="button" class="cdd-btn" id="cddModeBtnActor" aria-label="View mode filter" aria-expanded="false" aria-controls="cddModeMenuActor"><span class="cdd-kicker">View:</span><span id="cddModeLabelActor">{ap_mode_lbl}</span></button><span class="cdd-arrow" aria-hidden="true">&#9660;</span><div class="cdd-menu" id="cddModeMenuActor" style="display:none"><button type="button" class="cdd-item{ap_sel_tg}" data-val="tg" onclick="pickActorMode('tg','🖼️ Poster',this,event)">🖼️ Poster</button><button type="button" class="cdd-item{ap_sel_none}" data-val="none" onclick="pickActorMode('none','📄 Text',this,event)">📄 Text</button></div></div></div></div><div class="results-info" id="actorResInfo" style="padding:0 2px 10px;display:none"><span class="results-count" id="actorResCount"></span></div><div id="actor_video_results" class="res-grid"></div><div class="pagination" id="actor_page_box" style="display:none"><button class="pg-btn" id="actor_pBtn" onclick="actorPagePrev()" disabled>Previous</button><span class="pg-info" id="actor_pgInfo">Page 1</span><button class="pg-btn" id="actor_nBtn" onclick="actorPageNext()">Next</button></div></div><div id="tab-gallery" class="actor-panel">{gallery_grid_html}</div></main><div id="actorLightboxModal" class="lightbox" onclick="closeLightbox()"><button type="button" class="lightbox-close" aria-label="Close lightbox" onclick="closeLightbox()">&times;</button><button type="button" class="lightbox-nav lightbox-prev" id="lbPrevBtn" aria-label="Previous photo" onclick="stepLightbox(-1,event)">&#8249;</button><img id="lightboxTargetImg" class="lightbox-img" src="" onclick="event.stopPropagation()"><button type="button" class="lightbox-nav lightbox-next" id="lbNextBtn" aria-label="Next photo" onclick="stepLightbox(1,event)">&#8250;</button><div class="lightbox-counter" id="lbCounter" hidden></div></div><input type="hidden" id="actor_master_tags_payload" value="{tags_json_payload}">{profile_edit_modal}'''
+    actor_page_markup = f'''{ACTOR_PROFILE_CSS}<main class="actor-page"><div class="actor-top-bar"><a class="actor-back back-pill-btn" href="/actors" onclick="return openBackNav(this,event)" onpointerenter="prefetchCatalogUrl('/actors')" ontouchstart="prefetchCatalogUrl('/actors')">← Back</a>{admin_top_btns}</div><div class="actor-tab-bar" role="tablist"><button type="button" id="actorInfoTabBtn" class="actor-tab active" aria-pressed="true" role="tab" aria-selected="true" aria-controls="tab-info" tabindex="0" data-tab="overview" onclick="switchActorTab(event,'tab-info')"><span class="actor-tab-ico" aria-hidden="true">ℹ️</span><span class="actor-tab-label">Overview</span></button><button type="button" id="actorMediaTabBtn" class="actor-tab" aria-pressed="false" role="tab" aria-selected="false" aria-controls="tab-video" tabindex="-1" data-tab="videos" onclick="switchActorTab(event,'tab-video')"><span class="actor-tab-ico" aria-hidden="true">🎬</span><span class="actor-tab-label">Videos</span></button><button type="button" id="actorGalleryTabBtn" class="actor-tab" aria-pressed="false" role="tab" aria-selected="false" aria-controls="tab-gallery" tabindex="-1" data-tab="gallery" onclick="switchActorTab(event,'tab-gallery')"><span class="actor-tab-ico" aria-hidden="true">🖼️</span><span class="actor-tab-label">Gallery{gallery_badge}</span></button></div><div id="tab-info" class="actor-panel active" role="tabpanel" aria-labelledby="actorInfoTabBtn"><div class="actor-header-wrap"><div class="avatar-box-master" onclick="openLightbox('/api/actor/photo?id={actor_id}&v={photo_v}',-1)"><img id="actorMasterAvatarImage" src="/api/actor/photo?id={actor_id}&v={photo_v}" alt="{html.escape(actor_name, quote=True)} profile photo"><span class="avatar-zoom-pill" aria-hidden="true">🔍 Enlarge</span></div><div class="actor-identity"><h1>{html.escape(actor_name)}</h1>{tags_chips_html}<div class="actor-bio-copy">{bio_html}</div>{social_html}</div></div><div class="actor-overview-ctas"><button type="button" class="actor-btn ghost" onclick="openActorMediaTab()">🎬 View Videos →</button><button type="button" class="actor-btn ghost" onclick="openActorGalleryTab()">🖼️ Gallery ({len(gallery_list)}) →</button></div></div><div id="tab-video" class="actor-panel" role="tabpanel" aria-labelledby="actorMediaTabBtn"><div class="actor-subhead"><h3>🏷️ From the Library — based on Search Tags</h3></div><div class="actor-tagline">{video_tag_pills}</div><div class="search-box actor-search-panel"><div class="search-row1"><div class="search-wrap" id="actMovieWrap"><input type="text" id="actor_movie_q" value="" placeholder="Search inside this profile..." class="search-input"><button type="button" class="search-clear" id="actMovieClear" aria-label="Clear search" hidden>&times;</button><span class="search-spinner" id="actMovieSpinner"></span></div><div class="cdd-wrap gf-wrap" id="cddGfWrapActor" onclick="toggleActorCdd('gf',event)"><button type="button" class="cdd-btn" id="cddGfBtnActor" aria-label="Group filter: All" aria-expanded="false" aria-controls="cddGfMenuActor"><span class="cdd-kicker">Group:</span><span id="cddGfLabelActor">All</span></button><span class="cdd-arrow" aria-hidden="true">&#9660;</span><div class="cdd-menu" id="cddGfMenuActor" style="display:none"><button type="button" class="cdd-item selected" data-val="all" onclick="pickActorGF('all','All',this,event)">All</button><button type="button" class="cdd-item" data-val="group" onclick="pickActorGF('group','Group',this,event)">Group</button><button type="button" class="cdd-item" data-val="single" onclick="pickActorGF('single','UnGroup',this,event)">UnGroup</button></div></div></div><div class="search-row2"><div class="cdd-wrap" id="cddColWrapActor" onclick="toggleActorCdd('col',event)"><button type="button" class="cdd-btn" id="cddColBtnActor" aria-label="Collection filter: All" aria-expanded="false" aria-controls="cddColMenuActor"><span class="cdd-kicker">Source:</span><span id="cddColLabelActor">All</span></button><span class="cdd-arrow" aria-hidden="true">&#9660;</span><div class="cdd-menu" id="cddColMenuActor" style="display:none"><button type="button" class="cdd-item selected" data-val="all" onclick="pickActorCol('all','All',this,event)">All</button><button type="button" class="cdd-item" data-val="primary" onclick="pickActorCol('primary','🟢 Primary',this,event)">🟢 Primary</button><button type="button" class="cdd-item" data-val="cloud" onclick="pickActorCol('cloud','🔵 Cloud',this,event)">🔵 Cloud</button><button type="button" class="cdd-item" data-val="archive" onclick="pickActorCol('archive','🟠 Archive',this,event)">🟠 Archive</button></div></div><div class="cdd-wrap" id="cddModeWrapActor" onclick="toggleActorCdd('mode',event)"><button type="button" class="cdd-btn" id="cddModeBtnActor" aria-label="View mode filter" aria-expanded="false" aria-controls="cddModeMenuActor"><span class="cdd-kicker">View:</span><span id="cddModeLabelActor">{ap_mode_lbl}</span></button><span class="cdd-arrow" aria-hidden="true">&#9660;</span><div class="cdd-menu" id="cddModeMenuActor" style="display:none"><button type="button" class="cdd-item{ap_sel_tg}" data-val="tg" onclick="pickActorMode('tg','🖼️ Poster',this,event)">🖼️ Poster</button><button type="button" class="cdd-item{ap_sel_none}" data-val="none" onclick="pickActorMode('none','📄 Text',this,event)">📄 Text</button></div></div></div></div><div class="results-info" id="actorResInfo" style="padding:0 2px 10px;display:none"><span class="results-count" id="actorResCount"></span></div><div id="actor_video_results" class="res-grid"></div><div class="pagination" id="actor_page_box" style="display:none"><button class="pg-btn" id="actor_pBtn" onclick="actorPagePrev()" disabled>Previous</button><span class="pg-info" id="actor_pgInfo">Page 1</span><button class="pg-btn" id="actor_nBtn" onclick="actorPageNext()">Next</button></div></div><div id="tab-gallery" class="actor-panel" role="tabpanel" aria-labelledby="actorGalleryTabBtn">{gallery_grid_html}</div></main><div id="actorLightboxModal" class="lightbox" onclick="closeLightbox()"><button type="button" class="lightbox-close" aria-label="Close lightbox" onclick="closeLightbox()">&times;</button><button type="button" class="lightbox-nav lightbox-prev" id="lbPrevBtn" aria-label="Previous photo" onclick="stepLightbox(-1,event)">&#8249;</button><img id="lightboxTargetImg" class="lightbox-img" src="" onclick="event.stopPropagation()"><button type="button" class="lightbox-nav lightbox-next" id="lbNextBtn" aria-label="Next photo" onclick="stepLightbox(1,event)">&#8250;</button><div class="lightbox-counter" id="lbCounter" hidden></div></div><input type="hidden" id="actor_master_tags_payload" value="{tags_json_payload}">{profile_edit_modal}'''
 
     actor_page_js = f'''
 var hideSelFab=true;
@@ -732,13 +741,38 @@ document.addEventListener('click',function(e){{if(!e.target.closest('.actor-sear
 document.addEventListener('keydown',function(e){{
     var lb=document.getElementById('actorLightboxModal');
     if(lb&&lb.classList.contains('open')){{
-        if(e.key==='Escape'){{closeLightbox();return;}}
-        if(e.key==='ArrowLeft'){{stepLightbox(-1);return;}}
-        if(e.key==='ArrowRight'){{stepLightbox(1);return;}}
+        if(e.key==='Escape'){{e.preventDefault();closeLightbox();return;}}
+        if(e.key==='ArrowLeft'){{e.preventDefault();stepLightbox(-1);return;}}
+        if(e.key==='ArrowRight'){{e.preventDefault();stepLightbox(1);return;}}
+    }}
+    var focused=document.activeElement;
+    if((e.key==='Enter'||e.key===' ')&&focused&&focused.classList&&focused.classList.contains('gallery-item-wrap')){{
+        e.preventDefault();openLightbox(focused.dataset.src,Number(focused.dataset.idx));return;
+    }}
+    if(focused&&focused.classList&&focused.classList.contains('actor-tab')&&['ArrowLeft','ArrowRight','Home','End'].indexOf(e.key)>=0){{
+        e.preventDefault();
+        var tabs=Array.prototype.slice.call(document.querySelectorAll('.actor-tab'));
+        var idx=tabs.indexOf(focused);
+        if(e.key==='Home')idx=0;
+        else if(e.key==='End')idx=tabs.length-1;
+        else idx=(idx+(e.key==='ArrowRight'?1:tabs.length-1))%tabs.length;
+        var target=tabs[idx];
+        if(target){{activateActorTab(target.dataset.tab);target.focus();}}
+        return;
     }}
     if(e.key==='Escape'){{var open=document.querySelector('.actor-search-panel .cdd-btn[aria-expanded="true"]');if(open){{closeActorCdds();open.focus();}}}}
 }});
+document.addEventListener('pointerdown',function(e){{
+    var b=e.target.closest&&e.target.closest('.actor-btn');
+    if(!b)return;
+    if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+    var r=b.getBoundingClientRect(),i=document.createElement('i'),d=Math.max(r.width,r.height);
+    i.className='actor-rip';
+    i.style.cssText='width:'+d+'px;height:'+d+'px;left:'+(e.clientX-r.left-d/2)+'px;top:'+(e.clientY-r.top-d/2)+'px';
+    b.appendChild(i);setTimeout(function(){{i.remove();}},520);
+}});
 document.querySelectorAll('.actor-search-panel .cdd-menu').forEach(function(m){{m.addEventListener('click',function(e){{e.stopPropagation();}});}});
+var actorLightReturnFocus=null;
 function syncLightboxNav(){{
     var prev=document.getElementById('lbPrevBtn'),next=document.getElementById('lbNextBtn'),cnt=document.getElementById('lbCounter');
     var showNav=actorLightboxIdx>=0&&actorGalleryUrls.length>1;
@@ -750,6 +784,7 @@ function syncLightboxNav(){{
     }}
 }}
 function openLightbox(s,idx){{
+    actorLightReturnFocus=document.activeElement;
     actorLightboxIdx=typeof idx==='number'?idx:-1;
     document.getElementById('lightboxTargetImg').src=s;
     syncLightboxNav();
@@ -762,37 +797,65 @@ function stepLightbox(delta,ev){{
     document.getElementById('lightboxTargetImg').src=actorGalleryUrls[actorLightboxIdx];
     syncLightboxNav();
 }}
-function closeLightbox(){{var lb=document.getElementById('actorLightboxModal');lb.classList.remove('open');setTimeout(()=>lb.style.display='none',200);}}
-function openActorMediaTab(){{
-    var btn=document.getElementById('actorMediaTabBtn');
-    if(btn)btn.click();
+function closeLightbox(){{
+    var lb=document.getElementById('actorLightboxModal');
+    lb.classList.remove('open');
+    setTimeout(()=>lb.style.display='none',200);
+    if(actorLightReturnFocus&&actorLightReturnFocus.focus)actorLightReturnFocus.focus();
 }}
-function openActorGalleryTab(){{
-    var btn=document.getElementById('actorGalleryTabBtn');
-    if(btn)btn.click();
+function staggerActorGallery(){{
+    var items=document.querySelectorAll('#tab-gallery .gallery-item-wrap');
+    var noMotion=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    items.forEach(function(el,i){{
+        var img=el.querySelector('img.gallery-item');
+        if(img&&img.complete&&img.naturalWidth)img.classList.add('on');
+        if(noMotion){{el.classList.remove('actor-gal-enter','in');el.style.animationDelay='';return;}}
+        el.classList.remove('in');
+        el.classList.add('actor-gal-enter');
+        var delay=Math.round(Math.min(i,8)*0.06*1000)/1000;
+        el.style.animationDelay=delay+'s';
+        void el.offsetWidth;
+        el.classList.add('in');
+        setTimeout(function(){{el.classList.remove('actor-gal-enter','in');el.style.animationDelay='';}},(0.55+delay)*1000);
+    }});
 }}
+var ACTOR_TAB_MAP={{'overview':'tab-info','info':'tab-info','tab-info':'tab-info','videos':'tab-video','video':'tab-video','tab-video':'tab-video','gallery':'tab-gallery','tab-gallery':'tab-gallery'}};
+function activateActorTab(name,init){{
+    var tId=ACTOR_TAB_MAP[String(name||'').toLowerCase()]||'tab-info';
+    if(tId!=='tab-video'&&selMode)toggleSelMode(false);
+    document.querySelectorAll('.actor-panel').forEach(function(p){{p.classList.toggle('active',p.id===tId);}});
+    var activeTabName='overview';
+    document.querySelectorAll('.actor-tab').forEach(function(t){{
+        var panelId=ACTOR_TAB_MAP[t.dataset.tab]||'tab-info';
+        var on=panelId===tId;
+        t.classList.toggle('active',on);
+        t.setAttribute('aria-pressed',String(on));
+        t.setAttribute('aria-selected',String(on));
+        t.tabIndex=on?0:-1;
+        if(on&&t.dataset.tab)activeTabName=t.dataset.tab;
+    }});
+    if(tId==='tab-video'){{
+        if(!actVideosLoaded)triggerActorSearchAjax();
+        else staggerCards(document.getElementById('actor_video_results'));
+    }}
+    if(tId==='tab-gallery')staggerActorGallery();
+    if(!init&&window.history&&window.history.replaceState){{
+        try{{var u=new URL(location.href);u.searchParams.set('tab',activeTabName);history.replaceState(null,'',u.pathname+u.search);}}catch(_){{}}
+    }}
+}}
+function openActorMediaTab(){{activateActorTab('videos');}}
+function openActorGalleryTab(){{activateActorTab('gallery');}}
 function searchActorTag(tag){{
     var aq=document.getElementById('actor_movie_q'),ac=document.getElementById('actMovieClear');
     if(aq){{aq.value=String(tag||'');if(ac)ac.hidden=!aq.value.length;}}
     resetActorSearchPage();
-    var btn=document.getElementById('actorMediaTabBtn');
-    if(btn&&!btn.classList.contains('active')){{
-        document.querySelectorAll('.actor-panel').forEach(p=>p.classList.remove('active'));
-        document.querySelectorAll('.actor-tab').forEach(t=>{{t.classList.remove('active');t.setAttribute('aria-pressed','false');}});
-        document.getElementById('tab-video').classList.add('active');
-        btn.classList.add('active');btn.setAttribute('aria-pressed','true');
-    }}
+    activateActorTab('videos');
     triggerActorSearchAjax();
     scrollActorVideoTop();
 }}
 function switchActorTab(ev,tId){{
-    if(tId!=='tab-video'&&selMode)toggleSelMode(false);
-    document.querySelectorAll('.actor-panel').forEach(p=>p.classList.remove('active'));
-    document.querySelectorAll('.actor-tab').forEach(t=>{{t.classList.remove('active');t.setAttribute('aria-pressed','false');}});
-    document.getElementById(tId).classList.add('active');
-    ev.currentTarget.classList.add('active');
-    ev.currentTarget.setAttribute('aria-pressed','true');
-    if(tId==='tab-video'&&!actVideosLoaded)triggerActorSearchAjax();
+    var name=(ev&&ev.currentTarget&&ev.currentTarget.dataset&&ev.currentTarget.dataset.tab)||tId;
+    activateActorTab(name);
 }}
 function openActorEditModal(){{document.getElementById('actorEditModal').classList.add('open');}}
 function closeActorEditModal(){{var m=document.getElementById('actorEditModal'),f=m&&m.querySelector('form[data-profile-form]');if(f&&f.dataset.saving==='true'){{showToast('Please wait for the save to finish.');return;}}if(m)m.classList.remove('open');}}
@@ -870,6 +933,9 @@ function actorPagePrev(){{if(actCurPage>1){{actCurPage--;actOffset=actOffHist.le
         aq.addEventListener('input',function(){{syncActClear();clearTimeout(actMovieLiveTimer);actMovieLiveTimer=setTimeout(function(){{resetActorSearchPage();triggerActorSearchAjax();}},350);}});
     }}
     syncActClear();
+    document.querySelectorAll('#tab-gallery img.gallery-item').forEach(function(im){{if(im.complete&&im.naturalWidth)im.classList.add('on');}});
+    var initTab=new URLSearchParams(location.search).get('tab');
+    if(initTab)activateActorTab(initTab,true);
 }})();
 var actMovieLiveTimer;'''
 
