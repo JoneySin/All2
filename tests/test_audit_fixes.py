@@ -423,6 +423,22 @@ class SecurityHardeningTests(unittest.IsolatedAsyncioTestCase):
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
+            from web import web_assets
+            from database.users_chats_db import OTPRateLimited
+
+            self.assertEqual(
+                web_assets.get_client_ip(SimpleNamespace(remote="10.0.0.2", headers={"X-Forwarded-For": "9.9.9.9, 203.0.113.55"})),
+                "203.0.113.55",
+            )
+            self.assertEqual(
+                web_assets.get_client_ip(SimpleNamespace(remote="10.0.0.2", headers={"X-Forwarded-For": "9.9.9.9, 203.0.113.55, 127.0.0.1"})),
+                "203.0.113.55",
+            )
+            self.assertEqual(
+                web_assets.get_client_ip(SimpleNamespace(remote="198.51.100.8", headers={"X-Forwarded-For": "9.9.9.9"})),
+                "198.51.100.8",
+            )
+
             with patch.object(search_api, "get_user_role", AsyncMock(return_value=("user", 42))), \
                     patch.object(search_api, "_tunnel_stream", AsyncMock(side_effect=RuntimeError("secret stack info"))):
                 r = await client.post("/setup_stream", json={"file_id": "abc"})
@@ -431,8 +447,15 @@ class SecurityHardeningTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("secret stack info", body["error"])
 
             with patch.object(login_routes, "web_db", SimpleNamespace(generate_otp=AsyncMock(return_value=None))):
-                fp = await client.post("/api/forgot_password", data={"tg_id": "12345"}, allow_redirects=False)
-            self.assertIn("If+that+Telegram+ID+is+registered", fp.headers["Location"])
+                fp_unreg = await client.post("/api/forgot_password", data={"tg_id": "12345"}, allow_redirects=False)
+            with patch.object(login_routes, "web_db", SimpleNamespace(generate_otp=AsyncMock(return_value="123456"))), \
+                    patch.object(login_routes.temp, "BOT", SimpleNamespace(send_message=AsyncMock(side_effect=RuntimeError("blocked")))):
+                fp_dm_fail = await client.post("/api/forgot_password", data={"tg_id": "12346"}, allow_redirects=False)
+            with patch.object(login_routes, "web_db", SimpleNamespace(generate_otp=AsyncMock(side_effect=OTPRateLimited("limit")))):
+                fp_rate = await client.post("/api/forgot_password", data={"tg_id": "12347"}, allow_redirects=False)
+            self.assertEqual(fp_unreg.headers["Location"], fp_dm_fail.headers["Location"])
+            self.assertEqual(fp_unreg.headers["Location"], fp_rate.headers["Location"])
+            self.assertIn("If+that+Telegram+ID+is+registered", fp_unreg.headers["Location"])
         finally:
             await client.close()
             search_api._THUMB_RATE_HITS.clear()

@@ -2,6 +2,7 @@ from web.media_cards import MEDIA_CARD_JS
 from web.brand import BRAND_MARKUP, BRAND_CSS
 import time
 import html
+import ipaddress
 import orjson
 from aiohttp import web
 from info import ADMINS
@@ -26,6 +27,61 @@ def fast_json_response(data, status=200, headers=None):
     if len(body) >= 1024:
         res.enable_compression()
     return res
+
+
+_INTERNAL_PROXY_NETS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+)
+
+
+def _is_public_ip(addr) -> bool:
+    return not (addr.is_unspecified or addr.is_multicast or any(addr in net for net in _INTERNAL_PROXY_NETS))
+
+
+def get_client_ip(req) -> str:
+    """Resolve client IP safely without trusting client-spoofed X-Forwarded-For left-hand entries."""
+    remote = (getattr(req, "remote", None) or "").strip()
+    if remote:
+        try:
+            remote_ip = ipaddress.ip_address(remote)
+            if _is_public_ip(remote_ip):
+                return str(remote_ip)
+        except ValueError:
+            pass
+
+    headers = getattr(req, "headers", None) or {}
+    fwd = (headers.get("X-Forwarded-For") or "").strip()
+    if fwd:
+        parsed = []
+        for raw in fwd.split(","):
+            tok = raw.strip()
+            if not tok:
+                continue
+            try:
+                parsed.append(ipaddress.ip_address(tok))
+            except ValueError:
+                continue
+        for addr in reversed(parsed):
+            if _is_public_ip(addr):
+                return str(addr)
+        if parsed:
+            return str(parsed[-1])
+
+    real_ip = (headers.get("X-Real-IP") or "").strip()
+    if real_ip:
+        try:
+            return str(ipaddress.ip_address(real_ip))
+        except ValueError:
+            pass
+
+    return remote or "unknown"
 
 # ─────────────────────────────────────────────
 # 🎛️ One default for every text/poster view; API adapters use legacy values.

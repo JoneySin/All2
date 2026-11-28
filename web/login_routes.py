@@ -1,24 +1,18 @@
+import logging
 import secrets
 import time
 from collections import deque
 from aiohttp import web
-from web.web_assets import build_page, form_wrapper, get_auth
+from web.web_assets import build_page, form_wrapper, get_auth, get_client_ip
 from utils import temp
 from database.users_chats_db import web_db, get_local_now, OTPRateLimited  # <-- समय सिंक के लिए इम्पोर्ट किया
 
+logger = logging.getLogger(__name__)
 login_routes = web.RouteTableDef()
 
 MIN_PASSWORD_LEN = 6
 _AUTH_BUCKETS = {}  # key -> deque[timestamps]
-
-
-def _client_ip(req):
-    fwd = req.headers.get("X-Forwarded-For", "")
-    if fwd:
-        first = fwd.split(",", 1)[0].strip()
-        if first:
-            return first
-    return req.remote or "unknown"
+_client_ip = get_client_ip
 
 
 def _prune_bucket(key, window):
@@ -201,19 +195,21 @@ async def api_forgot_password(req):
     except (TypeError, ValueError):
         return web.HTTPFound('/forgot_password?err=Invalid Telegram ID')
     ip = _client_ip(req)
-    if _is_throttled(f"fp_ip:{ip}", 10, 600):
+    if _is_throttled(f"fp_ip:{ip}", 10, 600) or _is_throttled(f"fp_tg:{tg_id}", 3, 600):
         return web.HTTPFound('/forgot_password?err=Too many OTP requests. Please try again later.')
     _record_hit(f"fp_ip:{ip}", 600)
+    _record_hit(f"fp_tg:{tg_id}", 600)
+    otp = None
     try:
         otp = await web_db.generate_otp(tg_id)
     except OTPRateLimited:
-        return web.HTTPFound('/forgot_password?err=Too many OTP requests. Please try again after 10 minutes.')
+        pass
     if otp:
         try:
             await temp.BOT.send_message(tg_id, f"🔐 **Fast Finder Password Reset**\n\nYour Password Reset OTP is: `{otp}`\n\nValid for 10 minutes. Do not share!")
-        except Exception:
-            return web.HTTPFound('/forgot_password?err=Error sending OTP. Have you started the bot?')
-    return web.HTTPFound('/forgot_password?msg=If that Telegram ID is registered, an OTP has been sent to your Telegram.')
+        except Exception as e:
+            logger.warning(f"Forgot-password OTP DM failed for {tg_id}: {e}")
+    return web.HTTPFound('/forgot_password?msg=If that Telegram ID is registered and can receive bot messages, an OTP has been sent to your Telegram.')
 
 @login_routes.post('/api/reset_password')
 async def api_reset_password(req):

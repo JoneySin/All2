@@ -5,7 +5,7 @@ from utils import temp
 from web.utils.custom_dl import TGCustomYield, chunk_size, offset_fix
 from web.utils.render_template import media_watch
 from web.utils.media_info import get_media_info
-from web.web_assets import get_auth
+from web.web_assets import get_auth, get_client_ip
 from web.brand import BRAND_MARKUP, BRAND_CSS
 from stream_security import verify
 
@@ -177,15 +177,7 @@ MAX_CONNS = max(1, int(os.environ.get("STREAM_MAX_CONNS", "30")))
 MAX_CONNS_PER_IP = max(1, int(os.environ.get("STREAM_MAX_CONNS_PER_IP", "8")))
 _ACTIVE_STREAMS = 0
 _ACTIVE_BY_IP = {}
-
-
-def _client_ip(request):
-    fwd = request.headers.get("X-Forwarded-For", "")
-    if fwd:
-        first = fwd.split(",", 1)[0].strip()
-        if first:
-            return first
-    return request.remote or "unknown"
+_client_ip = get_client_ip
 
 
 

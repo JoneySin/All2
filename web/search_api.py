@@ -34,7 +34,7 @@ from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
 # ✅ DRY: fast_json भी अब web_assets से ही आता है (पहले search_api/actor_routes/
 # post_routes तीनों में इसकी अलग-अलग copy थी)।
-from web.web_assets import get_auth as web_get_auth, fast_json, fast_json_response, DEFAULT_MEDIA_MODE
+from web.web_assets import get_auth as web_get_auth, get_client_ip, fast_json, fast_json_response, DEFAULT_MEDIA_MODE
 from web.media_cards import MEDIA_CARD_JS
 from web.brand import BRAND_MARKUP, BRAND_CSS
 from web.player_assets import PLAYER_UI
@@ -1913,9 +1913,7 @@ _THUMB_RATE_HITS = {}
 
 
 def _thumb_rate_limited(req) -> bool:
-    fwd = req.headers.get("X-Forwarded-For", "")
-    ip = fwd.split(",", 1)[0].strip() if fwd else ""
-    ip = ip or req.remote or "unknown"
+    ip = get_client_ip(req)
     now = time.time()
     if len(_THUMB_RATE_HITS) > 4000 and ip not in _THUMB_RATE_HITS:
         for k in list(_THUMB_RATE_HITS):
