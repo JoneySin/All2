@@ -159,12 +159,31 @@ async def _get_or_fetch_thumb(fid, col_name="primary", is_retry=False, version="
                         if file_data:
                             img_bytes = file_data.getvalue()
                             thumb_cache[cache_key] = img_bytes
+                            # Upload extracted thumbnail permanently to MEDIA_STORAGE_CHANNEL
+                            # (never scheduled for deletion; only the BIN_CHANNEL video deletes).
+                            saved_thumb_id = thumb_id
+                            try:
+                                with io.BytesIO(img_bytes) as photo_buf:
+                                    photo_buf.name = f"thumb_{fid}.jpg"
+                                    uploaded = await temp.BOT.send_photo(
+                                        chat_id=MEDIA_STORAGE_CHANNEL, photo=photo_buf
+                                    )
+                                photo_obj = getattr(uploaded, "photo", None)
+                                sizes = getattr(photo_obj, "sizes", None) if photo_obj else None
+                                uploaded_id = (
+                                    getattr(sizes[-1], "file_id", None)
+                                    if sizes else getattr(photo_obj, "file_id", None)
+                                )
+                                if uploaded_id:
+                                    saved_thumb_id = uploaded_id
+                            except Exception:
+                                logger.warning("Thumbnail re-upload to MEDIA_STORAGE_CHANNEL failed; using extracted thumb_id", exc_info=True)
                             # A slow original-thumbnail lookup must never overwrite
                             # a new admin upload that completed while it was running.
                             observed_thumb = (existing or {}).get("thumb_url", {"$exists": False})
                             await target_collection.update_one(
                                 {"_id": fid, "thumb_url": observed_thumb, "is_thumb_permanent": {"$ne": True}},
-                                {"$set": {"thumb_url": f"TG_ID:{thumb_id}"}}
+                                {"$set": {"thumb_url": f"TG_ID:{saved_thumb_id}"}}
                             )
                             return img_bytes
                     else:

@@ -210,10 +210,12 @@ class EditorPlayerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(api._THUMB_BACKFILL_TASKS)
                 duration.assert_awaited_once()
                 api.db.add_to_delete_queue.assert_awaited_once_with(api.BIN_CHANNEL, 99, 5)
+                self.bot.send_photo.assert_awaited_once()
+                self.assertEqual(self.bot.send_photo.await_args.kwargs['chat_id'], api.MEDIA_STORAGE_CHANNEL)
             finally:
                 release.set()
                 await asyncio.gather(*list(api._THUMB_BACKFILL_TASKS))
-        self.assertEqual((await self.cols['primary'].find_one({'_id': 'slow'}))['thumb_url'], 'TG_ID:poster')
+        self.assertEqual((await self.cols['primary'].find_one({'_id': 'slow'}))['thumb_url'], 'TG_ID:same-photo')
 
     async def test_background_metadata_preserves_concurrent_updates(self):
         col = self.cols['primary']
