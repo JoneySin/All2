@@ -84,8 +84,7 @@ GROUP_CARD_CSS = """
 .grp-card:not(.open):hover{transform:translateY(-6px) scale(1.02);border-color:var(--accent);box-shadow:0 15px 35px rgba(0,0,0,.6),0 0 15px rgba(229,9,20,.3);z-index:2}
 .grp-card:not(.open):active{transform:scale(.96);transition:transform .1s}
 .grp-card:not(.open) .grp-title{transition:color .18s;text-decoration:none}
-.grp-card:not(.open) .grp-title:hover{color:#ff757d;text-decoration:underline;text-decoration-color:#ff4d57;text-underline-offset:2px}
-body.light .grp-card:not(.open) .grp-title:hover{color:#b0060f;text-decoration-color:#d40813}
+.grp-card:not(.open) .grp-title:hover{color:var(--accent);text-decoration:underline;text-decoration-color:var(--accent);text-underline-offset:2px}
 .grp-card:not(.open):hover .grp-master .fc-poster{transform:scale(1.08)}
 .grp-card.open{grid-column:1/-1;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:default}
 .poster-top{flex-wrap:wrap;align-content:flex-start}
@@ -97,7 +96,7 @@ body.light .grp-card:not(.open) .grp-title:hover{color:#b0060f;text-decoration-c
 .grp-chip{background:#082f49;color:#7dd3fc;border:1px solid #0ea5e9;border-radius:5px;font-size:10px;font-weight:800;padding:2px 8px;line-height:1.5;text-shadow:none;max-width:100%;min-width:0;overflow-wrap:anywhere}
 .grp-chip i{font-style:normal;color:#e0f2fe;opacity:1;margin-left:2px}
 .grp-body{padding:12px 12px 13px}
-.grp-title{color:#ff4d57;font-size:12.5px;font-weight:700;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.grp-title{color:var(--text);font-size:12.5px;font-weight:600;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .grp-title-button{width:fit-content;max-width:100%;padding:0;border:0;background:none;font-family:inherit;text-align:left;cursor:pointer}
 .grp-title-button:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:2px}
 .grp-card.open .grp-title{-webkit-line-clamp:unset}
@@ -112,10 +111,9 @@ body.light .grp-card:not(.open) .grp-title:hover{color:#b0060f;text-decoration-c
 .res-grid.mode-none .grp-card.grp-active .grp-master .grp-textadmin{display:flex}
 .res-grid.mode-none .grp-openhead .grp-oadmin{display:none}
 .res-grid.mode-none .grp-card.grp-active .grp-openhead .grp-oadmin{display:flex}
-.grp-open-title{flex:0 1 auto;width:fit-content;max-width:100%;padding:0;border:0;background:none;color:#ff4d57;font:inherit;font-weight:700;text-align:left;cursor:pointer}
-.grp-card.open .grp-open-title{background:rgba(229,9,20,.14);border-left:3px solid var(--accent);padding:4px 10px;border-radius:6px}
-body.light .grp-title,body.light .grp-open-title{color:#d40813}
-body.light .grp-card.open .grp-open-title{background:rgba(229,9,20,.09);border-left-color:#d40813}
+.grp-open-title{flex:0 1 auto;width:fit-content;max-width:100%;padding:0;border:0;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.grp-card.open .grp-open-title{color:#ff4d57;font-weight:700;background:rgba(229,9,20,.14);border-left:3px solid var(--accent);padding:4px 10px;border-radius:6px}
+body.light .grp-card.open .grp-open-title{color:#d40813;background:rgba(229,9,20,.09);border-left-color:#d40813}
 .grp-open-title:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .grp-card.grp-active .grp-master .poster-admin{opacity:1;visibility:visible;transform:translateY(0);pointer-events:all}
 .grp-title{cursor:pointer}

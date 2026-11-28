@@ -216,8 +216,9 @@ class ActorSearchSyncTests(unittest.IsolatedAsyncioTestCase):
             'class="actor-tab-label"',
             '.home-search-panel .gf-wrap,.actor-search-panel .gf-wrap{background:var(--accent);border-color:var(--accent);color:#fff',
             '.home-search-panel .gf-wrap .cdd-menu,.actor-search-panel .gf-wrap .cdd-menu{color:var(--text)}',
-            '.grp-title{color:#ff4d57;',
-            'body.light .grp-title,body.light .grp-open-title{color:#d40813}',
+            '.grp-title{color:var(--text);',
+            '.grp-card.open .grp-open-title{color:#ff4d57;',
+            'body.light .grp-card.open .grp-open-title{color:#d40813;',
         ):
             self.assertIn(needle, html)
         self.assertNotIn('@media(max-width:600px){.actor-page{padding:20px 14px 50px}.actor-header-wrap{flex-direction:column;align-items:stretch;gap:18px;padding:17px;margin-bottom:20px}.avatar-box-master{width:100%;max-width:260px', html)
