@@ -57,6 +57,12 @@ SEARCH_PANEL_CSS = """
 .home-search-panel .cdd-kicker,.actor-search-panel .cdd-kicker{font-size:11px;font-weight:600;color:var(--muted);margin-right:5px;flex-shrink:0}
 @media(max-width:767px){.home-search-panel .cdd-kicker,.actor-search-panel .cdd-kicker{display:none}}
 .home-search-panel .cdd-wrap.filter-active,.actor-search-panel .cdd-wrap.filter-active{border-color:rgba(229,9,20,.6);background:rgba(229,9,20,.08)}
+.home-search-panel .gf-wrap,.actor-search-panel .gf-wrap{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 4px 14px rgba(229,9,20,.28)}
+.home-search-panel .gf-wrap:hover,.actor-search-panel .gf-wrap:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.home-search-panel .gf-wrap .cdd-kicker,.actor-search-panel .gf-wrap .cdd-kicker,.home-search-panel .gf-wrap .cdd-arrow,.actor-search-panel .gf-wrap .cdd-arrow{color:rgba(255,255,255,.88)}
+.home-search-panel .gf-wrap.filter-active,.actor-search-panel .gf-wrap.filter-active{background:#b20710;border-color:#ff4d57;box-shadow:0 0 0 2px rgba(229,9,20,.22),0 6px 16px rgba(229,9,20,.36)}
+.home-search-panel .gf-wrap .cdd-btn:focus-visible,.actor-search-panel .gf-wrap .cdd-btn:focus-visible{outline-color:#fff}
+.home-search-panel .gf-wrap .cdd-menu,.actor-search-panel .gf-wrap .cdd-menu{color:var(--text)}
 .home-search-panel .cdd-btn:focus-visible,.actor-search-panel .cdd-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
 .home-search-panel .cdd-arrow,.actor-search-panel .cdd-arrow{pointer-events:none;margin-left:8px}
 .home-search-panel button.cdd-item,.actor-search-panel button.cdd-item{display:block;width:100%;background:none;border:0;border-bottom:1px solid var(--border);color:var(--text);font:inherit;text-align:left;cursor:pointer}

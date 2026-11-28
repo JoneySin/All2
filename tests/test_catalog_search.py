@@ -214,6 +214,8 @@ class ActorSearchSyncTests(unittest.IsolatedAsyncioTestCase):
             'width:100%;max-width:100%;height:auto;aspect-ratio:3/4',
             'class="actor-tab active" aria-pressed="true"',
             'class="actor-tab-label"',
+            '.home-search-panel .gf-wrap,.actor-search-panel .gf-wrap{background:var(--accent);border-color:var(--accent);color:#fff',
+            '.home-search-panel .gf-wrap .cdd-menu,.actor-search-panel .gf-wrap .cdd-menu{color:var(--text)}',
         ):
             self.assertIn(needle, html)
         self.assertNotIn('@media(max-width:600px){.actor-page{padding:20px 14px 50px}.actor-header-wrap{flex-direction:column;align-items:stretch;gap:18px;padding:17px;margin-bottom:20px}.avatar-box-master{width:100%;max-width:260px', html)
