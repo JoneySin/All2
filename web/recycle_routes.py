@@ -33,8 +33,6 @@ _CSS = """<style>
 .rb-sub{font-size:13px;line-height:1.55;color:var(--muted);max-width:680px;margin:0}
 .rb-headside{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}
 .rb-count{font-size:12px;font-weight:800;color:var(--muted);background:var(--bg3);border:1px solid var(--border);padding:8px 12px;border-radius:999px;white-space:nowrap}
-.rb-back{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--text);background:var(--bg3);border:1px solid var(--border);padding:9px 13px;border-radius:9px;font-size:12px;font-weight:800;transition:.15s}
-.rb-back:hover{border-color:var(--accent);color:var(--accent)}
 .rb-toolbar{display:flex;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px;margin-bottom:10px}
 .rb-search{flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font:inherit;font-size:13px;padding:11px 13px;outline:none}
 .rb-search:focus{border-color:var(--accent)}
@@ -288,7 +286,7 @@ def _page_body():
         '<p class="rb-sub">Deleted media records are kept here for admin restore. '
         'They are hidden from bot searches, the web catalogue and the mini app.</p></div>'
         '<div class="rb-headside"><span class="rb-count" id="rbCount">Loading…</span>'
-        '<a class="rb-back" href="/dashboard">← Back to library</a></div></header>'
+        '<a class="rb-back back-pill-btn" href="/dashboard" onclick="return openBackNav(this,event)" onpointerenter="prefetchCatalogUrl(\'/dashboard\')" ontouchstart="prefetchCatalogUrl(\'/dashboard\')">← Back</a></div></header>'
         '<div class="rb-toolbar"><input class="rb-search" id="rbSearch" type="search" '
         'placeholder="Search deleted file names…" autocomplete="off" aria-label="Search deleted files"></div>'
         '<div class="rb-filters">'

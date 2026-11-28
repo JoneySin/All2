@@ -22,7 +22,7 @@ def post_image_src(value):
 POST_EDITOR_CSS = r'''<style>
 .post-studio{max-width:970px;margin:auto;padding:30px 20px 65px}
 .post-studio-header{display:flex;align-items:flex-start;gap:16px;margin-bottom:22px}
-.post-back,.post-cancel{display:inline-flex;align-items:center;color:var(--text);text-decoration:none;border:1px solid var(--border);background:var(--bg3);border-radius:9px;padding:10px 14px;font-size:13px;font-weight:700;white-space:nowrap}
+.post-cancel{display:inline-flex;align-items:center;color:var(--text);text-decoration:none;border:1px solid var(--border);background:var(--bg3);border-radius:9px;padding:10px 14px;font-size:13px;font-weight:700;white-space:nowrap}
 .post-kicker,.post-section-kicker{font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:var(--accent);font-weight:900}
 .post-studio-header h1{font-size:26px;line-height:1.2;margin:5px 0}.post-studio-header p,.post-hint{font-size:12px;line-height:1.55;color:var(--muted)}
 .post-form-layout{display:grid;grid-template-columns:minmax(0,1fr) 250px;align-items:start;gap:16px}
@@ -168,7 +168,7 @@ def build_post_editor(post=None, post_id="", err="", msg=""):
     screenshots = '\n'.join(str(s) for s in (post.get('screenshots') or []))
     tags = ', '.join(str(t) for t in (post.get('tags') or []))
     return POST_EDITOR_CSS + f'''
-    <main class="post-studio"><header class="post-studio-header"><a class="post-back" href="{esc(back)}">← Back</a><div><div class="post-kicker">Content studio</div><h1>{heading}</h1><p>Organize the details, artwork and videos your audience will see.</p></div></header>
+    <main class="post-studio"><header class="post-studio-header"><a class="post-back back-pill-btn" href="{esc(back)}" onclick="return openBackNav(this,event)" onpointerenter="prefetchCatalogUrl('{esc(back)}')" ontouchstart="prefetchCatalogUrl('{esc(back)}')">← Back</a><div><div class="post-kicker">Content studio</div><h1>{heading}</h1><p>Organize the details, artwork and videos your audience will see.</p></div></header>
     {notices}<div id="postEditorError" class="err-box" role="alert" hidden></div><form id="postEditorForm" action="{action}" method="post" enctype="multipart/form-data">{hidden}
     <div class="post-form-layout"><div>
       <section class="post-section"><div class="post-section-heading"><span class="post-step">01</span><div><div class="post-section-kicker">The basics</div><h2>Post details</h2><p>Make this post easy to discover.</p></div></div><div class="post-fields">

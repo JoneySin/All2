@@ -199,6 +199,11 @@ CSS = """
 .act-card.is-opening,.act-text-card.is-opening{border-color:var(--accent)!important;box-shadow:0 0 0 2px rgba(229,9,20,.32),0 10px 26px rgba(229,9,20,.32)}
 .act-card.is-opening .act-name{color:var(--accent)!important;transform-origin:center;animation:actorNameRedBounce .22s cubic-bezier(.34,1.56,.64,1) both;will-change:transform,color}
 .act-text-card.is-opening .act-name{color:var(--accent)!important;transform-origin:left center;animation:actorNameRedBounce .22s cubic-bezier(.34,1.56,.64,1) both;will-change:transform,color}
+@keyframes backBtnRedBounce{0%{transform:scale(1) translateX(0);color:#fff;background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 0 rgba(229,9,20,.65)}38%{transform:scale(1.08) translateX(-4px);color:#fff;background:#ff2a38;border-color:#ff2a38;box-shadow:0 0 22px 4px rgba(229,9,20,.65)}72%{transform:scale(.96) translateX(1px);color:#fff;background:var(--accent);border-color:var(--accent);box-shadow:0 0 14px 2px rgba(229,9,20,.45)}100%{transform:scale(1.03) translateX(-2px);color:#fff;background:var(--accent);border-color:var(--accent);box-shadow:0 0 18px 3px rgba(229,9,20,.5)}}
+.back-pill-btn{display:inline-flex;align-items:center;gap:7px;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:10px;padding:9px 16px;font-size:13px;font-weight:800;font-family:inherit;text-decoration:none;cursor:pointer;white-space:nowrap;transition:border-color .18s,color .18s,background .18s,box-shadow .18s,transform .15s}
+.back-pill-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(229,9,20,.08);box-shadow:0 4px 14px rgba(229,9,20,.22);transform:translateX(-2px)}
+.back-pill-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.back-pill-btn.is-backing{animation:backBtnRedBounce .24s cubic-bezier(.34,1.56,.64,1) both;will-change:transform,box-shadow}
 """
 
 JS = """
@@ -567,9 +572,25 @@ function openCatalogCard(el,url,ev){
     prefetchCatalogUrl(url);
     setTimeout(function(){window.location.href=url;},180);
 }
+function openBackNav(el,ev){
+    if(!el)return true;
+    var url=el.getAttribute('href');
+    if(!url)return true;
+    if(ev&&(ev.metaKey||ev.ctrlKey||ev.shiftKey||ev.altKey||ev.button===1))return true;
+    if(ev)ev.preventDefault();
+    if(el.dataset.backing==='1')return false;
+    el.dataset.backing='1';
+    el.classList.add('is-backing');
+    prefetchCatalogUrl(url);
+    setTimeout(function(){window.location.href=url;},180);
+    return false;
+}
 window.addEventListener('pageshow',function(){
     document.querySelectorAll('.act-card.is-opening,.act-text-card.is-opening').forEach(function(c){
         c.classList.remove('is-opening');delete c.dataset.opening;
+    });
+    document.querySelectorAll('.back-pill-btn.is-backing').forEach(function(b){
+        b.classList.remove('is-backing');delete b.dataset.backing;
     });
 });
 """

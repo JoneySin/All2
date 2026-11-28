@@ -520,7 +520,7 @@ async def single_post_display(req):
 
     <div class="main" style="max-width:950px; margin:30px auto; padding:0 20px;">
         <div style="display:flex; align-items:center; gap:15px; margin-bottom:25px;">
-            <a href="/posts" style="background:var(--bg3); color:var(--text); text-decoration:none; padding:8px 16px; border-radius:6px; font-weight:700; font-size:13px; border:1px solid var(--border); transition:0.2s;">← Catalog</a>
+            <a class="back-pill-btn" href="/posts" onclick="return openBackNav(this,event)" onpointerenter="prefetchCatalogUrl('/posts')" ontouchstart="prefetchCatalogUrl('/posts')">← Back</a>
             <h2 style="font-size:22px; font-weight:800; color:var(--text); margin:0;">View Post</h2>
         </div>
         

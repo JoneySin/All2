@@ -29,10 +29,28 @@ class CatalogCardTests(unittest.TestCase):
     def test_actor_name_bounce_css_and_gzip_helper(self):
         from web import web_assets
         self.assertIn('actorNameRedBounce', web_assets.CSS)
+        self.assertIn('backBtnRedBounce', web_assets.CSS)
+        self.assertIn('.back-pill-btn', web_assets.CSS)
         self.assertIn('openCatalogCard', web_assets.JS)
+        self.assertIn('openBackNav', web_assets.JS)
         self.assertIn('prefetchCatalogUrl', web_assets.JS)
         res = web_assets._h('<html>test</html>')
         self.assertTrue(res.compression)
+
+    def test_back_buttons_use_shared_glow_pill(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1] / 'web'
+        for filename, expected_href in (
+            ('actor_routes.py', 'href="/actors"'),
+            ('post_routes.py', 'href="/posts"'),
+            ('recycle_routes.py', 'href="/dashboard"'),
+            ('post_editor.py', 'href="{esc(back)}"'),
+        ):
+            src = (root / filename).read_text(encoding='utf-8')
+            self.assertIn('back-pill-btn', src, filename)
+            self.assertIn('openBackNav(this,event)', src, filename)
+            self.assertIn('>← Back</a>', src, filename)
+            self.assertIn(expected_href, src, filename)
 
     def test_post_escapes_content_and_rejects_unsafe_image_url(self):
         card = render_catalog_card({'_id': 'two', 'title': '<script>', 'category': 'A&B',
