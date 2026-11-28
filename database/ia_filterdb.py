@@ -475,7 +475,7 @@ async def save_file(media, collection_type="primary", probed=None):
         update_set = {
             "file_ref":  media.file_id,
             "file_name": f_name,
-            "file_size": media.file_size,
+            "file_size": getattr(media, "file_size", None) or 0,
             "file_type": file_type,
             "duration":  duration,
             "meta.v":    meta["v"],

@@ -118,11 +118,15 @@ class TGCustomYield:
     # ─────────────────────────────────────────────────────────
     async def _get_chunk(self, ms, loc, offset, limit) -> bytes:
         query = raw.functions.upload.GetFile(location=loc, offset=offset, limit=limit)
-        for attempt in range(4):
+        use_invoke = hasattr(ms, "invoke")
+        attempts = 2 if use_invoke else 4
+        for attempt in range(attempts):
             try:
                 async with _sem():
-                    if hasattr(ms, "invoke"):
-                        r = await ms.invoke(query, sleep_threshold=0)
+                    if use_invoke:
+                        # Session.invoke() handles is_started, BadMsgNotification,
+                        # and transient server errors internally (Kurigram 2.2.28).
+                        r = await ms.invoke(query, retries=2, sleep_threshold=0)
                     else:
                         r = await ms.send(query)
                 if isinstance(r, raw.types.upload.File):
@@ -131,12 +135,12 @@ class TGCustomYield:
                 return b""
             except FloodWait as e:
                 wait = int(getattr(e, "value", None) or getattr(e, "seconds", 0) or 0)
-                if attempt == 3 or wait > 20:
+                if attempt == attempts - 1 or wait > 20:
                     raise
                 logger.warning(f"GetFile FloodWait {wait}s @ {offset}")
                 await asyncio.sleep(wait + 0.5)
             except _RETRY_ERRORS as e:
-                if attempt == 3:
+                if attempt == attempts - 1:
                     raise
                 logger.warning(f"GetFile retry {attempt + 1} @ {offset}: {e!r}")
                 await asyncio.sleep(0.4 * (attempt + 1))
