@@ -38,7 +38,7 @@ class RequiredEnvTests(unittest.TestCase):
     def test_compulsory_list_is_the_single_source_of_truth(self):
         self.assertEqual(REQUIRED_ENV, (
             "API_ID", "API_HASH", "BOT_TOKEN", "ADMINS",
-            "LOG_CHANNEL", "BIN_CHANNEL", "DATABASE_URL", "URL",
+            "LOG_CHANNEL", "DATABASE_URL", "URL",
         ))
         self.assertEqual(PAYMENT_ENV, ("UPI_ID", "UPI_NAME", "RECEIPT_SEND_USERNAME"))
 
@@ -52,6 +52,31 @@ class RequiredEnvTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Missing required environment variable(s): URL", result.stderr)
+
+    def test_missing_log_channel_fails_while_bin_and_delete_fallback_to_log(self):
+        env = os.environ.copy()
+        env.pop("LOG_CHANNEL", None)
+        no_log = subprocess.run(
+            [sys.executable, "-c", "import info"],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env, capture_output=True, text=True, timeout=20,
+        )
+        self.assertNotEqual(no_log.returncode, 0)
+        self.assertIn("LOG_CHANNEL", no_log.stderr)
+
+        env2 = os.environ.copy()
+        env2["LOG_CHANNEL"] = "-100111"
+        env2.pop("BIN_CHANNEL", None)
+        env2.pop("DELETE_CHANNEL", None)
+        env2.pop("MEDIA_STORAGE_CHANNEL", None)
+        ok = subprocess.run(
+            [sys.executable, "-c",
+             "import info; print(info.LOG_CHANNEL, info.BIN_CHANNEL, info.DELETE_CHANNEL, info.MEDIA_STORAGE_CHANNEL)"],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env2, capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(ok.returncode, 0, msg=ok.stderr)
+        self.assertEqual(ok.stdout.strip(), "-100111 -100111 -100111 -100111")
 
 
 class ProtectContentTests(unittest.IsolatedAsyncioTestCase):

@@ -5,8 +5,9 @@ from Script import script
 
 logger = logging.getLogger(__name__)
 
-# Compulsory environment variables — single source of truth, all eight required.
-REQUIRED_ENV = ("API_ID", "API_HASH", "BOT_TOKEN", "ADMINS", "LOG_CHANNEL", "BIN_CHANNEL", "DATABASE_URL", "URL")
+# Compulsory environment variables — single source of truth, all seven required.
+# BIN_CHANNEL, DELETE_CHANNEL, and MEDIA_STORAGE_CHANNEL are optional and fall back to LOG_CHANNEL.
+REQUIRED_ENV = ("API_ID", "API_HASH", "BOT_TOKEN", "ADMINS", "LOG_CHANNEL", "DATABASE_URL", "URL")
 _missing_env = [name for name in REQUIRED_ENV if not (environ.get(name) or "").strip()]
 if _missing_env:
     logger.error("❌ Missing required environment variable(s): %s", ", ".join(_missing_env))
@@ -94,16 +95,18 @@ PICS = environ.get("PICS", "https://i.postimg.cc/8C15CQ5y/1.png").split()
 # ─────────────────────────────────────────────
 # 📢 STORAGE & MICRO-ROUTING CHANNELS SYNC
 # ─────────────────────────────────────────────
-LOG_CHANNEL = int(environ.get("LOG_CHANNEL", "0"))
+LOG_CHANNEL = int((environ.get("LOG_CHANNEL") or "").strip() or "0")
 if not LOG_CHANNEL:
     logger.error("❌ LOG_CHANNEL missing")
     exit(1)
 
-# पुराना मिक्स्ड बिन चैनल (फाइलों के डिफ़ॉल्ट डाउनलोड के लिए)
-BIN_CHANNEL = int(environ.get("BIN_CHANNEL", "0"))
-if not BIN_CHANNEL:
-    logger.error("❌ BIN_CHANNEL missing")
-    exit(1)
+def _parse_optional_channel(key, fallback):
+    raw = (environ.get(key) or "").strip()
+    val = int(raw) if raw else 0
+    return val or fallback
+
+# स्ट्रीमिंग/प्रोबिंग चैनल — सेट नहीं (या 0) है तो सुरक्षित रूप से LOG_CHANNEL पर जाएगा
+BIN_CHANNEL = _parse_optional_channel("BIN_CHANNEL", LOG_CHANNEL)
 
 # ⚡ [MERGED] एक्टर फोटोज़, गैलरी, पोस्ट कवर व थंबनेल के लिए एक ही मीडिया स्टोरेज चैनल
 # (यदि MEDIA_STORAGE_CHANNEL सेट नहीं है — या पुराना THUMBNAIL_STORAGE_CHANNEL /
@@ -111,8 +114,9 @@ if not BIN_CHANNEL:
 def _resolve_media_storage_channel():
     for key in ("MEDIA_STORAGE_CHANNEL", "THUMBNAIL_STORAGE_CHANNEL", "ACTOR_STORAGE_CHANNEL"):
         raw = (environ.get(key) or "").strip()
-        if raw:
-            return int(raw)
+        val = int(raw) if raw else 0
+        if val:
+            return val
     return BIN_CHANNEL or LOG_CHANNEL
 
 MEDIA_STORAGE_CHANNEL = _resolve_media_storage_channel()
@@ -120,7 +124,7 @@ MEDIA_STORAGE_CHANNEL = _resolve_media_storage_channel()
 # 🗑️ [NEW FEATURE] डिलीट-बैकअप चैनल — बॉट या वेब से कोई फाइल डिलीट होने से पहले
 # यहाँ फॉरवर्ड/रीसेंड की जाती है ताकि गलती से डिलीट होने पर भी फाइल रिकवर हो सके।
 # (सेट नहीं है तो सुरक्षित रूप से LOG_CHANNEL पर फॉल-बैक होगा)
-DELETE_CHANNEL = int((environ.get("DELETE_CHANNEL") or "").strip() or LOG_CHANNEL)
+DELETE_CHANNEL = _parse_optional_channel("DELETE_CHANNEL", LOG_CHANNEL)
 
 # ─────────────────────────────────────────────
 # 🗄️ DATABASE CONNECTION URL
