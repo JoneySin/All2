@@ -205,9 +205,11 @@ class ActorSearchSyncTests(unittest.IsolatedAsyncioTestCase):
         html = await resp.text()
         for needle in (
             'actor-search-panel',
+            'id="actMovieClear"', 'id="actorResInfo"', 'id="actorResCount"',
             'id="cddGfWrapActor"', 'id="cddGfBtnActor"', 'id="cddGfLabelActor"', 'id="cddGfMenuActor"',
             'data-val="all"', 'data-val="group"', 'data-val="single"',
             'id="cddColWrapActor"', 'id="cddModeWrapActor"',
+            'class="cdd-kicker"', 'filter-active', 'scrollActorVideoTop',
             'pickActorGF', 'pickActorCol', 'pickActorMode', 'groupHtml(', 'cardHtml(',
         ):
             self.assertIn(needle, html)

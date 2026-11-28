@@ -30,8 +30,12 @@ SEARCH_PANEL_CSS = """
 }
 @media(max-width:767px){.search-row2 .cdd-wrap{flex:1 1 0;min-width:0}.search-row1 .gf-wrap{flex:0 0 100px}}
 
-.search-wrap{flex:1;min-width:0;display:flex;align-items:center;background:var(--bg3);border:1.5px solid var(--border);border-radius:12px;padding:0 6px 0 18px;gap:8px;overflow:hidden;min-height:38px;transition:border-color .18s}
-.search-wrap:focus-within{border-color:var(--border)}
+.search-wrap{flex:1;min-width:0;display:flex;align-items:center;background:var(--bg3);border:1.5px solid var(--border);border-radius:12px;padding:0 8px 0 16px;gap:8px;overflow:hidden;min-height:38px;transition:border-color .18s,box-shadow .18s}
+.search-wrap:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(229,9,20,.12)}
+.search-clear{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;flex-shrink:0;border:0;border-radius:999px;background:transparent;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;transition:background .15s,color .15s}
+.search-clear[hidden]{display:none}
+.search-clear:hover{background:var(--bg4);color:var(--text)}
+.search-clear:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .search-spinner{display:none;width:15px;height:15px;flex-shrink:0;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:searchSpin .6s linear infinite}
 .search-wrap.loading .search-spinner{display:inline-block}
 @keyframes searchSpin{to{transform:rotate(360deg)}}
@@ -49,7 +53,10 @@ SEARCH_PANEL_CSS = """
   transition:background-color 9999s ease-in-out 0s;
 }
 /* The surrounding control and menu use the same shared directory filter CSS. */
-.home-search-panel .cdd-btn,.actor-search-panel .cdd-btn{background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;min-width:0;flex:1;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-search-panel .cdd-btn,.actor-search-panel .cdd-btn{background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;min-width:0;flex:1;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center}
+.home-search-panel .cdd-kicker,.actor-search-panel .cdd-kicker{font-size:11px;font-weight:600;color:var(--muted);margin-right:5px;flex-shrink:0}
+@media(max-width:767px){.home-search-panel .cdd-kicker,.actor-search-panel .cdd-kicker{display:none}}
+.home-search-panel .cdd-wrap.filter-active,.actor-search-panel .cdd-wrap.filter-active{border-color:rgba(229,9,20,.6);background:rgba(229,9,20,.08)}
 .home-search-panel .cdd-btn:focus-visible,.actor-search-panel .cdd-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
 .home-search-panel .cdd-arrow,.actor-search-panel .cdd-arrow{pointer-events:none;margin-left:8px}
 .home-search-panel button.cdd-item,.actor-search-panel button.cdd-item{display:block;width:100%;background:none;border:0;border-bottom:1px solid var(--border);color:var(--text);font:inherit;text-align:left;cursor:pointer}
@@ -843,6 +850,7 @@ function pickGF(val,label,el,e){
     curGF=val;curPage=1;
     document.getElementById('cddGfLabel').textContent=label;
     document.getElementById('cddGfBtn').setAttribute('aria-label','Group filter: '+label);
+    var wrap=document.getElementById('cddGfWrap');if(wrap)wrap.classList.toggle('filter-active',val!=='all');
     document.querySelectorAll('#cddGfMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
     el.classList.add('selected');
     closeCdds();
@@ -854,6 +862,7 @@ function pickCol(val,label,el,e){
     curCol=val;
     document.getElementById('cddColLabel').textContent=label;
     document.getElementById('cddColBtn').setAttribute('aria-label','Collection filter: '+label);
+    var wrap=document.getElementById('cddColWrap');if(wrap)wrap.classList.toggle('filter-active',val!=='all');
     document.querySelectorAll('#cddColMenu .cdd-item').forEach(function(i){i.classList.remove('selected');});
     el.classList.add('selected');
     closeCdds();
@@ -964,10 +973,24 @@ function next(){if(nextOff){offHist.push(curOff);curPage++;doSearch(nextOff,true
 function prev(){if(curPage>1){curPage--;doSearch(offHist.length?offHist.pop():0,true);scrollTo(0,0);}}
 
 document.addEventListener('DOMContentLoaded',function(){
-    var q=document.getElementById('q');
+    var q=document.getElementById('q'),qClear=document.getElementById('qClear');
+    function syncQClear(){if(qClear&&q)qClear.hidden=!q.value.length;}
     if(q){
         var qLiveTimer;
+        if(qClear){
+            qClear.addEventListener('click',function(){
+                clearTimeout(qLiveTimer);
+                q.value='';syncQClear();
+                searchReqId++;
+                var qw=document.getElementById('qWrap');if(qw)qw.classList.remove('loading');
+                var ri=document.getElementById('resInfo');if(ri)ri.style.display='none';
+                var pb=document.getElementById('pageBox');if(pb)pb.style.display='none';
+                q.focus();
+                doSearch(0,true);
+            });
+        }
         q.addEventListener('input',function(){
+            syncQClear();
             clearTimeout(qLiveTimer);
             var val=q.value.trim();
             if(val.length<2){
@@ -995,7 +1018,7 @@ document.addEventListener('DOMContentLoaded',function(){
         doSearch(0,true);
     });
     var savedQ=sessionStorage.getItem('ff_dash_q');
-    if(savedQ && q){q.value=savedQ;doSearch(0);}else{doSearch(0,true);}
+    if(savedQ && q){q.value=savedQ;syncQClear();doSearch(0);}else{syncQClear();doSearch(0,true);}
 });
 """)
 
@@ -1015,11 +1038,12 @@ SEARCH_ZONE = (
         '<div class="search-row1">'
             '<div class="search-wrap" id="qWrap">'
                 '<input class="search-input" id="q" placeholder="Titles, people, genres\u2026">'
+                '<button type="button" class="search-clear" id="qClear" aria-label="Clear search" hidden>&times;</button>'
                 '<span class="search-spinner" id="qSpinner"></span>'
             '</div>'
             '<div class="cdd-wrap gf-wrap" id="cddGfWrap" onclick="toggleCdd(\'gf\',event)">'
                 '<button type="button" class="cdd-btn" id="cddGfBtn" aria-label="Group filter: All" aria-expanded="false" aria-controls="cddGfMenu">'
-                    '<span id="cddGfLabel">All</span>'
+                    '<span class="cdd-kicker">Group:</span><span id="cddGfLabel">All</span>'
                 '</button>'
                 '<span class="cdd-arrow" aria-hidden="true">&#9660;</span>'
                 '<div class="cdd-menu" id="cddGfMenu" style="display:none">'
@@ -1032,7 +1056,7 @@ SEARCH_ZONE = (
         '<div class="search-row2">'
             '<div class="cdd-wrap" id="cddColWrap" onclick="toggleCdd(\'col\',event)">'
                 '<button type="button" class="cdd-btn" id="cddColBtn" aria-label="Collection filter: All" aria-expanded="false" aria-controls="cddColMenu">'
-                    '<span id="cddColLabel">All</span>'
+                    '<span class="cdd-kicker">Source:</span><span id="cddColLabel">All</span>'
                 '</button>'
                 '<span class="cdd-arrow" aria-hidden="true">&#9660;</span>'
                 '<div class="cdd-menu" id="cddColMenu" style="display:none">'
@@ -1044,7 +1068,7 @@ SEARCH_ZONE = (
             '</div>'
             '<div class="cdd-wrap" id="cddModeWrap" onclick="toggleCdd(\'mode\',event)">'
                 '<button type="button" class="cdd-btn" id="cddModeBtn" aria-label="View mode filter" aria-expanded="false" aria-controls="cddModeMenu">'
-                    '<span id="cddModeLabel">' + _DEF_MODE_LBL + '</span>'
+                    '<span class="cdd-kicker">View:</span><span id="cddModeLabel">' + _DEF_MODE_LBL + '</span>'
                 '</button>'
                 '<span class="cdd-arrow" aria-hidden="true">&#9660;</span>'
                 '<div class="cdd-menu" id="cddModeMenu" style="display:none">'
