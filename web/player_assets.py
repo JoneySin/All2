@@ -18,34 +18,41 @@ body.light .inline-player-card{box-shadow:0 24px 70px rgba(15,23,42,.22)}
 .inline-player-status:empty{display:none}
 .inline-player-status.error{color:#ffb4a9;background:rgba(229,9,20,.12)}
 body.light .inline-player-status.error{color:#b91c1c;background:rgba(229,9,20,.08)}
-.inline-player-switcher{padding:14px 17px 15px;background:var(--bg2);border-top:1px solid var(--border);display:flex;flex-direction:column;gap:12px}
+.inline-player-switcher{padding:15px 17px 14px;background:var(--card);border-top:1px solid var(--border);display:flex;flex-direction:column;gap:12px}
 .inline-player-switcher[hidden]{display:none}
+.inline-player-switch-banner{display:flex;align-items:center;gap:11px}
+.inline-player-switch-ico{display:grid;place-items:center;width:38px;height:38px;flex:none;border-radius:11px;background:rgba(229,9,20,.14);color:#ff6b74}
+body.light .inline-player-switch-ico{background:rgba(229,9,20,.1);color:var(--accent)}
+.inline-player-switch-copy{min-width:0;flex:1}
+.inline-player-switch-title{color:var(--text);font-size:15px;font-weight:900;line-height:1.25}
+.inline-player-switch-sub{color:var(--muted);font-size:12px;font-weight:500;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .inline-player-switch-group{display:flex;flex-direction:column;gap:8px}
 .inline-player-switch-head{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--muted);font-size:10px;letter-spacing:1.1px;text-transform:uppercase;font-weight:900}
-.inline-player-switch-head span:first-child{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
-.inline-player-switch-head span:first-child::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block}
-.inline-player-switch-head span:last-child{letter-spacing:0;text-transform:none;font-weight:700;font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.inline-player-switch-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:8px;max-height:196px;overflow-y:auto;padding:2px 1px;scrollbar-width:thin}
-.inline-player-switch-row.episodes-row{grid-template-columns:repeat(auto-fill,minmax(92px,1fr));max-height:152px}
-.inline-player-chip{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;min-width:0;border:1.5px solid var(--border);background:var(--card);color:var(--text);padding:9px 11px;border-radius:11px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;line-height:1.25;text-align:left;transition:border-color .16s,background .16s,box-shadow .16s}
-body.light .inline-player-chip{box-shadow:0 2px 6px rgba(15,23,42,.05)}
-.inline-player-chip:hover:not([aria-current="true"]){border-color:var(--accent);background:var(--bg3)}
+.inline-player-switch-head span:last-child{letter-spacing:0;text-transform:none;font-weight:600;font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inline-player-switch-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;max-height:240px;overflow-y:auto;padding:2px 1px;scrollbar-width:thin}
+.inline-player-switch-row.episodes-row{grid-template-columns:repeat(auto-fill,minmax(94px,1fr));max-height:152px}
+.inline-player-chip{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:4px;min-width:0;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);padding:11px 12px;border-radius:12px;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit;line-height:1.25;text-align:left;transition:border-color .16s,background .16s,box-shadow .16s}
+.inline-player-chip:hover:not([aria-current="true"]){border-color:var(--accent);background:var(--bg2)}
 .inline-player-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.inline-player-chip-top{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%}
-.inline-player-chip-lbl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.inline-player-chip-state{font-size:10px;line-height:1;opacity:0;flex-shrink:0}
-.inline-player-chip[aria-current="true"]{background:linear-gradient(135deg,var(--accent),#b20710);border-color:var(--accent);color:#fff;cursor:default;box-shadow:0 5px 16px rgba(229,9,20,.32)}
-body.light .inline-player-chip[aria-current="true"]{box-shadow:0 6px 16px rgba(229,9,20,.26)}
-.inline-player-chip[aria-current="true"] .inline-player-chip-state{opacity:1}
-.inline-player-chip small{display:block;font-size:10px;font-weight:600;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.inline-player-chip[aria-current="true"] small{color:rgba(255,255,255,.88)}
+.inline-player-chip-top{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%}
+.inline-player-chip-lbl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:900;color:var(--text)}
+.inline-player-chip-state{display:none;font-size:9.5px;font-weight:900;letter-spacing:.5px;text-transform:uppercase;color:#ff6b74;flex-shrink:0}
+body.light .inline-player-chip-state{color:#b91c1c}
+.inline-player-chip[aria-current="true"]{background:linear-gradient(135deg,rgba(229,9,20,.26),rgba(229,9,20,.1));border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent);cursor:default}
+body.light .inline-player-chip[aria-current="true"]{background:linear-gradient(135deg,rgba(229,9,20,.14),rgba(229,9,20,.04));box-shadow:inset 3px 0 0 var(--accent)}
+.inline-player-chip[aria-current="true"] .inline-player-chip-state{display:inline-block}
+.inline-player-chip-name{width:100%;font-size:11.5px;font-weight:500;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.inline-player-chip-meta{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .inline-player-switch-note{color:var(--muted);font-size:10px}
-.inline-player-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 17px;background:var(--card);border-top:1px solid var(--border);flex-wrap:wrap}
-.inline-player-note{color:var(--muted);font-size:11px;line-height:1.4}
-.inline-player-download{display:inline-flex;align-items:center;gap:6px;color:var(--text);text-decoration:none;border:1px solid var(--border);background:var(--bg3);padding:8px 13px;border-radius:9px;font-size:12px;font-weight:800;transition:border-color .16s,color .16s,background .16s}
-.inline-player-download[hidden]{display:none}.inline-player-download:hover{border-color:var(--accent);color:var(--accent)}
-@media(max-width:500px){.inline-player-backdrop{padding:10px}.inline-player-card{border-radius:14px}.inline-player-head{padding:12px 13px}.inline-player-switcher{padding:12px 13px 13px}.inline-player-actions{padding:11px 13px}.inline-player-screen video{max-height:50vh}}
-@media(max-width:420px){.inline-player-switch-row{grid-template-columns:repeat(2,minmax(0,1fr))}.inline-player-switch-row.episodes-row{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.inline-player-actions{display:flex;flex-direction:column;gap:9px;padding:12px 17px 14px;background:var(--card);border-top:1px solid var(--border)}
+.inline-player-btn-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;width:100%}
+.inline-player-action-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:0;color:var(--text);text-decoration:none;border:1px solid var(--border);background:var(--bg3);padding:10px 8px;border-radius:10px;font:inherit;font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap;transition:border-color .16s,color .16s,background .16s}
+.inline-player-action-btn[hidden]{display:none}
+.inline-player-action-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--bg2)}
+.inline-player-action-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.inline-player-note{color:var(--muted);font-size:11px;line-height:1.4;text-align:center}
+@media(max-width:500px){.inline-player-backdrop{padding:10px}.inline-player-card{border-radius:14px}.inline-player-head{padding:12px 13px}.inline-player-switcher{padding:13px 13px 12px}.inline-player-actions{padding:11px 13px 13px}.inline-player-screen video{max-height:50vh}}
+@media(max-width:340px){.inline-player-switch-row{grid-template-columns:1fr}.inline-player-btn-row{grid-template-columns:1fr}}
 </style>
 <div id="inlinePlayer" class="inline-player-backdrop" role="dialog" aria-modal="true" aria-labelledby="inlinePlayerTitle" hidden>
   <div class="inline-player-card">
@@ -57,7 +64,14 @@ body.light .inline-player-chip[aria-current="true"]{box-shadow:0 6px 16px rgba(2
     <div class="inline-player-screen"><video id="inlinePlayerVideo" controls playsinline preload="metadata"></video></div>
     <div id="inlinePlayerStatus" class="inline-player-status" role="status" aria-live="polite"></div>
     <div id="inlinePlayerSwitcher" class="inline-player-switcher" aria-label="Other versions in this group" hidden></div>
-    <div class="inline-player-actions"><span class="inline-player-note">Playback depends on your browser's supported formats.</span><a id="inlinePlayerDownload" class="inline-player-download" hidden>&#11015; Download file</a></div>
+    <div class="inline-player-actions">
+      <div class="inline-player-btn-row">
+        <a id="inlinePlayerDownload" class="inline-player-download inline-player-action-btn" hidden>&#8595; Download</a>
+        <button type="button" id="inlinePlayerCopy" class="inline-player-action-btn" onclick="inlinePlayerCopyLink()" hidden>&#128279; Copy link</button>
+        <button type="button" class="inline-player-action-btn" onclick="closeInlinePlayer()">Close</button>
+      </div>
+      <span class="inline-player-note">Playback depends on your browser's supported formats.</span>
+    </div>
   </div>
 </div>
 <script>
@@ -75,9 +89,35 @@ function closeInlinePlayer(){
     if(inlinePlayerPreviousFocus&&inlinePlayerPreviousFocus.isConnected)inlinePlayerPreviousFocus.focus();
 }
 function inlinePlayerDownloadLink(download){
-    var link=document.getElementById('inlinePlayerDownload');
-    if(!link)return;
-    if(download){link.href=download;link.hidden=false;}else{link.hidden=true;link.removeAttribute('href');}
+    var link=document.getElementById('inlinePlayerDownload'),copy=document.getElementById('inlinePlayerCopy');
+    if(link){
+        if(download){link.href=download;link.hidden=false;}else{link.hidden=true;link.removeAttribute('href');}
+    }
+    if(copy){
+        if(download){copy.dataset.url=new URL(download,window.location.origin).href;copy.hidden=false;copy.textContent='🔗 Copy link';}
+        else{copy.hidden=true;delete copy.dataset.url;}
+    }
+}
+var inlinePlayerCopyTimer=null;
+function inlinePlayerCopyLink(){
+    var copy=document.getElementById('inlinePlayerCopy');
+    var url=copy&&copy.dataset.url;
+    if(!url)return;
+    function done(){
+        copy.textContent='✓ Copied!';
+        if(typeof showToast==='function')showToast('Link copied!');
+        clearTimeout(inlinePlayerCopyTimer);
+        inlinePlayerCopyTimer=setTimeout(function(){if(copy&&copy.isConnected)copy.textContent='🔗 Copy link';},1800);
+    }
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+        navigator.clipboard.writeText(url).then(done).catch(function(){fallbackCopy();});
+    }else{fallbackCopy();}
+    function fallbackCopy(){
+        var ta=document.createElement('textarea');ta.value=url;ta.style.position='fixed';ta.style.opacity='0';
+        document.body.appendChild(ta);ta.select();
+        try{document.execCommand('copy');done();}catch(_){}
+        document.body.removeChild(ta);
+    }
 }
 async function inlinePlayerPrepareStream(fileId,recycle){
     var endpoint=recycle?'/api/recycle/stream':'/setup_stream';
@@ -90,6 +130,15 @@ async function inlinePlayerPrepareStream(fileId,recycle){
     if(url.origin!==window.location.origin||!/^\/download\/\d+$/.test(url.pathname))throw new Error('Invalid video link.');
     var download=new URL(url);download.searchParams.delete('inline');
     return {src:url.pathname+url.search,download:download.pathname+download.search};
+}
+function inlinePlayerBanner(subtitle){
+    var wrap=document.createElement('div');wrap.className='inline-player-switch-banner';
+    var ico=document.createElement('span');ico.className='inline-player-switch-ico';ico.setAttribute('aria-hidden','true');
+    ico.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="17" y2="13"/><line x1="7" y1="17" x2="13" y2="17"/></svg>';
+    var copy=document.createElement('div');copy.className='inline-player-switch-copy';
+    var title=document.createElement('div');title.className='inline-player-switch-title';title.textContent='Episodes & qualities';
+    var sub=document.createElement('div');sub.className='inline-player-switch-sub';sub.textContent=subtitle||'Choose a version to play';
+    copy.appendChild(title);copy.appendChild(sub);wrap.appendChild(ico);wrap.appendChild(copy);return wrap;
 }
 function inlinePlayerHead(label,detail){
     var head=document.createElement('div');head.className='inline-player-switch-head';
@@ -104,13 +153,14 @@ function inlinePlayerRow(label,extraClass){
 function inlinePlayerItemMeta(item){
     var parts=[];if(item.duration)parts.push(item.duration);if(item.size)parts.push(item.size);return parts.join(' · ');
 }
-function inlinePlayerChip(row,label,meta,current,title,onClick){
+function inlinePlayerChip(row,label,meta,current,title,onClick,showName){
     var chip=document.createElement('button');chip.type='button';chip.className='inline-player-chip';
     var top=document.createElement('div');top.className='inline-player-chip-top';
     var text=document.createElement('span');text.className='inline-player-chip-lbl';text.textContent=label||'Version';
-    var state=document.createElement('span');state.className='inline-player-chip-state';state.setAttribute('aria-hidden','true');state.textContent='▶';
+    var state=document.createElement('span');state.className='inline-player-chip-state';state.textContent='SELECTED';
     top.appendChild(text);top.appendChild(state);chip.appendChild(top);
-    if(meta){var small=document.createElement('small');small.textContent=meta;chip.appendChild(small);}
+    if(showName&&title){var sub=document.createElement('div');sub.className='inline-player-chip-name';sub.textContent=title;chip.appendChild(sub);}
+    if(meta){var small=document.createElement('div');small.className='inline-player-chip-meta';small.textContent='⏱ '+meta;chip.appendChild(small);}
     chip.title=title||'';
     if(current){chip.setAttribute('aria-current','true');chip.title='Currently playing';}
     else if(onClick)chip.addEventListener('click',onClick);
@@ -142,13 +192,14 @@ function inlinePlayerPaintSwitches(){
         if(!inlinePlayerEpisode){inlinePlayerEpisode=data.current_episode||episodes[0].key;}
         for(i=0;i<episodes.length;i++){if(episodes[i].key===inlinePlayerEpisode){current=episodes[i];break;}}
         if(!current){current=episodes[0];inlinePlayerEpisode=current.key;}
+        box.appendChild(inlinePlayerBanner(group.name?'Choose a version · '+group.name:'Choose a version to play'));
         var epSec=document.createElement('div');epSec.className='inline-player-switch-group';
-        epSec.appendChild(inlinePlayerHead('Episodes',name+episodes.length+(group.truncated?' of '+group.episode_count:'')+' episodes'));
+        epSec.appendChild(inlinePlayerHead('Episodes',episodes.length+(group.truncated?' of '+group.episode_count:'')+' episodes'));
         var episodeRow=inlinePlayerRow('Episodes','episodes-row');
         (function(){for(var j=0;j<episodes.length;j++){
             var episode=episodes[j];
             inlinePlayerChip(episodeRow,episode.label,'',episode.key===inlinePlayerEpisode,episode.label,
-                (function(key){return function(){inlinePlayerPickEpisode(key);};})(episode.key));
+                (function(key){return function(){inlinePlayerPickEpisode(key);};})(episode.key),false);
         }})();
         epSec.appendChild(episodeRow);box.appendChild(epSec);
         var qSec=document.createElement('div');qSec.className='inline-player-switch-group';
@@ -158,19 +209,19 @@ function inlinePlayerPaintSwitches(){
         (function(){for(var k=0;k<items.length;k++){
             var item=items[k];
             inlinePlayerChip(qualityRow,item.label,inlinePlayerItemMeta(item),item.file_id===inlinePlayerFileId,item.name,
-                (function(target){return function(){switchInlinePlayer(target.file_id,target.name,false);};})(item));
+                (function(target){return function(){switchInlinePlayer(target.file_id,target.name,false);};})(item),true);
         }})();
         qSec.appendChild(qualityRow);box.appendChild(qSec);
     }else{
         var items=data.items||[];
         if(items.length<2){box.hidden=true;return;}
+        box.appendChild(inlinePlayerBanner(group.name?'Choose a version · '+group.name:'Choose a version to play'));
         var qOnly=document.createElement('div');qOnly.className='inline-player-switch-group';
-        qOnly.appendChild(inlinePlayerHead('Quality versions',name+items.length+(group.truncated?' of '+group.count:'')));
         var row=inlinePlayerRow('Quality versions');
         (function(){for(var j=0;j<items.length;j++){
             var item=items[j];
             inlinePlayerChip(row,item.label,inlinePlayerItemMeta(item),item.file_id===inlinePlayerFileId,item.name,
-                (function(target){return function(){switchInlinePlayer(target.file_id,target.name,false);};})(item));
+                (function(target){return function(){switchInlinePlayer(target.file_id,target.name,false);};})(item),true);
         }})();
         qOnly.appendChild(row);box.appendChild(qOnly);
     }
