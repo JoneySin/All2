@@ -240,6 +240,13 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("miniItemMeta", mini)
         self.assertGreater(mini.index('id="psSwitch"'), mini.index('<div class="ppl"'))
         self.assertIn("openStream(f.file_id,f.name)", mini)
+        self.assertIn("Episodes & qualities", mini)
+        self.assertIn("pab-row", mini)
+        self.assertIn("pswc-top", mini)
+        from web.utils.render_template import watch_tmplt
+        self.assertIn("watch-card", watch_tmplt)
+        self.assertIn("watch-head", watch_tmplt)
+        self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", watch_tmplt)
 
 
 if __name__ == "__main__":
