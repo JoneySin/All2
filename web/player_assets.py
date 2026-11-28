@@ -93,7 +93,7 @@ PLAYER_MODAL_HTML = (
 )
 
 PLAYER_JS = r'''
-var inlinePlayerRequest=0, inlinePlayerAbort=null, inlinePlayerPreviousFocus=null, inlinePlayerOverflow='';
+var inlinePlayerRequest=0, inlinePlayerAbort=null, inlinePlayerPreviousFocus=null, inlinePlayerOverflow='', inlinePlayerCloseTimer=0;
 var inlinePlayerFileId='', inlinePlayerSwitches=null, inlinePlayerEpisode='', inlinePlayerWatch=null;
 function inlinePlayerHeaders(extra){
     var headers={};
@@ -118,16 +118,34 @@ function closeInlinePlayer(){
             video.pause();video.innerHTML='';video.removeAttribute('src');
             setTimeout(function(){try{video.load();}catch(_){}},0);
         }
-        if(window.Telegram&&window.Telegram.WebApp&&typeof window.Telegram.WebApp.close==='function'){
-            try{window.Telegram.WebApp.close();}catch(_){}
+        clearTimeout(inlinePlayerCloseTimer);
+        var tgApp=window.Telegram&&window.Telegram.WebApp;
+        if(tgApp&&typeof tgApp.initData==='string'&&tgApp.initData.length>0&&typeof tgApp.close==='function'){
+            try{tgApp.close();}catch(_){}
+            return;
         }
-        try{window.close();}catch(_){}
         var sameOriginRef=document.referrer&&document.referrer.indexOf(window.location.origin)===0;
-        if(sameOriginRef&&window.history.length>1){window.history.back();return;}
-        var card=document.querySelector('.inline-player-card.watch-card');
-        if(card){
-            card.innerHTML='<div style="padding:36px 20px;text-align:center;color:var(--text)"><div style="font-size:28px;margin-bottom:10px">✓</div><div style="font-size:16px;font-weight:800;margin-bottom:6px">Player closed</div><div style="font-size:13px;color:var(--muted);margin-bottom:16px">You can close this tab or reopen the video below.</div><button type="button" class="inline-player-action-btn" onclick="location.reload()">Reopen player</button></div>';
+        if(sameOriginRef&&window.history.length>1){
+            window.history.back();
+            return;
         }
+        function cancelCloseFallback(){
+            clearTimeout(inlinePlayerCloseTimer);
+            inlinePlayerCloseTimer=0;
+        }
+        window.addEventListener('pagehide',cancelCloseFallback,{once:true});
+        document.addEventListener('visibilitychange',function(){
+            if(document.visibilityState==='hidden')cancelCloseFallback();
+        });
+        try{window.close();}catch(_){}
+        inlinePlayerCloseTimer=setTimeout(function(){
+            inlinePlayerCloseTimer=0;
+            if(document.visibilityState==='hidden')return;
+            var card=document.querySelector('.inline-player-card.watch-card');
+            if(card){
+                card.innerHTML='<div style="padding:36px 20px;text-align:center;color:var(--text)"><div style="font-size:28px;margin-bottom:10px">✓</div><div style="font-size:16px;font-weight:800;margin-bottom:6px">Player closed</div><div style="font-size:13px;color:var(--muted);margin-bottom:16px">You can close this tab or reopen the video below.</div><button type="button" class="inline-player-action-btn" onclick="location.reload()">Reopen player</button></div>';
+            }
+        },1200);
         return;
     }
     if(!modal||modal.hidden)return;

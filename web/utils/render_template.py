@@ -14,6 +14,7 @@ watch_tmplt = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>{heading}</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;900&display=swap" rel="stylesheet">
 <style>
 :root{{
@@ -67,6 +68,9 @@ function showToast(msg){{
     setTimeout(function(){{t.classList.remove('show');}},2800);
 }}
 __PLAYER_JS__
+if(window.Telegram&&window.Telegram.WebApp&&typeof window.Telegram.WebApp.initData==='string'&&window.Telegram.WebApp.initData.length>0){{
+    try{{window.Telegram.WebApp.ready();window.Telegram.WebApp.expand();}}catch(_){{}}
+}}
 inlinePlayerInitWatch(__WATCH_CONFIG__);
 </script>
 </body></html>"""

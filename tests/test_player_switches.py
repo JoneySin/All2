@@ -254,6 +254,7 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
             watch_html = await render_template.media_watch(123, "e=1&s=abc")
         self.assertIn("inline-player-card watch-card", watch_html)
         self.assertIn("inline-player-head watch-head", watch_html)
+        self.assertIn("https://telegram.org/js/telegram-web-app.js", watch_html)
         self.assertIn('id="inlinePlayerSwitcher"', watch_html)
         self.assertIn("Episodes & qualities", watch_html)
         self.assertIn("/api/watch/switch", watch_html)
@@ -309,13 +310,162 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
             tunnel.assert_awaited_once_with("f1080", "inline")
 
     async def test_stream_priming_and_instant_close(self):
+        import json
+        import subprocess
         from types import SimpleNamespace
+        from pyrogram import enums
         from pyrogram.file_id import FileId
         from web.utils import media_info
         from web.player_assets import PLAYER_JS
+        from plugins import commands
 
         self.assertIn("setTimeout(function(){try{video.load();}catch(_){}},0)", PLAYER_JS)
         self.assertIn("sameOriginRef&&window.history.length>1", PLAYER_JS)
+        self.assertIn("tgApp.initData.length>0", PLAYER_JS)
+
+        node_script = r"""
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const playerJs = process.argv[1];
+
+function runScenario(opts) {
+    const calls = [];
+    const listeners = {};
+    const timers = [];
+    let nextTimer = 1;
+    const card = { innerHTML: 'ORIGINAL' };
+    const video = {
+        innerHTML: '<source>',
+        pause() { calls.push('video.pause'); },
+        removeAttribute(a) { calls.push('video.remove:' + a); },
+        load() { calls.push('video.load'); },
+    };
+    const modal = { hidden: false };
+    const doc = {
+        referrer: opts.referrer || '',
+        visibilityState: opts.visibilityState || 'visible',
+        getElementById(id) {
+            if (id === 'inlinePlayer') return modal;
+            if (id === 'inlinePlayerVideo') return video;
+            if (id === 'inlinePlayerSwitcher') return { hidden: false, textContent: 'x' };
+            return null;
+        },
+        querySelector(sel) {
+            return sel === '.inline-player-card.watch-card' ? card : null;
+        },
+        body: { style: { overflow: 'hidden' } },
+        addEventListener(ev, fn) { (listeners['doc:' + ev] ||= []).push(fn); },
+    };
+    const win = {
+        location: { origin: 'https://bot.example' },
+        history: { length: opts.historyLength || 1, back() { calls.push('history.back'); } },
+        close() { calls.push('window.close'); },
+        addEventListener(ev, fn) { (listeners['win:' + ev] ||= []).push(fn); },
+        Telegram: opts.telegram,
+    };
+    const ctx = {
+        window: win,
+        document: doc,
+        setTimeout(fn, ms) {
+            if (ms === 0) { fn(); return 0; }
+            const id = nextTimer++;
+            timers.push({ id, fn, ms, cleared: false });
+            calls.push('setTimeout:' + ms);
+            return id;
+        },
+        clearTimeout(id) {
+            const t = timers.find(x => x.id === id);
+            if (t) t.cleared = true;
+        },
+        AbortController: class { abort() {} },
+    };
+    ctx.globalThis = ctx;
+    vm.runInNewContext(playerJs, ctx);
+    ctx.inlinePlayerWatch = opts.watch === false ? null : { mid: 1, e: '1', s: 'sig' };
+    ctx.closeInlinePlayer();
+    return { calls, card, modal, timers, listeners, doc };
+}
+
+// 1) Inside real Telegram WebApp (initData non-empty): only Telegram.WebApp.close()
+const tgCalls = [];
+const s1 = runScenario({
+    telegram: { WebApp: { initData: 'user=1&hash=abc', close() { tgCalls.push('tg.close'); } } },
+    referrer: 'https://bot.example/dashboard',
+    historyLength: 4,
+});
+assert.deepEqual(tgCalls, ['tg.close']);
+assert.ok(!s1.calls.includes('window.close'));
+assert.ok(!s1.calls.includes('history.back'));
+assert.equal(s1.card.innerHTML, 'ORIGINAL');
+
+// 2) Same-origin navigation outside WebApp: only history.back()
+const s2Tg = [];
+const s2 = runScenario({
+    telegram: { WebApp: { initData: '', close() { s2Tg.push('tg.close'); } } },
+    referrer: 'https://bot.example/dashboard',
+    historyLength: 2,
+});
+assert.deepEqual(s2Tg, []);
+assert.ok(s2.calls.includes('history.back'));
+assert.ok(!s2.calls.includes('window.close'));
+assert.equal(s2.card.innerHTML, 'ORIGINAL');
+
+// 3) In-app / external browser: only window.close(), delayed fallback cancels on pagehide, fires if still visible
+const s3 = runScenario({
+    telegram: { WebApp: { initData: '', close() { throw new Error('must not run'); } } },
+    referrer: '',
+    historyLength: 1,
+});
+assert.ok(s3.calls.includes('window.close'));
+assert.ok(!s3.calls.includes('history.back'));
+assert.equal(s3.card.innerHTML, 'ORIGINAL');
+assert.equal(s3.timers.length, 1);
+assert.equal(s3.timers[0].cleared, false);
+s3.timers[0].fn();
+assert.ok(s3.card.innerHTML.includes('Player closed'));
+
+const s4 = runScenario({ telegram: undefined, referrer: '', historyLength: 1 });
+s4.listeners['win:pagehide'].forEach(fn => fn());
+assert.equal(s4.timers[0].cleared, true);
+
+// 4) Non-watch inline modal branch stays unchanged
+const s5 = runScenario({ watch: false, telegram: undefined });
+assert.equal(s5.modal.hidden, true);
+assert.ok(s5.calls.includes('video.pause'));
+"""
+        proc = subprocess.run(["node", "-e", node_script, PLAYER_JS], capture_output=True, text=True, timeout=15)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+
+        # Bot PM buttons open watch page as a WebAppInfo mini app; groups fall back to url=
+        pm_client = SimpleNamespace(send_cached_media=AsyncMock(return_value=SimpleNamespace(id=99)))
+        pm_msg = SimpleNamespace(chat=SimpleNamespace(id=5, type=enums.ChatType.PRIVATE), edit_reply_markup=AsyncMock())
+        pm_query = SimpleNamespace(data="stream#a", from_user=SimpleNamespace(id=5), message=pm_msg, answer=AsyncMock())
+        with patch.object(commands, "get_file_details", AsyncMock(return_value={"_id": "a", "file_name": "Film.mkv", "file_ref": "ref-a"})), \
+                patch.object(commands, "db", SimpleNamespace(add_to_delete_queue=AsyncMock())), \
+                patch.object(commands, "STREAM_TTL", 10):
+            await commands.stream_cb(pm_client, pm_query)
+        pm_btn = pm_msg.edit_reply_markup.await_args.args[0].inline_keyboard[0][0]
+        self.assertIsNotNone(pm_btn.web_app)
+        self.assertIn("/watch/99?", pm_btn.web_app.url)
+        self.assertTrue(pm_btn.web_app.url.startswith("https://"))
+
+        grp_status = SimpleNamespace(edit_text=AsyncMock())
+        grp_msg = SimpleNamespace(
+            chat=SimpleNamespace(id=-10055, type=enums.ChatType.GROUP),
+            from_user=SimpleNamespace(id=5),
+            command=["link"],
+            reply_to_message=SimpleNamespace(
+                document=SimpleNamespace(file_id="doc1"),
+                copy=AsyncMock(return_value=SimpleNamespace(id=101, media=None)),
+            ),
+            reply=AsyncMock(return_value=grp_status),
+        )
+        with patch.object(commands, "IS_PREMIUM", False), \
+                patch.object(commands, "db", SimpleNamespace(add_to_delete_queue=AsyncMock())):
+            await commands.link_generator(SimpleNamespace(), grp_msg)
+        grp_btn = grp_status.edit_text.await_args.kwargs["reply_markup"].inline_keyboard[0][0]
+        self.assertIsNone(grp_btn.web_app)
+        self.assertIn("/watch/101?", grp_btn.url)
 
         msg = SimpleNamespace(
             id=9901,

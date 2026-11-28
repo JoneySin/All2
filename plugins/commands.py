@@ -36,15 +36,38 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
 # ✅ MINI APP URL - HTTPS Auto-Fix Sync
 # ─────────────────────────────────────────────
-def _build_mini_app_url(base_url: str) -> str:
-    url = base_url.strip() if base_url else ""
+def _to_https_url(raw_url: str) -> str:
+    url = raw_url.strip() if raw_url else ""
     if not url:
         return ""
     if url.startswith("http://"):
         url = "https://" + url[len("http://"):]
     if not url.startswith("https://"):
         url = f"https://{url}"
-    return f"{url.rstrip('/')}/miniapp"
+    return url
+
+
+def _build_mini_app_url(base_url: str) -> str:
+    url = _to_https_url(base_url)
+    return f"{url.rstrip('/')}/miniapp" if url else ""
+
+
+def _is_private_chat(chat) -> bool:
+    if not chat:
+        return False
+    ctype = getattr(chat, "type", None)
+    if ctype is not None:
+        return ctype == enums.ChatType.PRIVATE
+    cid = getattr(chat, "id", None)
+    return isinstance(cid, int) and cid > 0
+
+
+def _watch_button(label: str, msg_id: int, query_str: str, chat=None):
+    watch_url = f"{URL}watch/{msg_id}?{query_str}"
+    if _is_private_chat(chat):
+        return ui_button(label, web_app=WebAppInfo(url=_to_https_url(watch_url)))
+    return ui_button(label, url=watch_url)
+
 
 MINI_APP_URL = _build_mini_app_url(URL)
 
@@ -498,7 +521,7 @@ async def link_generator(client, message):
         valid_txt = "Never" if ttl is None else get_readable_time(ttl)
         btn = [
             [
-                ui_button("🍿 WATCH ONLINE", url=f"{URL}watch/{copied.id}?{q}"),
+                _watch_button("🍿 WATCH ONLINE", copied.id, q, message.chat),
                 ui_button("📥 FAST DOWNLOAD", url=f"{URL}download/{copied.id}?{q}")
             ],
             [ui_button("❌ CLOSE ❌", callback_data=f"close_{message.from_user.id}")]
@@ -628,7 +651,7 @@ async def stream_cb(client, query):
         q = sign_params(msg.id, STREAM_TTL)
         btn = [
             [
-                ui_button("🎬 Stream Online", url=f"{URL}watch/{msg.id}?{q}"),
+                _watch_button("🎬 Stream Online", msg.id, q, getattr(query, "message", None) and query.message.chat),
                 ui_button("⚡ Download File", url=f"{URL}download/{msg.id}?{q}")
             ],
             [ui_button("❌ Close Panel", callback_data=f"close_{query.from_user.id}")]
