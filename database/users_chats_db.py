@@ -422,6 +422,41 @@ class Database:
         task_id = f"{int(chat_id)}_{int(message_id)}"
         await self.delete_queue.delete_one({"_id": task_id})
 
+    # ───────────────── 🔐 PERSISTENT BOT SESSION (MONGO) ─────────────────
+    @staticmethod
+    def _bot_session_doc_id(bot_token: str) -> str:
+        digest = hashlib.sha256((bot_token or "").encode("utf-8")).hexdigest()[:16]
+        return f"tg_bot_session:{digest}"
+
+    async def get_bot_session(self, bot_token: str) -> str:
+        try:
+            doc = await self.settings.find_one({"id": self._bot_session_doc_id(bot_token)})
+            val = (doc or {}).get("session_string") or ""
+            return val if isinstance(val, str) else ""
+        except Exception as e:
+            logger.warning(f"Could not read saved Telegram session from DB: {e}")
+            return ""
+
+    async def save_bot_session(self, bot_token: str, session_string: str) -> bool:
+        if not session_string:
+            return False
+        try:
+            await self.settings.update_one(
+                {"id": self._bot_session_doc_id(bot_token)},
+                {"$set": {"session_string": session_string, "updated_at": get_local_now()}},
+                upsert=True,
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"Could not save Telegram session to DB: {e}")
+            return False
+
+    async def delete_bot_session(self, bot_token: str) -> None:
+        try:
+            await self.settings.delete_one({"id": self._bot_session_doc_id(bot_token)})
+        except Exception:
+            pass
+
     # ───────────────── 🎥 VIDEO STREAM ANALYTICS COUNTER ─────────────────
     async def track_video_play(self):
         """वेबसाइट / मिनी-ऐप पर स्ट्रीम प्ले होने की ग्लोबल काउंटिंग रिकॉर्ड करता है"""

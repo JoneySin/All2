@@ -107,3 +107,78 @@ class StartupRetryTests(unittest.IsolatedAsyncioTestCase):
             await instance.stop()
             await instance.stop()
         client_stop.assert_not_awaited()
+
+    async def test_mongo_session_saves_reloads_and_recovers_if_revoked(self):
+        from pathlib import Path
+        from pyrogram.errors import AuthKeyUnregistered
+
+        stored = {}
+
+        async def fake_get(_tok):
+            return stored.get("s", "")
+
+        async def fake_save(_tok, val):
+            stored["s"] = val
+            return True
+
+        async def fake_del(_tok):
+            stored.pop("s", None)
+
+        fake_db = SimpleNamespace(
+            get_bot_session=AsyncMock(side_effect=fake_get),
+            save_bot_session=AsyncMock(side_effect=fake_save),
+            delete_bot_session=AsyncMock(side_effect=fake_del),
+        )
+
+        # 1) First boot: no saved session -> start exports and stores in MongoDB
+        inst1 = self._instance()
+        inst1.name = "Auto_Filter_Bot"
+        inst1.workdir = Path(".")
+        inst1._use_mongo_session = True
+        inst1.export_session_string = AsyncMock(return_value="exported-sess-1")
+        with patch('bot.db', fake_db), \
+                patch('bot.Client.start', AsyncMock(return_value=inst1)), \
+                patch.object(temp, 'BOT', None), \
+                patch.object(temp, 'BOT_READY', False):
+            await inst1._start_telegram()
+        self.assertEqual(stored["s"], "exported-sess-1")
+        fake_db.save_bot_session.assert_awaited_once()
+
+        # 2) Second boot: loads saved session from MongoDB
+        inst2 = self._instance()
+        inst2.name = "Auto_Filter_Bot"
+        inst2.workdir = Path(".")
+        inst2._use_mongo_session = True
+        inst2.export_session_string = AsyncMock(return_value="should-not-export")
+        with patch('bot.db', fake_db), \
+                patch('bot.Client.start', AsyncMock(return_value=inst2)), \
+                patch.object(temp, 'BOT', None), \
+                patch.object(temp, 'BOT_READY', False):
+            await inst2._start_telegram()
+        self.assertEqual(inst2.session_string, "exported-sess-1")
+        self.assertEqual(inst2.storage.session_string, "exported-sess-1")
+        inst2.export_session_string.assert_not_awaited()
+
+        # 3) Revoked saved session: deletes stale entry, clears storage, retries and saves new session
+        inst3 = self._instance()
+        inst3.name = "Auto_Filter_Bot"
+        inst3.workdir = Path(".")
+        inst3._use_mongo_session = True
+        inst3.export_session_string = AsyncMock(return_value="fresh-sess-2")
+        attempts = 0
+
+        async def revoked_then_ok(client):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise AuthKeyUnregistered()
+            return client
+
+        with patch('bot.db', fake_db), \
+                patch('bot.Client.start', revoked_then_ok), \
+                patch.object(temp, 'BOT', None), \
+                patch.object(temp, 'BOT_READY', False):
+            await inst3._start_telegram()
+        self.assertEqual(attempts, 2)
+        self.assertEqual(stored["s"], "fresh-sess-2")
+        fake_db.delete_bot_session.assert_awaited_once()

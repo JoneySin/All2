@@ -41,8 +41,12 @@ logger = logging.getLogger(__name__)
 # ==========================================================
 from aiohttp import web
 from pyrogram import Client, types, StopPropagation, idle
-from pyrogram.errors import FloodWait, BadMsgNotification, InternalServerError, ServiceUnavailable
+from pyrogram.errors import (
+    FloodWait, BadMsgNotification, InternalServerError, ServiceUnavailable,
+    AuthKeyUnregistered, AuthKeyInvalid, AuthKeyDuplicated, SessionRevoked, SessionExpired,
+)
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler
+from pyrogram.storage import SQLiteStorage
 from web import web_app
 from web.search_api import start_group_scan, stop_group_scan
 from info import (
@@ -107,26 +111,26 @@ async def auto_delete_worker(bot):
 # ==========================================================
 class Bot(Client):
     def __init__(self):
-        # Prefer an explicit path; otherwise use a mounted /data volume when
-        # one exists so the auth key survives Koyeb redeploys.
+        # Prefer SESSION_STRING, then explicit SESSION_DIR or mounted /data volume;
+        # otherwise automatically persist the session string in MongoDB so Koyeb
+        # redeploys without volumes do not generate a new Telegram auth key.
+        has_persistent_dir = bool(SESSION_DIR or os.path.isdir("/data"))
         session_dir = SESSION_DIR or ("/data" if os.path.isdir("/data") else ".")
-        try:
-            os.makedirs(session_dir, exist_ok=True)
-        except OSError as e:
-            logger.error(f"SESSION_DIR is not writable ({session_dir}): {e}")
-            raise
+        use_mongo_session = not SESSION_STRING and not has_persistent_dir
+        if has_persistent_dir:
+            try:
+                os.makedirs(session_dir, exist_ok=True)
+            except OSError as e:
+                logger.error(f"SESSION_DIR is not writable ({session_dir}): {e}")
+                raise
         if SESSION_STRING:
             logger.info("📁 Telegram session: using SESSION_STRING")
-        else:
+        elif has_persistent_dir:
             session_file = os.path.join(session_dir, "Auto_Filter_Bot.session")
             logger.info("📁 Telegram session directory: %s (existing session: %s)",
                         session_dir, os.path.exists(session_file))
-            if session_dir == "." and not SESSION_DIR:
-                logger.warning(
-                    "⚠️ No persistent /data volume for the Telegram session. "
-                    "Every redeploy will create a new auth key; mount a volume at /data "
-                    "and set SESSION_DIR=/data to keep it."
-                )
+        else:
+            logger.info("📁 Telegram session: using MongoDB persistence (no /data volume needed)")
         super().__init__(
             name="Auto_Filter_Bot",
             api_id=API_ID,
@@ -136,7 +140,9 @@ class Bot(Client):
             workdir=session_dir,
             proxy=PROXY or None,
             session_string=SESSION_STRING or None,
+            in_memory=True if use_mongo_session else None,
         )
+        self._use_mongo_session = use_mongo_session
         self._runner = None 
         self._premium_task = None 
         self._delete_task = None  
@@ -168,6 +174,24 @@ class Bot(Client):
         """
         fast_attempts = max(1, AUTH_RETRY_ATTEMPTS)
         configured_plugins = getattr(self, "plugins", None)
+        use_mongo = getattr(self, "_use_mongo_session", False)
+        loaded_from_db = False
+        if use_mongo:
+            saved_session = await db.get_bot_session(BOT_TOKEN)
+            if saved_session:
+                try:
+                    self.session_string = saved_session
+                    self.storage = SQLiteStorage(
+                        self.name, workdir=self.workdir, session_string=saved_session, in_memory=True
+                    )
+                    loaded_from_db = True
+                    logger.info("📁 Loaded saved Telegram session from MongoDB")
+                except Exception as e:
+                    logger.warning(f"Saved Telegram session invalid, generating fresh session: {e}")
+                    self.session_string = None
+                    self.storage = SQLiteStorage(self.name, workdir=self.workdir, in_memory=True)
+                    await db.delete_bot_session(BOT_TOKEN)
+
         attempt = 0
         while True:
             attempt += 1
@@ -183,6 +207,13 @@ class Bot(Client):
                 self.plugins = None if handlers_loaded else configured_plugins
             try:
                 await super().start()
+                if use_mongo and not loaded_from_db:
+                    try:
+                        exported = await self.export_session_string()
+                        if await db.save_bot_session(BOT_TOKEN, exported):
+                            logger.info("💾 Saved Telegram session to MongoDB for future restarts")
+                    except Exception as e:
+                        logger.warning(f"Could not export/save Telegram session: {e}")
                 # Publish the client immediately. Index sync, settings and the
                 # rest of start() can take many seconds on a small Koyeb worker;
                 # until this assignment existed, /api/thumb and /setup_stream
@@ -192,6 +223,14 @@ class Bot(Client):
                 temp.BOT_READY = True
                 logger.info("✅ Telegram client connected; media APIs are live")
                 return
+            except (AuthKeyUnregistered, AuthKeyInvalid, AuthKeyDuplicated, SessionRevoked, SessionExpired) as e:
+                if not (use_mongo and loaded_from_db):
+                    raise
+                logger.warning(f"Saved MongoDB Telegram session expired/rejected ({e}); creating a fresh session")
+                loaded_from_db = False
+                self.session_string = None
+                self.storage = SQLiteStorage(self.name, workdir=self.workdir, in_memory=True)
+                await db.delete_bot_session(BOT_TOKEN)
             except FloodWait as e:
                 wait = max(30, int(getattr(e, "value", 0) or 0))
                 logger.error(
