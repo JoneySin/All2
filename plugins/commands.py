@@ -1,10 +1,9 @@
 import asyncio
-import random
 import logging
 from time import time as time_now
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
-from pyrogram.types import WebAppInfo
+from pyrogram.types import LinkPreviewOptions, WebAppInfo
 from keyboards import ui_button, ui_keyboard
 
 from Script import script
@@ -20,7 +19,7 @@ from database.users_chats_db import db
 
 from info import (
     IS_PREMIUM, URL, BIN_CHANNEL, ADMINS,
-    LOG_CHANNEL, PICS, IS_STREAM, REACTIONS, PM_FILE_DELETE_TIME,
+    LOG_CHANNEL, IS_STREAM, REACTIONS, PM_FILE_DELETE_TIME,
     PROTECT_CONTENT
 )
 from utils import (
@@ -184,9 +183,9 @@ async def start(client, message):
         ))
 
     if IS_PREMIUM and message.from_user.id not in ADMINS and not await is_premium(message.from_user.id, client):
-        return await message.reply_photo(
-            random.choice(PICS),
-            caption=script.PLAN_TXT.format(10, "@admin"),
+        return await message.reply(
+            script.PLAN_TXT.format(10, "@admin"),
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
             reply_markup=ui_keyboard([[
                 ui_button("💎 Buy Premium Plan", callback_data="activate_plan")
             ]])
@@ -254,9 +253,9 @@ async def start(client, message):
     if message.from_user.id not in ADMINS:
         btn.append([ui_button("💎 Premium Duration", callback_data="myplan")])
 
-    await message.reply_photo(
-        random.choice(PICS),
-        caption=script.START_TXT.format(message.from_user.mention, get_wish()),
+    await message.reply(
+        script.START_TXT.format(message.from_user.mention, get_wish()),
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
         reply_markup=ui_keyboard(btn)
     )
 
@@ -578,13 +577,19 @@ async def ui_cb(client, query):
             return
 
     try:
-        await query.message.edit_caption(
-            caption=text,
-            reply_markup=buttons_markup
-        )
+        if getattr(query.message, "media", None) or getattr(query.message, "photo", None):
+            await query.message.edit_caption(caption=text, reply_markup=buttons_markup)
+        else:
+            await query.message.edit_text(text=text, reply_markup=buttons_markup,
+                                          link_preview_options=LinkPreviewOptions(is_disabled=True))
     except Exception:
-        try: await query.message.edit_text(text=text, reply_markup=buttons_markup)
-        except: pass
+        try:
+            await query.message.edit_text(text=text, reply_markup=buttons_markup)
+        except Exception:
+            try:
+                await query.message.edit_caption(caption=text, reply_markup=buttons_markup)
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────

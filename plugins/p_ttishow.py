@@ -1,11 +1,10 @@
 import os
 import sys
-import random
 import logging
 import gc
 from pyrogram import Client, filters, enums
 from pyrogram.types import LinkPreviewOptions
-from info import ADMINS, LOG_CHANNEL, PICS, IS_PREMIUM
+from info import ADMINS, LOG_CHANNEL, IS_PREMIUM
 from database.users_chats_db import db
 
 # ✅ FIX: is_premium को अब plugins.premium की जगह utils से इम्पोर्ट किया गया है
@@ -29,10 +28,10 @@ async def welcome(c, m):
         # ── केस 1: जब खुद बोट ग्रुप में ऐड हो ──
         if new_user.id == temp.ME:
             u = m.from_user.mention if m.from_user else "Admin"
-            await c.send_photo(
-                m.chat.id, 
-                random.choice(PICS), 
-                f"👋 <b>Hello {u},\n\nThanks for adding me to {m.chat.title}!</b>\n\n📌 <i>Don't forget to grant me full Administrator privileges with delete message permissions to keep this group clean and automated.</i>"
+            await c.send_message(
+                m.chat.id,
+                f"👋 <b>Hello {u},\n\nThanks for adding me to {m.chat.title}!</b>\n\n📌 <i>Don't forget to grant me full Administrator privileges with delete message permissions to keep this group clean and automated.</i>",
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
             
             if not await db.get_chat(m.chat.id):

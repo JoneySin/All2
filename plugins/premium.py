@@ -184,6 +184,14 @@ async def list_web_users(c, m):
 # =========================================
 # 📤 INLINE INTERFACE CALLBACKS
 # =========================================
+async def _edit_ui_msg(msg, text, reply_markup=None):
+    if (getattr(msg, "media", None) or getattr(msg, "photo", None)) and hasattr(msg, "edit_caption"):
+        return await msg.edit_caption(text, reply_markup=reply_markup)
+    if hasattr(msg, "edit_text"):
+        return await msg.edit_text(text, reply_markup=reply_markup)
+    return await msg.edit_caption(text, reply_markup=reply_markup)
+
+
 @Client.on_callback_query(filters.regex("^myplan$"))
 async def myplan_cb(client, query):
     if query.from_user.id in ADMINS: return await query.answer(ADMIN_ALERT, show_alert=True)
@@ -195,12 +203,12 @@ async def myplan_cb(client, query):
     
     if not mp.get('premium'):
         btn.insert(0, [ui_button('💎 Buy Premium Plan', callback_data='activate_plan')])
-        return await query.message.edit_caption("❌ No active premium subscription plan found.", reply_markup=ui_keyboard(btn))
+        return await _edit_ui_msg(query.message, "❌ No active premium subscription plan found.", reply_markup=ui_keyboard(btn))
     
     exp = parse_expire_time(mp.get('expire'))
     now = get_local_now()
     left = f"{(exp - now).days} days, {(exp - now).seconds//3600} hours" if exp else "Unknown"
-    await query.message.edit_caption(f"💎 <b>Premium Subscription Status</b>\n\n📦 Plan Model: {mp.get('plan')}\n⏳ Expires: {format_plan_expiry(exp)}\n⏱ Duration Left: {left}\n\nUse /plan to extend duration.", reply_markup=ui_keyboard(btn))
+    await _edit_ui_msg(query.message, f"💎 <b>Premium Subscription Status</b>\n\n📦 Plan Model: {mp.get('plan')}\n⏳ Expires: {format_plan_expiry(exp)}\n⏱ Duration Left: {left}\n\nUse /plan to extend duration.", reply_markup=ui_keyboard(btn))
 
 def _payment_qr(upi_url):
     """Render a PNG without Pillow. Call off the event loop (pure Python work)."""

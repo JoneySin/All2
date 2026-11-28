@@ -1,7 +1,6 @@
 import asyncio
 import re
 import math
-import random
 import logging
 import gc
 from lru import LRU  # ✅ LRU-Dict imported for Auto-Pilot RAM Management
@@ -9,7 +8,7 @@ from pyrogram import Client, ContinuePropagation, filters, enums
 from pyrogram.types import LinkPreviewOptions
 from keyboards import ui_button, ui_keyboard
 
-from info import ADMINS, MAX_BOT_RESULTS, IS_PREMIUM, PICS, SPELL_CHECK, REACTIONS
+from info import ADMINS, MAX_BOT_RESULTS, IS_PREMIUM, SPELL_CHECK, REACTIONS
 from utils import is_premium, get_size, is_check_admin, temp, get_settings, save_group_settings, react_to_message
 from database.ia_filterdb import get_search_results, get_db_spell_suggestions
 from database.users_chats_db import db
@@ -212,9 +211,9 @@ async def pm_search(client, message):
     uid = message.from_user.id
     
     if uid not in ADMINS and not await is_premium(uid, client):
-        return await message.reply_photo(
-            random.choice(PICS), 
-            caption=script.PLAN_TXT.format(10, "@admin"), 
+        return await message.reply(
+            script.PLAN_TXT.format(10, "@admin"),
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
             reply_markup=ui_keyboard([[ui_button("💎 Buy Premium Plan", callback_data="activate_plan")]])
         )
     

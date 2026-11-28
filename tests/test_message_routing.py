@@ -79,7 +79,7 @@ class AdminStartRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         message = _message('/start', ['start'])
         message.react = AsyncMock()
-        message.reply_photo = AsyncMock()
+        message.reply = AsyncMock()
 
         fake_db = SimpleNamespace(
             is_user_exist=AsyncMock(return_value=True),
@@ -100,7 +100,7 @@ class AdminStartRoutingTests(unittest.IsolatedAsyncioTestCase):
                     continue
                 break
 
-        self.assertEqual(message.reply_photo.await_count, 1)
+        self.assertEqual(message.reply.await_count, 1)
 
 
 if __name__ == '__main__':

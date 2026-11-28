@@ -88,11 +88,6 @@ if not ADMINS:
 ADMINS = [int(x) for x in ADMINS.split() if x.isnumeric()]
 
 # ─────────────────────────────────────────────
-# 🖼️ IMAGES & CORE AI KEYS
-# ─────────────────────────────────────────────
-PICS = environ.get("PICS", "https://i.postimg.cc/8C15CQ5y/1.png").split()
-
-# ─────────────────────────────────────────────
 # 📢 STORAGE & MICRO-ROUTING CHANNELS SYNC
 # ─────────────────────────────────────────────
 LOG_CHANNEL = int((environ.get("LOG_CHANNEL") or "").strip() or "0")
