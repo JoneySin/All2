@@ -114,12 +114,16 @@ function closeInlinePlayer(){
     if(inlinePlayerWatch){
         ++inlinePlayerRequest;
         if(inlinePlayerAbort){inlinePlayerAbort.abort();inlinePlayerAbort=null;}
-        if(video){video.pause();video.innerHTML='';video.removeAttribute('src');video.load();}
+        if(video){
+            video.pause();video.innerHTML='';video.removeAttribute('src');
+            setTimeout(function(){try{video.load();}catch(_){}},0);
+        }
         if(window.Telegram&&window.Telegram.WebApp&&typeof window.Telegram.WebApp.close==='function'){
             try{window.Telegram.WebApp.close();}catch(_){}
         }
         try{window.close();}catch(_){}
-        if(window.history.length>1){window.history.back();return;}
+        var sameOriginRef=document.referrer&&document.referrer.indexOf(window.location.origin)===0;
+        if(sameOriginRef&&window.history.length>1){window.history.back();return;}
         var card=document.querySelector('.inline-player-card.watch-card');
         if(card){
             card.innerHTML='<div style="padding:36px 20px;text-align:center;color:var(--text)"><div style="font-size:28px;margin-bottom:10px">✓</div><div style="font-size:16px;font-weight:800;margin-bottom:6px">Player closed</div><div style="font-size:13px;color:var(--muted);margin-bottom:16px">You can close this tab or reopen the video below.</div><button type="button" class="inline-player-action-btn" onclick="location.reload()">Reopen player</button></div>';
@@ -129,10 +133,14 @@ function closeInlinePlayer(){
     if(!modal||modal.hidden)return;
     ++inlinePlayerRequest;
     if(inlinePlayerAbort){inlinePlayerAbort.abort();inlinePlayerAbort=null;}
-    video.pause();video.removeAttribute('src');video.load();modal.hidden=true;document.body.style.overflow=inlinePlayerOverflow;
+    modal.hidden=true;document.body.style.overflow=inlinePlayerOverflow;
     inlinePlayerFileId='';inlinePlayerSwitches=null;inlinePlayerEpisode='';
     var switcher=document.getElementById('inlinePlayerSwitcher');
     if(switcher){switcher.hidden=true;switcher.textContent='';}
+    if(video){
+        video.pause();video.removeAttribute('src');
+        setTimeout(function(){try{video.load();}catch(_){}},0);
+    }
     if(inlinePlayerPreviousFocus&&inlinePlayerPreviousFocus.isConnected)inlinePlayerPreviousFocus.focus();
 }
 function inlinePlayerDownloadLink(download){

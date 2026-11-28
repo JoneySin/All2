@@ -38,24 +38,34 @@ class MediaInfo:
         self.is_video = is_video
 
 
-async def _fetch(message_id):
-    msg = await temp.BOT.get_messages(BIN_CHANNEL, message_id)
-    media = getattr(msg, msg.media.value, None) if msg and msg.media else None
-    if not media:
+def prime_media_info(msg):
+    """Populate MediaInfo cache immediately from a sent/copied Message."""
+    msg_id = getattr(msg, "id", None)
+    media = getattr(msg, msg.media.value, None) if msg and getattr(msg, "media", None) else None
+    if not msg_id or not media or not getattr(media, "file_id", None):
+        return None
+    try:
+        file_id_obj = FileId.decode(media.file_id)
+    except Exception:
         return None
     info = MediaInfo(
         file_id=media.file_id,
-        file_id_obj=FileId.decode(media.file_id),
+        file_id_obj=file_id_obj,
         file_size=getattr(media, "file_size", None) or 0,
         file_name=getattr(media, "file_name", None),
         mime_type=getattr(media, "mime_type", None),
         is_video=bool(getattr(msg, "video", None)),
     )
-    _CACHE[message_id] = (time.monotonic(), info)
-    _CACHE.move_to_end(message_id)
+    _CACHE[msg_id] = (time.monotonic(), info)
+    _CACHE.move_to_end(msg_id)
     while len(_CACHE) > _MAX:
         _CACHE.popitem(last=False)
     return info
+
+
+async def _fetch(message_id):
+    msg = await temp.BOT.get_messages(BIN_CHANNEL, message_id)
+    return prime_media_info(msg)
 
 
 async def get_media_info(message_id):

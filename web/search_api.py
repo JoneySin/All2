@@ -28,7 +28,8 @@ from stream_security import sign_params, STREAM_TTL, verify
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
 from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, group_search_cursors, get_files_by_ids, find_phrase_files, search_groups, get_groups_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media, FILE_PROJECTION, FILE_PROJECTION_SCORED, GROUP_PROJECTION, _build_regex, _strict_text_query, build_query_filter, build_actor_search_filter, unpack_new_file_id
-from web.utils.media_info import get_media_info
+from web.utils.custom_dl import TGCustomYield
+from web.utils.media_info import get_media_info, prime_media_info
 from media_probe import probe_telegram_file, should_probe_media
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
@@ -2121,9 +2122,13 @@ async def _tunnel_stream(fid: str, mode: str) -> str:
     if docs:
         fid = docs[0].get("file_ref") or fid
     msg = await temp.BOT.send_cached_media(chat_id=BIN_CHANNEL, file_id=fid)
-    await db.add_to_delete_queue(BIN_CHANNEL, msg.id, STREAM_TTL)   # link expiry == file delete time
+    primed = prime_media_info(msg)
+    if primed:
+        TGCustomYield.warm_media_session(primed.file_id_obj)
+    tasks = [db.add_to_delete_queue(BIN_CHANNEL, msg.id, STREAM_TTL)]   # link expiry == file delete time
     if mode in ("watch", "inline"):
-        await db.track_video_play()
+        tasks.append(db.track_video_play())
+    await asyncio.gather(*tasks)
     inline = "&inline=1" if mode == "inline" else ""
     return f"{stream_target_path(msg.id, mode)}?{sign_params(msg.id, STREAM_TTL)}{inline}"
 

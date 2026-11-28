@@ -308,6 +308,31 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await ok.json(), {"url": "/download/777?e=1&s=sig&inline=1"})
             tunnel.assert_awaited_once_with("f1080", "inline")
 
+    async def test_stream_priming_and_instant_close(self):
+        from types import SimpleNamespace
+        from pyrogram.file_id import FileId
+        from web.utils import media_info
+        from web.player_assets import PLAYER_JS
+
+        self.assertIn("setTimeout(function(){try{video.load();}catch(_){}},0)", PLAYER_JS)
+        self.assertIn("sameOriginRef&&window.history.length>1", PLAYER_JS)
+
+        msg = SimpleNamespace(
+            id=9901,
+            media=SimpleNamespace(value="video"),
+            video=SimpleNamespace(file_id="raw_id", file_size=1234, file_name="Fast.mp4", mime_type="video/mp4"),
+        )
+        decoded = SimpleNamespace(dc_id=2)
+        media_info._CACHE.pop(9901, None)
+        with patch.object(FileId, "decode", return_value=decoded), \
+             patch.object(media_info.temp, "BOT", SimpleNamespace(get_messages=AsyncMock())) as bot:
+            primed = media_info.prime_media_info(msg)
+            self.assertIsNotNone(primed)
+            cached = await media_info.get_media_info(9901)
+            self.assertIs(cached, primed)
+            bot.get_messages.assert_not_awaited()
+        media_info._CACHE.pop(9901, None)
+
 
 if __name__ == "__main__":
     unittest.main()

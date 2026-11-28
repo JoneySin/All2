@@ -372,10 +372,11 @@ async def close_callback(client, query):
                 break
 
         msg_ids_to_clean = [m for m in msg_ids_to_clean if m]
-        for mid in msg_ids_to_clean:
-            await db.remove_from_delete_queue(chat_id, mid)
-
-        await client.delete_messages(chat_id, msg_ids_to_clean)
+        # Delete the Telegram messages first (and clean DB queue concurrently) so
+        # tapping Close responds instantly instead of waiting on MongoDB roundtrips.
+        cleanup = [client.delete_messages(chat_id, msg_ids_to_clean)]
+        cleanup.extend(db.remove_from_delete_queue(chat_id, mid) for mid in msg_ids_to_clean)
+        await asyncio.gather(*cleanup, return_exceptions=True)
     except Exception:
         try: await query.message.delete()
         except: pass

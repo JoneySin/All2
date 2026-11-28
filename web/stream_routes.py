@@ -272,6 +272,7 @@ async def media_download(request, message_id: int):
             "Content-Type":        mime_type,
             "Content-Disposition": f'{disposition}; filename="{enc_fn}"; filename*=UTF-8\'\'{enc_fn}',
             "Accept-Ranges":       "bytes",
+            "Cache-Control":       "private, max-age=3600, no-transform",
             "X-Content-Type-Options": "nosniff",
             "Content-Length":      str(req_len),
         }

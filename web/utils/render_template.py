@@ -1,5 +1,6 @@
-import urllib.parse, html, json, logging
+import asyncio, urllib.parse, html, json, logging
 from info import URL
+from web.utils.custom_dl import TGCustomYield
 from web.utils.media_info import get_media_info
 from web.brand import BRAND_MARKUP, BRAND_CSS
 from web.player_assets import PLAYER_CSS, PLAYER_JS, build_player_card_html
@@ -81,6 +82,8 @@ async def media_watch(message_id, query=""):
         if not info:
             return "<h2 style='color:#fff;text-align:center;padding:50px;'>❌ File Not Found</h2>"
 
+        TGCustomYield.warm_media_session(getattr(info, "file_id_obj", None))
+
         src = urllib.parse.urljoin(URL, f'download/{message_id}')
         if query:
             src += f'?{query}'      # signed token download request me bhi jaata hai
@@ -105,10 +108,12 @@ async def media_watch(message_id, query=""):
                     origin_fid = unpack_new_file_id(raw_fid)
                     if origin_fid:
                         watch_config["fileId"] = origin_fid
-                        switches = await _switches_for(origin_fid)
+                        switches, docs = await asyncio.gather(
+                            _switches_for(origin_fid),
+                            get_files_by_ids([origin_fid]),
+                        )
                         if switches and switches.get("group"):
                             watch_config["switches"] = switches
-                        docs = await get_files_by_ids([origin_fid])
                         if docs and docs[0].get("file_name"):
                             raw_name = docs[0]["file_name"]
                 except Exception:

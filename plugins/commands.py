@@ -28,6 +28,8 @@ from utils import (
     get_readable_time, get_wish, get_seconds, react_to_message
 )
 from stream_security import sign_params, USER_LINK_TTL, STREAM_TTL, MAX_ADMIN_TTL
+from web.utils.custom_dl import TGCustomYield
+from web.utils.media_info import prime_media_info
 
 logger = logging.getLogger(__name__)
 
@@ -493,9 +495,9 @@ async def link_generator(client, message):
     msg = await message.reply("⏳ **Injecting into Stream Stream Tunnel...**")
     try:
         copied = await message.reply_to_message.copy(BIN_CHANNEL)
-        if ttl is not None:
-            # link expire hote hi BIN_CHANNEL se file bhi delete (persistent queue, restart-proof)
-            await db.add_to_delete_queue(BIN_CHANNEL, copied.id, ttl)
+        primed = prime_media_info(copied)
+        if primed:
+            TGCustomYield.warm_media_session(primed.file_id_obj)
         q = sign_params(copied.id, ttl)
         valid_txt = "Never" if ttl is None else get_readable_time(ttl)
         btn = [
@@ -505,10 +507,16 @@ async def link_generator(client, message):
             ],
             [ui_button("❌ CLOSE ❌", callback_data=f"close_{message.from_user.id}")]
         ]
-        await msg.edit_text(
-            f"<i><b>Direct High-Speed Pipeline Ready ⚡</b></i>\n⏳ <b>Valid for:</b> <code>{valid_txt}</code>",
-            reply_markup=ui_keyboard(btn)
-        )
+        coros = [
+            msg.edit_text(
+                f"<i><b>Direct High-Speed Pipeline Ready ⚡</b></i>\n⏳ <b>Valid for:</b> <code>{valid_txt}</code>",
+                reply_markup=ui_keyboard(btn)
+            )
+        ]
+        if ttl is not None:
+            # link expire hote hi BIN_CHANNEL se file bhi delete (persistent queue, restart-proof)
+            coros.append(db.add_to_delete_queue(BIN_CHANNEL, copied.id, ttl))
+        await asyncio.gather(*coros)
     except Exception as e:
         await msg.edit_text(f"❌ **Error generating links:** `{e}`")
 
@@ -610,7 +618,9 @@ async def stream_cb(client, query):
         target_media = file.get('file_ref') if file.get('file_ref') else file_id
 
         msg = await client.send_cached_media(BIN_CHANNEL, target_media)
-        await db.add_to_delete_queue(BIN_CHANNEL, msg.id, STREAM_TTL)   # link expiry == file delete time
+        primed = prime_media_info(msg)
+        if primed:
+            TGCustomYield.warm_media_session(primed.file_id_obj)
         q = sign_params(msg.id, STREAM_TTL)
         btn = [
             [
@@ -620,7 +630,10 @@ async def stream_cb(client, query):
             [ui_button("❌ Close Panel", callback_data=f"close_{query.from_user.id}")]
         ]
         # Watch/Download replaces the file card: Send All must disappear here.
-        await query.message.edit_reply_markup(ui_keyboard(btn))
+        await asyncio.gather(
+            query.message.edit_reply_markup(ui_keyboard(btn)),
+            db.add_to_delete_queue(BIN_CHANNEL, msg.id, STREAM_TTL),   # link expiry == file delete time
+        )
     except Exception as e:
         await query.answer(f"Error: {e}", show_alert=True)
 

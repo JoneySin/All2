@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 #   STREAM_PREFETCH            : ek viewer ke liye aage ke kitne 1MB chunk pehle se mangwane hain
 #   STREAM_FETCH_CONCURRENCY   : poore server par ek saath max kitne Telegram GetFile chalein
 # ─────────────────────────────────────────────────────────
-PREFETCH = max(1, int(os.environ.get("STREAM_PREFETCH", "3")))
-FETCH_CONCURRENCY = max(1, int(os.environ.get("STREAM_FETCH_CONCURRENCY", "6")))
+PREFETCH = max(1, int(os.environ.get("STREAM_PREFETCH", "4")))
+FETCH_CONCURRENCY = max(1, int(os.environ.get("STREAM_FETCH_CONCURRENCY", "8")))
 
 _fetch_sem = None
 
@@ -82,6 +82,29 @@ class TGCustomYield:
                 return ms
             ms = await c.get_session(d.dc_id, is_media=True)
         return ms
+
+    @classmethod
+    def warm_media_session(cls, file_id_obj: FileId):
+        """Pre-warm the Telegram DC media session before the first byte-range arrives."""
+        bot = getattr(temp, "BOT", None)
+        if not bot or not isinstance(file_id_obj, FileId):
+            return None
+        media_sessions = getattr(bot, "media_sessions", None)
+        if isinstance(media_sessions, dict) and media_sessions.get(file_id_obj.dc_id):
+            return None
+        if not hasattr(bot, "get_session"):
+            return None
+
+        async def _warm():
+            try:
+                await cls().generate_media_session(bot, file_id_obj)
+            except Exception:
+                pass
+
+        try:
+            return asyncio.create_task(_warm())
+        except RuntimeError:
+            return None
 
     @staticmethod
     async def get_location(f: FileId):
