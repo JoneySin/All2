@@ -2,32 +2,50 @@
 
 PLAYER_UI = r'''
 <style>
-.inline-player-backdrop{position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.76);backdrop-filter:blur(8px)}
+.inline-player-backdrop{position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.78);backdrop-filter:blur(10px)}
 .inline-player-backdrop[hidden]{display:none}
-.inline-player-card{width:min(100%,680px);max-height:calc(100dvh - 36px);overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.6)}
-.inline-player-head{display:flex;align-items:center;gap:12px;padding:15px 17px}
-.inline-player-mark{display:grid;place-items:center;width:38px;height:38px;flex:none;color:white;background:var(--accent);border-radius:10px;font-size:17px}
-.inline-player-titlebox{flex:1;min-width:0}.inline-player-kicker{color:var(--muted);font-size:10px;letter-spacing:1px;text-transform:uppercase;font-weight:800}
-.inline-player-title{color:var(--text);font-size:14px;font-weight:800;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}
-.inline-player-close{width:36px;height:36px;flex:none;border:1px solid var(--border);border-radius:9px;color:var(--text);background:var(--bg3);font-size:23px;cursor:pointer}
+.inline-player-card{width:min(100%,690px);max-height:calc(100dvh - 36px);overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.62)}
+body.light .inline-player-card{box-shadow:0 24px 70px rgba(15,23,42,.22)}
+.inline-player-head{display:flex;align-items:center;gap:12px;padding:14px 17px;background:linear-gradient(125deg,rgba(229,9,20,.1),transparent 55%),var(--card);border-bottom:1px solid var(--border)}
+.inline-player-mark{display:grid;place-items:center;width:38px;height:38px;flex:none;color:#fff;background:linear-gradient(135deg,var(--accent),#b20710);border-radius:10px;font-size:16px;box-shadow:0 4px 12px rgba(229,9,20,.32)}
+.inline-player-titlebox{flex:1;min-width:0}.inline-player-kicker{color:var(--accent);font-size:10px;letter-spacing:1.1px;text-transform:uppercase;font-weight:900}
+.inline-player-title{color:var(--text);font-size:14px;font-weight:800;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+.inline-player-close{display:grid;place-items:center;width:36px;height:36px;flex:none;border:1px solid var(--border);border-radius:10px;color:var(--text);background:var(--bg3);font-size:22px;line-height:1;cursor:pointer;transition:border-color .16s,background .16s,color .16s}
+.inline-player-close:hover{border-color:var(--accent);color:var(--accent);background:var(--bg2)}
 .inline-player-screen{background:#000;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;position:relative}
 .inline-player-screen video{width:100%;height:100%;max-height:56vh;object-fit:contain;background:#000}
-.inline-player-status{padding:11px 17px;color:var(--muted);font-size:12px;line-height:1.5;min-height:40px}
-.inline-player-status.error{color:#ffb4a9}.inline-player-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 17px 16px;flex-wrap:wrap}
-.inline-player-note{color:var(--muted);font-size:11px}.inline-player-download{color:var(--text);text-decoration:none;border:1px solid var(--border);background:var(--bg3);padding:8px 11px;border-radius:8px;font-size:12px;font-weight:700}
-.inline-player-download[hidden]{display:none}.inline-player-download:hover{border-color:var(--accent)}
-.inline-player-switcher{padding:12px 17px 0;border-top:1px solid var(--border)}
+.inline-player-status{padding:9px 17px;color:var(--muted);font-size:12px;font-weight:600;line-height:1.45;background:var(--bg2);border-top:1px solid var(--border)}
+.inline-player-status:empty{display:none}
+.inline-player-status.error{color:#ffb4a9;background:rgba(229,9,20,.12)}
+body.light .inline-player-status.error{color:#b91c1c;background:rgba(229,9,20,.08)}
+.inline-player-switcher{padding:14px 17px 15px;background:var(--bg2);border-top:1px solid var(--border);display:flex;flex-direction:column;gap:12px}
 .inline-player-switcher[hidden]{display:none}
-.inline-player-switch-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;color:var(--muted);font-size:10px;letter-spacing:1px;text-transform:uppercase;font-weight:800;margin-bottom:8px}
-.inline-player-switch-head span:last-child{letter-spacing:0;text-transform:none;font-weight:600;font-size:11px}
-.inline-player-switch-row{display:flex;gap:7px;overflow-x:auto;padding-bottom:5px;scrollbar-width:thin}
-.inline-player-chip{flex:none;border:1px solid var(--border);background:var(--bg3);color:var(--text);padding:7px 11px;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;line-height:1.25;text-align:center}
-.inline-player-chip:hover{border-color:var(--accent)}
-.inline-player-chip[aria-current="true"]{background:var(--accent);border-color:var(--accent);color:#fff;cursor:default}
-.inline-player-chip[aria-current="true"]:hover{border-color:var(--accent)}
-.inline-player-chip small{display:block;font-size:9px;font-weight:600;opacity:.75;margin-top:2px}
-.inline-player-switch-note{color:var(--muted);font-size:10px;margin-top:5px}
-@media(max-width:500px){.inline-player-backdrop{padding:10px}.inline-player-card{border-radius:13px}.inline-player-head{padding:12px}.inline-player-screen video{max-height:50vh}}
+.inline-player-switch-group{display:flex;flex-direction:column;gap:8px}
+.inline-player-switch-head{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--muted);font-size:10px;letter-spacing:1.1px;text-transform:uppercase;font-weight:900}
+.inline-player-switch-head span:first-child{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
+.inline-player-switch-head span:first-child::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block}
+.inline-player-switch-head span:last-child{letter-spacing:0;text-transform:none;font-weight:700;font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inline-player-switch-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:8px;max-height:196px;overflow-y:auto;padding:2px 1px;scrollbar-width:thin}
+.inline-player-switch-row.episodes-row{grid-template-columns:repeat(auto-fill,minmax(92px,1fr));max-height:152px}
+.inline-player-chip{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;min-width:0;border:1.5px solid var(--border);background:var(--card);color:var(--text);padding:9px 11px;border-radius:11px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;line-height:1.25;text-align:left;transition:border-color .16s,background .16s,box-shadow .16s}
+body.light .inline-player-chip{box-shadow:0 2px 6px rgba(15,23,42,.05)}
+.inline-player-chip:hover:not([aria-current="true"]){border-color:var(--accent);background:var(--bg3)}
+.inline-player-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.inline-player-chip-top{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%}
+.inline-player-chip-lbl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inline-player-chip-state{font-size:10px;line-height:1;opacity:0;flex-shrink:0}
+.inline-player-chip[aria-current="true"]{background:linear-gradient(135deg,var(--accent),#b20710);border-color:var(--accent);color:#fff;cursor:default;box-shadow:0 5px 16px rgba(229,9,20,.32)}
+body.light .inline-player-chip[aria-current="true"]{box-shadow:0 6px 16px rgba(229,9,20,.26)}
+.inline-player-chip[aria-current="true"] .inline-player-chip-state{opacity:1}
+.inline-player-chip small{display:block;font-size:10px;font-weight:600;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.inline-player-chip[aria-current="true"] small{color:rgba(255,255,255,.88)}
+.inline-player-switch-note{color:var(--muted);font-size:10px}
+.inline-player-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 17px;background:var(--card);border-top:1px solid var(--border);flex-wrap:wrap}
+.inline-player-note{color:var(--muted);font-size:11px;line-height:1.4}
+.inline-player-download{display:inline-flex;align-items:center;gap:6px;color:var(--text);text-decoration:none;border:1px solid var(--border);background:var(--bg3);padding:8px 13px;border-radius:9px;font-size:12px;font-weight:800;transition:border-color .16s,color .16s,background .16s}
+.inline-player-download[hidden]{display:none}.inline-player-download:hover{border-color:var(--accent);color:var(--accent)}
+@media(max-width:500px){.inline-player-backdrop{padding:10px}.inline-player-card{border-radius:14px}.inline-player-head{padding:12px 13px}.inline-player-switcher{padding:12px 13px 13px}.inline-player-actions{padding:11px 13px}.inline-player-screen video{max-height:50vh}}
+@media(max-width:420px){.inline-player-switch-row{grid-template-columns:repeat(2,minmax(0,1fr))}.inline-player-switch-row.episodes-row{grid-template-columns:repeat(3,minmax(0,1fr))}}
 </style>
 <div id="inlinePlayer" class="inline-player-backdrop" role="dialog" aria-modal="true" aria-labelledby="inlinePlayerTitle" hidden>
   <div class="inline-player-card">
@@ -37,9 +55,9 @@ PLAYER_UI = r'''
       <button type="button" class="inline-player-close" aria-label="Close player" onclick="closeInlinePlayer()">&times;</button>
     </div>
     <div class="inline-player-screen"><video id="inlinePlayerVideo" controls playsinline preload="metadata"></video></div>
-    <div id="inlinePlayerSwitcher" class="inline-player-switcher" aria-label="Other versions in this group" hidden></div>
     <div id="inlinePlayerStatus" class="inline-player-status" role="status" aria-live="polite"></div>
-    <div class="inline-player-actions"><span class="inline-player-note">Playback depends on your browser's supported formats.</span><a id="inlinePlayerDownload" class="inline-player-download" hidden>Download file</a></div>
+    <div id="inlinePlayerSwitcher" class="inline-player-switcher" aria-label="Other versions in this group" hidden></div>
+    <div class="inline-player-actions"><span class="inline-player-note">Playback depends on your browser's supported formats.</span><a id="inlinePlayerDownload" class="inline-player-download" hidden>&#11015; Download file</a></div>
   </div>
 </div>
 <script>
@@ -79,8 +97,8 @@ function inlinePlayerHead(label,detail){
     var right=document.createElement('span');right.textContent=detail||'';
     head.appendChild(left);head.appendChild(right);return head;
 }
-function inlinePlayerRow(label){
-    var row=document.createElement('div');row.className='inline-player-switch-row';
+function inlinePlayerRow(label,extraClass){
+    var row=document.createElement('div');row.className='inline-player-switch-row'+(extraClass?' '+extraClass:'');
     row.setAttribute('role','group');row.setAttribute('aria-label',label);return row;
 }
 function inlinePlayerItemMeta(item){
@@ -88,7 +106,10 @@ function inlinePlayerItemMeta(item){
 }
 function inlinePlayerChip(row,label,meta,current,title,onClick){
     var chip=document.createElement('button');chip.type='button';chip.className='inline-player-chip';
-    var text=document.createElement('span');text.textContent=label||'Version';chip.appendChild(text);
+    var top=document.createElement('div');top.className='inline-player-chip-top';
+    var text=document.createElement('span');text.className='inline-player-chip-lbl';text.textContent=label||'Version';
+    var state=document.createElement('span');state.className='inline-player-chip-state';state.setAttribute('aria-hidden','true');state.textContent='▶';
+    top.appendChild(text);top.appendChild(state);chip.appendChild(top);
     if(meta){var small=document.createElement('small');small.textContent=meta;chip.appendChild(small);}
     chip.title=title||'';
     if(current){chip.setAttribute('aria-current','true');chip.title='Currently playing';}
@@ -121,15 +142,17 @@ function inlinePlayerPaintSwitches(){
         if(!inlinePlayerEpisode){inlinePlayerEpisode=data.current_episode||episodes[0].key;}
         for(i=0;i<episodes.length;i++){if(episodes[i].key===inlinePlayerEpisode){current=episodes[i];break;}}
         if(!current){current=episodes[0];inlinePlayerEpisode=current.key;}
-        box.appendChild(inlinePlayerHead('Episodes',name+episodes.length+(group.truncated?' of '+group.episode_count:'')+' episodes'));
-        var episodeRow=inlinePlayerRow('Episodes');
+        var epSec=document.createElement('div');epSec.className='inline-player-switch-group';
+        epSec.appendChild(inlinePlayerHead('Episodes',name+episodes.length+(group.truncated?' of '+group.episode_count:'')+' episodes'));
+        var episodeRow=inlinePlayerRow('Episodes','episodes-row');
         (function(){for(var j=0;j<episodes.length;j++){
             var episode=episodes[j];
             inlinePlayerChip(episodeRow,episode.label,'',episode.key===inlinePlayerEpisode,episode.label,
                 (function(key){return function(){inlinePlayerPickEpisode(key);};})(episode.key));
         }})();
-        box.appendChild(episodeRow);
-        box.appendChild(inlinePlayerHead('Quality',current.label||''));
+        epSec.appendChild(episodeRow);box.appendChild(epSec);
+        var qSec=document.createElement('div');qSec.className='inline-player-switch-group';
+        qSec.appendChild(inlinePlayerHead('Quality',current.label||''));
         var qualityRow=inlinePlayerRow('Quality versions of this episode');
         var items=current.items||[];
         (function(){for(var k=0;k<items.length;k++){
@@ -137,18 +160,19 @@ function inlinePlayerPaintSwitches(){
             inlinePlayerChip(qualityRow,item.label,inlinePlayerItemMeta(item),item.file_id===inlinePlayerFileId,item.name,
                 (function(target){return function(){switchInlinePlayer(target.file_id,target.name,false);};})(item));
         }})();
-        box.appendChild(qualityRow);
+        qSec.appendChild(qualityRow);box.appendChild(qSec);
     }else{
         var items=data.items||[];
         if(items.length<2){box.hidden=true;return;}
-        box.appendChild(inlinePlayerHead('Quality versions',name+items.length+(group.truncated?' of '+group.count:'')));
+        var qOnly=document.createElement('div');qOnly.className='inline-player-switch-group';
+        qOnly.appendChild(inlinePlayerHead('Quality versions',name+items.length+(group.truncated?' of '+group.count:'')));
         var row=inlinePlayerRow('Quality versions');
         (function(){for(var j=0;j<items.length;j++){
             var item=items[j];
             inlinePlayerChip(row,item.label,inlinePlayerItemMeta(item),item.file_id===inlinePlayerFileId,item.name,
                 (function(target){return function(){switchInlinePlayer(target.file_id,target.name,false);};})(item));
         }})();
-        box.appendChild(row);
+        qOnly.appendChild(row);box.appendChild(qOnly);
     }
     if(group.truncated){var note=document.createElement('div');note.className='inline-player-switch-note';
         note.textContent=group.type==='series'?'Only the first '+episodes.length+' episodes are listed here.':'Only the first '+Math.min(items.length,300)+' files are listed here.';

@@ -221,6 +221,11 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("inlinePlayerQualityItem", PLAYER_UI)
         self.assertIn("inlinePlayerItemMeta", PLAYER_UI)
         self.assertIn("loadedmetadata", PLAYER_UI)
+        self.assertIn(".inline-player-status:empty{display:none}", PLAYER_UI)
+        self.assertIn("grid-template-columns:repeat(auto-fill,minmax(124px,1fr))", PLAYER_UI)
+        self.assertIn("episodes-row", PLAYER_UI)
+        self.assertIn("body.light .inline-player-chip", PLAYER_UI)
+        self.assertIn("inline-player-chip-top", PLAYER_UI)
         video = PLAYER_UI.index('<video id="inlinePlayerVideo"')
         self.assertGreater(PLAYER_UI.index('id="inlinePlayerSwitcher"'), video)
         with open(MINI_APP, encoding="utf-8") as handle:
