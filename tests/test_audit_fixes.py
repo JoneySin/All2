@@ -321,3 +321,48 @@ class OTPSendLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(isinstance(item, (str, OTPRateLimited)) for item in results))
         self.assertEqual((await original({'tg_id': 99}))['otp_sends'], OTP_MAX_SENDS)
         mongo.close()
+
+
+class ScanBugFixTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bot_html_escaping_and_stream_missing_alert(self):
+        from plugins import filter as bot_filter, commands
+
+        cap, _ = bot_filter.get_filter_ui(
+            'test',
+            [{'_id': '1', 'file_size': 1024, 'file_name': 'Tom & Jerry <1080p>.mkv'}],
+            1, 'primary', 0, -1001, 5, '-1001-1', '', simple_mode=True,
+        )
+        self.assertIn('Tom &amp; Jerry &lt;1080p&gt;.mkv', cap)
+
+        file_cap = commands._file_caption('<b>{file_name}</b> {file_size}', {'file_name': 'A & B <4K>', 'file_size': 2048})
+        self.assertIn('<b>A &amp; B &lt;4K&gt;</b>', file_cap)
+
+        q = SimpleNamespace(data='stream#missing', answer=AsyncMock())
+        with patch.object(commands, 'get_file_details', AsyncMock(return_value=None)):
+            await commands.stream_cb(SimpleNamespace(), q)
+        q.answer.assert_awaited_once()
+        self.assertTrue(q.answer.await_args.kwargs.get('show_alert'))
+
+    async def test_profile_password_length_and_premium_expired_fallback(self):
+        from web import profile_routes, dashboard_routes
+        app = web.Application()
+        app.add_routes(profile_routes.profile_routes)
+        app.add_routes(dashboard_routes.dashboard_routes)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        saved_uname = temp.U_NAME
+        try:
+            with patch.object(profile_routes, 'get_auth', AsyncMock(return_value=('user', 42))), \
+                    patch.object(profile_routes, 'web_db', SimpleNamespace(col=SimpleNamespace(find_one=AsyncMock(return_value=None)))):
+                resp = await client.post('/api/update_profile', data={'new_email': 'u@example.com', 'new_pass': '123'}, allow_redirects=False)
+            self.assertIn('at+least+6+characters', resp.headers['Location'])
+
+            temp.U_NAME = None
+            with patch.object(dashboard_routes, 'get_auth', AsyncMock(return_value=('user', 42))):
+                page = await client.get('/premium_expired')
+                html_text = await page.text()
+            self.assertNotIn('https://t.me/None', html_text)
+        finally:
+            temp.U_NAME = saved_uname
+            await client.close()
+

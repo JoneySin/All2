@@ -181,7 +181,6 @@ __BRAND_CSS__
       <button class="pb2" id="nBtn" onclick="next()">Next ▶</button>
     </div>
   </div>
-</div>
 
 
 <!-- TOAST -->
@@ -200,7 +199,7 @@ const H={'X-Telegram-Init-Data':ID};
 window.INLINE_PLAYER_HEADERS=H;
 
 // state
-let curOff=0,nextOff='',curCol='all',curPage=1;
+let curOff=0,nextOff='',curCol='all',curPage=1,offHist=[];
 let searchReqId=0;
 let pMode=MediaView.media('__DEFAULT_MEDIA_MODE__'); /* 🎛️ default injected from web_assets.DEFAULT_MEDIA_MODE */
 let miniMediaFiles={};
@@ -319,7 +318,7 @@ async function doSearch(off,allowEmpty){
   let q=Q1('#q').value.trim();
   if(!q && !allowEmpty)return toast('Kuch likho pehle!');
   if(!ID)return showErr('init');
-  curOff=off;if(!off)curPage=1;
+  curOff=off;if(!off){curPage=1;offHist=[];}
   if(q){sessionStorage.setItem('ff_ma_q',q);}else{sessionStorage.removeItem('ff_ma_q');}
 
   let myReq=++searchReqId;
@@ -359,8 +358,8 @@ async function doSearch(off,allowEmpty){
 window.showToast=toast;
 function miniPlayFile(card){let f=miniMediaFiles[card.dataset.fid];if(f)openInlinePlayer(f.file_id,f.name);}
 
-function next(){if(nextOff){curPage++;doSearch(nextOff);}}
-function prev(){if(curPage>1){curPage--;doSearch(Math.max(0,curOff-21));}}
+function next(){if(nextOff){offHist.push(curOff);curPage++;doSearch(nextOff);}}
+function prev(){if(curPage>1){curPage--;doSearch(offHist.length?offHist.pop():0,true);}}
 
 // initial load — restore last search this session, else show recent files
 if(ID){

@@ -1,4 +1,5 @@
 import asyncio
+import html
 import re
 import math
 import logging
@@ -88,7 +89,7 @@ async def get_spell_suggestions(query, limit=5):
 # ─────────────────────────────────────────────
 def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, next_off, simple_mode=True, delay=300):
     list_items = [
-        f"📁 <a href='https://t.me/{temp.U_NAME}?start=file_{chat_id}_{f['_id']}'>[{get_size(f['file_size'])}] {f['file_name']}</a>"
+        f"📁 <a href='https://t.me/{temp.U_NAME}?start=file_{chat_id}_{f['_id']}'>[{get_size(f['file_size'])}] {html.escape(str(f['file_name']), quote=False)}</a>"
         for f in files
     ]
     files_text = "\n\n".join(list_items)
@@ -302,7 +303,7 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
                 return
 
         try:
-            m = await msg.reply(script.NOT_FILE_TXT.format(msg.from_user.mention, search))
+            m = await msg.reply(script.NOT_FILE_TXT.format(msg.from_user.mention, html.escape(search, quote=False)))
             if auto_delete:
                 asyncio.create_task(start_auto_delete_timer(client, m.chat.id, m.id, delay=15))
         except: pass
@@ -357,10 +358,16 @@ async def close_callback(client, query):
 
         # ✅ BUG FIX: अंधे की तरह -1/+1 डिलीट करने के बजाय सिर्फ बोट रिस्पांस और मूल यूज़र क्वेरी को ही डिलीट करें
         msg_ids_to_clean = [current_msg_id]
+        reply_id = None
         if query.message.reply_to_message:
-            msg_ids_to_clean.append(query.message.reply_to_message.id)
+            reply_id = query.message.reply_to_message.id
         elif getattr(query.message, "reply_to_message_id", None):
-            msg_ids_to_clean.append(query.message.reply_to_message_id)
+            reply_id = query.message.reply_to_message_id
+        if reply_id:
+            msg_ids_to_clean.append(reply_id)
+            reply_key = f"{chat_id}-{reply_id}"
+            temp.FILES.pop(reply_key, None)
+            BUTTONS.pop(reply_key, None)
 
         # 3. PM में भेजी गई फाइल + उसका "will delete in..." नोट भी साथ में साफ़ करें
         for k, v in list(temp.PM_FILES.items()):

@@ -1,3 +1,4 @@
+import html
 import os
 import sys
 import logging
@@ -48,7 +49,7 @@ async def welcome(c, m):
         # यूज़र का मेंशन और ग्रुप का टाइटल पार्स करें
         welcome_cap = script.WELCOME_TEXT.format(
             mention=new_user.mention,
-            title=m.chat.title
+            title=html.escape(m.chat.title or "", quote=False)
         )
         
         # ✅ FIX: स्ट्रिक्ट प्रीमियम मॉडल पैच - अगर आने वाला मेंबर प्रीमियम नहीं है, तो उसे सूचित करें
@@ -199,10 +200,12 @@ async def get_id(c, m):
         except: 
             pass
 
+    full_name = html.escape(f"{u.first_name or ''} {u.last_name or ''}".strip(), quote=False)
+    uname_esc = html.escape(u.username or 'N/A', quote=False)
     t = (f"🆔 <b>ID INFORMATION</b>\n\n"
-         f"👤 <b>Name:</b> {u.first_name or ''} {u.last_name or ''}\n"
+         f"👤 <b>Name:</b> {full_name}\n"
          f"🦹 <b>User ID:</b> <code>{u.id}</code>\n"
-         f"🏷 <b>Username:</b> @{u.username or 'N/A'}\n"
+         f"🏷 <b>Username:</b> @{uname_esc}\n"
          f"🌐 <b>DC ID:</b> <code>{u.dc_id or 'Unknown'}</code>\n"
          f"🤖 <b>Bot:</b> {'Yes' if u.is_bot else 'No'}\n"
          f"{b}\n🔗 <b>Profile:</b> <a href='tg://user?id={u.id}'>Open</a>\n\n"
@@ -211,7 +214,9 @@ async def get_id(c, m):
          f"📩 <b>Msg ID:</b> <code>{m.id}</code>\n")
 
     if m.chat.type in (enums.ChatType.GROUP, enums.ChatType.SUPERGROUP):
-        t += f"Status: <code>Active Premium Group</code>\n📛 <b>Title:</b> {m.chat.title}\n🔗 <b>Link:</b> @{m.chat.username or 'Private'}\n"
+        title_esc = html.escape(m.chat.title or '', quote=False)
+        chat_uname = html.escape(m.chat.username or 'Private', quote=False)
+        t += f"Status: <code>Active Premium Group</code>\n📛 <b>Title:</b> {title_esc}\n🔗 <b>Link:</b> @{chat_uname}\n"
 
     if r:
         f_id, _ = get_media_file_id(r)

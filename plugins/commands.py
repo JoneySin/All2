@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from time import time as time_now
 from pyrogram import Client, filters, enums
@@ -99,7 +100,7 @@ def _group_button(group):
 
 def _file_caption(template, file):
     return (template or script.FILE_CAPTION).format(
-        file_name=str(file.get("file_name", "File")),
+        file_name=html.escape(str(file.get("file_name", "File")), quote=False),
         file_size=get_size(file.get("file_size") or 0),
     )
 
@@ -204,11 +205,7 @@ async def start(client, message):
                     return await message.reply("❌ File Not Found!")
 
                 settings = await get_settings(grp_id)
-                cap_template = settings.get('caption', script.FILE_CAPTION)
-                caption = cap_template.format(
-                    file_name=str(file.get('file_name', 'File')),
-                    file_size=get_size(file.get('file_size', 0))
-                )
+                caption = _file_caption(settings.get('caption', script.FILE_CAPTION), file)
 
                 group = await get_group_for_file(file_id, file.get("group_id")) if temp.SEND_ALL_ENABLED else None
                 btn = []
@@ -614,12 +611,14 @@ async def confirm_del(client, query):
 @Client.on_callback_query(filters.regex(r"^stream#"))
 async def stream_cb(client, query):
     file_id = query.data.split("#")[1]
-    await query.answer("🔗 Generating Video Stream Tunnel Link...", show_alert=False)
+    answered = False
     try:
         file = await get_file_details(file_id)
         if not file:
             return await query.answer("❌ File removed or structural ID broken!", show_alert=True)
-            
+        await query.answer("🔗 Generating Video Stream Tunnel Link...", show_alert=False)
+        answered = True
+
         target_media = file.get('file_ref') if file.get('file_ref') else file_id
 
         msg = await client.send_cached_media(BIN_CHANNEL, target_media)
@@ -640,7 +639,10 @@ async def stream_cb(client, query):
             db.add_to_delete_queue(BIN_CHANNEL, msg.id, STREAM_TTL),   # link expiry == file delete time
         )
     except Exception as e:
-        await query.answer(f"Error: {e}", show_alert=True)
+        if not answered:
+            await query.answer(f"Error: {e}", show_alert=True)
+        else:
+            logger.warning(f"Stream callback failed for {file_id}: {e}")
 
 
 # ❌ DUPLICATE HANDLER REMOVED: यहाँ एक `close_cb` था जो plugins/filter.py के

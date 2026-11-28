@@ -111,9 +111,11 @@ async def api_update_profile(req):
 
     d = await req.post()
     new_email = d.get('new_email', '').strip()
-    new_pass = d.get('new_pass', '').strip()
+    new_pass = d.get('new_pass') or ''
 
     if not new_email: return web.HTTPFound('/profile?err=Email cannot be empty!')
+    if new_pass and len(new_pass) < 6:
+        return web.HTTPFound('/profile?err=Password must be at least 6 characters!')
     if await web_db.col.find_one({"email": new_email, "tg_id": {"$ne": tg_id}}, {"_id": 1}):
         return web.HTTPFound('/profile?err=This email is already in use by another account!')
 

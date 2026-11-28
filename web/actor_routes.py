@@ -4,7 +4,7 @@ from aiohttp import web
 from bson.objectid import ObjectId
 from utils import temp
 from info import MAX_WEB_RESULTS, MEDIA_STORAGE_CHANNEL
-from database.ia_filterdb import actors, get_actor_search_results, delete_actor_profile, delete_gallery_image_by_index
+from database.ia_filterdb import actors, delete_actor_profile, delete_gallery_image_by_index
 # ✅ DRY: fast_json + DIRECTORY_CSS अब web_assets से आते हैं (पहले दोनों यहाँ copy थे)
 from web.web_assets import build_page, get_auth, require_active_plan, fast_json, DIRECTORY_CSS, DIRECTORY_FILTER_CSS, DEFAULT_CATALOG_MODE, DEFAULT_MEDIA_MODE, render_category_picker
 from web.search_api import actor_search_page, _invalidate_search_caches, _GroupCursorLimitError, _GroupCursorStorageError

@@ -2281,7 +2281,7 @@ async def api_edit_name(req):
             doc.update(update_fields)
             if clear_quality:
                 doc.pop("quality_override", None)
-            await COLLECTIONS[target_col].insert_one(doc)
+            await COLLECTIONS[target_col].replace_one({"_id": fid}, doc, upsert=True)
             await COLLECTIONS[col].delete_one({"_id": fid})
         else:
             update = {"$set": update_fields}

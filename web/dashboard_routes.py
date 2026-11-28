@@ -1151,7 +1151,7 @@ async def premium_expired(req):
         '<div class="scard-sub" style="color:var(--text)">2. Use command <b>/plan</b></div>'
         '<div class="scard-sub" style="color:var(--text)">3. Pay & Activate instantly</div>'
         '</div>'
-        f'<a href="https://t.me/{temp.U_NAME}" class="submit-btn" style="text-decoration:none;display:block;">Open Telegram Bot</a>'
+        f'<a href="https://t.me/{temp.U_NAME or "AutoFilterBot"}" class="submit-btn" style="text-decoration:none;display:block;">Open Telegram Bot</a>'
         '<a href="/logout" style="display:block;margin-top:20px;color:var(--muted);text-decoration:none;">Sign Out</a>'
         '</div>'
     )
