@@ -674,8 +674,28 @@ class EditorPlayerTests(unittest.IsolatedAsyncioTestCase):
     def test_legacy_categories_stay_selected_in_editors(self):
         fields = actor.actor_form_fields(category='legacy & unusual')
         self.assertIn('<option value="legacy &amp; unusual" selected>', fields)
+        self.assertIn('class="cat-cdd-opt selected" data-val="legacy &amp; unusual"', fields)
         body = post.build_post_editor({'category': 'Legacy & Other'}, post_id=str(ObjectId()))
         self.assertIn('<option value="Legacy &amp; Other" selected>', body)
+        self.assertIn('class="cat-cdd-opt selected" data-val="Legacy &amp; Other"', body)
+
+    def test_category_picker_buttons_in_profile_and_post_editors(self):
+        actor_html = actor.actor_form_fields(category='app')
+        self.assertIn('data-cat-picker', actor_html)
+        self.assertIn('<button type="button" class="cat-cdd-btn"', actor_html)
+        self.assertIn('<span class="cat-cdd-val">📱 App</span>', actor_html)
+        self.assertIn('class="cat-cdd-opt selected" data-val="app"', actor_html)
+
+        post_html = post.build_post_editor({'category': 'Web Series'})
+        self.assertIn('data-cat-picker', post_html)
+        self.assertIn('<button type="button" class="cat-cdd-btn"', post_html)
+        self.assertIn('<span class="cat-cdd-val">📺 Web Series</span>', post_html)
+        self.assertIn('class="cat-cdd-opt selected" data-val="Web Series"', post_html)
+
+        from web import web_assets
+        self.assertIn('.cat-cdd-btn{', web_assets.CSS)
+        self.assertIn('.cat-cdd-menu{', web_assets.CSS)
+        self.assertIn('function initCategoryPickers', web_assets.JS)
 
     async def test_shared_brand_renders_on_landing_and_watch_page(self):
         from web.utils import render_template

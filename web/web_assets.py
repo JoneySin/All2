@@ -201,6 +201,22 @@ CSS = """
 .back-pill-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(229,9,20,.08);box-shadow:0 0 14px rgba(229,9,20,.28)}
 .back-pill-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .back-pill-btn:active,.back-pill-btn.is-backing{color:#fff!important;background:var(--accent)!important;border-color:var(--accent)!important;box-shadow:0 0 20px 3px rgba(229,9,20,.65)!important}
+.cat-cdd{position:relative;width:100%}
+.cat-native-select{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;margin:0;padding:0}
+.cat-cdd-btn{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:12px 13px;font:inherit;font-size:14px;font-weight:600;line-height:1.4;cursor:pointer;text-align:left;transition:border-color .18s,box-shadow .18s,background .18s}
+.cat-cdd-btn:hover,.cat-cdd.open .cat-cdd-btn{border-color:var(--accent)}
+.cat-cdd-btn:focus-visible,.cat-cdd.open .cat-cdd-btn{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(229,9,20,.14)}
+.cat-cdd-val{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cat-cdd-arrow{font-size:10px;color:var(--muted);transition:transform .2s ease,color .18s;flex-shrink:0}
+.cat-cdd.open .cat-cdd-arrow{transform:rotate(180deg);color:var(--accent)}
+.cat-cdd-menu{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:80;background:var(--bg2);border:1.5px solid var(--border);border-radius:11px;padding:4px;box-shadow:0 12px 32px rgba(0,0,0,.45);display:none}
+.cat-cdd.open .cat-cdd-menu{display:block}
+.cat-cdd-opt{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:0;border-radius:8px;background:transparent;color:var(--text);font:inherit;font-size:13px;font-weight:700;text-align:left;cursor:pointer;transition:background .12s,color .12s}
+.cat-cdd-opt:hover,.cat-cdd-opt:focus-visible{outline:none;background:var(--bg3);color:var(--accent)}
+.cat-cdd-opt.selected{background:rgba(229,9,20,.12);color:var(--accent)}
+.cat-cdd-dot{width:15px;height:15px;border-radius:50%;border:2px solid var(--border);flex-shrink:0;display:grid;place-items:center}
+.cat-cdd-opt.selected .cat-cdd-dot{border-color:var(--accent)}
+.cat-cdd-opt.selected .cat-cdd-dot::after{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent)}
 """
 
 JS = """
@@ -585,12 +601,100 @@ window.addEventListener('pageshow',function(){
         b.classList.remove('is-backing');delete b.dataset.backing;
     });
 });
+function initCategoryPickers(root){
+    var scope=root||document;
+    scope.querySelectorAll('[data-cat-picker]').forEach(function(wrap){
+        if(wrap.dataset.catReady==='1')return;
+        wrap.dataset.catReady='1';
+        var sel=wrap.querySelector('select.cat-native-select'),btn=wrap.querySelector('.cat-cdd-btn'),
+            valEl=wrap.querySelector('.cat-cdd-val'),menu=wrap.querySelector('.cat-cdd-menu');
+        if(!sel||!btn||!valEl||!menu)return;
+        function sync(){
+            var cur=sel.value,curText='';
+            Array.prototype.forEach.call(sel.options,function(o){if(o.value===cur)curText=o.textContent;});
+            valEl.textContent=curText||cur;
+            menu.querySelectorAll('.cat-cdd-opt').forEach(function(opt){
+                var active=opt.dataset.val===cur;
+                opt.classList.toggle('selected',active);
+                opt.setAttribute('aria-selected',active?'true':'false');
+            });
+        }
+        function closeMenu(){wrap.classList.remove('open');btn.setAttribute('aria-expanded','false');}
+        btn.addEventListener('click',function(e){
+            e.preventDefault();e.stopPropagation();
+            var willOpen=!wrap.classList.contains('open');
+            document.querySelectorAll('[data-cat-picker].open').forEach(function(other){
+                other.classList.remove('open');
+                var ob=other.querySelector('.cat-cdd-btn');if(ob)ob.setAttribute('aria-expanded','false');
+            });
+            if(willOpen){wrap.classList.add('open');btn.setAttribute('aria-expanded','true');}
+        });
+        menu.addEventListener('click',function(e){
+            var opt=e.target.closest('.cat-cdd-opt');
+            if(!opt)return;
+            e.preventDefault();e.stopPropagation();
+            sel.value=opt.dataset.val;
+            sel.dispatchEvent(new Event('change',{bubbles:true}));
+            sync();closeMenu();
+            if(e.detail===0)btn.focus();
+        });
+        sel.addEventListener('change',sync);
+        wrap.addEventListener('keydown',function(e){
+            if(e.key==='Escape'&&wrap.classList.contains('open')){e.stopPropagation();closeMenu();btn.focus();}
+        });
+        sync();
+    });
+}
+if(!window._catPickerDocBound){
+    window._catPickerDocBound=true;
+    document.addEventListener('click',function(e){
+        if(!e.target.closest('[data-cat-picker]')){
+            document.querySelectorAll('[data-cat-picker].open').forEach(function(w){
+                w.classList.remove('open');
+                var b=w.querySelector('.cat-cdd-btn');if(b)b.setAttribute('aria-expanded','false');
+            });
+        }
+    });
+    document.addEventListener('DOMContentLoaded',function(){initCategoryPickers(document);});
+}
 """
 
 def _h(html):
     res = web.Response(text=html.encode('utf-8','replace').decode('utf-8'), content_type='text/html', charset='utf-8')
     res.enable_compression()
     return res
+
+
+def render_category_picker(options, selected_value="", field_class="profile-field"):
+    """Render a custom Category dropdown button backed by a synced <select name="category">."""
+    esc = lambda value: html.escape(str(value or ""), quote=True)
+    items = list(options)
+    selected = str(selected_value or "")
+    if selected and all(val != selected for val, _ in items):
+        items.insert(0, (selected, selected))
+    if not selected and items:
+        selected = items[0][0]
+    selected_label = next((lbl for val, lbl in items if val == selected), selected)
+    select_opts = ''.join(
+        f'<option value="{esc(val)}"{" selected" if val == selected else ""}>{esc(lbl)}</option>'
+        for val, lbl in items
+    )
+    menu_opts = ''.join(
+        f'<button type="button" class="cat-cdd-opt{" selected" if val == selected else ""}" data-val="{esc(val)}" role="option" aria-selected="{"true" if val == selected else "false"}">'
+        f'<span>{esc(lbl)}</span><span class="cat-cdd-dot" aria-hidden="true"></span></button>'
+        for val, lbl in items
+    )
+    return (
+        f'<div class="{esc(field_class)}"><span>Category</span>'
+        '<div class="cat-cdd" data-cat-picker>'
+        f'<select name="category" class="cat-native-select" aria-hidden="true" tabindex="-1" required>{select_opts}</select>'
+        '<button type="button" class="cat-cdd-btn" aria-haspopup="listbox" aria-expanded="false">'
+        f'<span class="cat-cdd-val">{esc(selected_label)}</span>'
+        '<span class="cat-cdd-arrow" aria-hidden="true">&#9660;</span>'
+        '</button>'
+        f'<div class="cat-cdd-menu" role="listbox">{menu_opts}</div>'
+        '</div></div>'
+    )
 
 async def get_auth(req):
     s_user = req.cookies.get('user_session')

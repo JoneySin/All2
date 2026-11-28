@@ -1,6 +1,7 @@
 """Shared create/edit post studio. Field names match the existing multipart API."""
 import html
 from urllib.parse import quote, urlsplit
+from web.web_assets import render_category_picker
 
 
 def post_image_src(value):
@@ -156,11 +157,16 @@ def build_post_editor(post=None, post_id="", err="", msg=""):
     action = "/api/post/update" if editing else "/api/post/publish"
     hidden = f'<input type="hidden" name="post_id" value="{esc(post_id)}">' if editing else ''
     notices = (f'<div class="err-box">{esc(err)}</div>' if err else '') + (f'<div class="success-box">{esc(msg)}</div>' if msg else '')
-    categories = ['Movies', 'Web Series', 'App Video', 'Porn']
-    saved_category = post.get('category') or 'Movies'
-    if saved_category not in categories:
-        categories.insert(0, saved_category)
-    options = ''.join(f'<option value="{esc(cat)}"{" selected" if saved_category == cat else ""}>{esc(cat)}</option>' for cat in categories)
+    category_field = render_category_picker(
+        [
+            ('Movies', '🎬 Movies'),
+            ('Web Series', '📺 Web Series'),
+            ('App Video', '📱 App Video'),
+            ('Porn', '🔞 Porn'),
+        ],
+        post.get('category') or 'Movies',
+        field_class='post-field',
+    )
     video_html = ''.join(_saved_video(v) for v in (post.get('videos') or []))
     cover = str(post.get('cover_image') or '')
     cover_preview = post_image_src(cover)
@@ -173,7 +179,7 @@ def build_post_editor(post=None, post_id="", err="", msg=""):
     <div class="post-form-layout"><div>
       <section class="post-section"><div class="post-section-heading"><span class="post-step">01</span><div><div class="post-section-kicker">The basics</div><h2>Post details</h2><p>Make this post easy to discover.</p></div></div><div class="post-fields">
         <label class="post-field">Title<input class="post-input" name="title" value="{esc(post.get('title'))}" placeholder="e.g. Series name, season 1" required></label>
-        <label class="post-field">Category<select class="post-input" name="category" required>{options}</select></label>
+        {category_field}
         <label class="post-field full">Description<textarea class="post-input" name="description" placeholder="Write a short description..." required>{esc(post.get('description'))}</textarea></label>
         <label class="post-field full">Search tags<input class="post-input" name="tags" value="{esc(tags)}" placeholder="e.g. Action, Drama, 2026"><span class="post-hint">Separate tags with commas.</span></label>
       </div></section>

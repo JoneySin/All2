@@ -6,7 +6,7 @@ from utils import temp
 from info import MAX_WEB_RESULTS, ACTOR_STORAGE_CHANNEL
 from database.ia_filterdb import actors, get_actor_search_results, delete_actor_profile, delete_gallery_image_by_index
 # ✅ DRY: fast_json + DIRECTORY_CSS अब web_assets से आते हैं (पहले दोनों यहाँ copy थे)
-from web.web_assets import build_page, get_auth, require_active_plan, fast_json, DIRECTORY_CSS, DIRECTORY_FILTER_CSS, DEFAULT_CATALOG_MODE, DEFAULT_MEDIA_MODE
+from web.web_assets import build_page, get_auth, require_active_plan, fast_json, DIRECTORY_CSS, DIRECTORY_FILTER_CSS, DEFAULT_CATALOG_MODE, DEFAULT_MEDIA_MODE, render_category_picker
 from web.search_api import actor_search_page, _invalidate_search_caches, _GroupCursorLimitError, _GroupCursorStorageError
 from web.dashboard_routes import SEARCH_PANEL_CSS, GROUP_CARD_CSS, GROUP_ENGINE_JS
 from web.catalog_cards import render_catalog_card
@@ -311,7 +311,7 @@ ACTOR_FORM_CSS = '''<style>
 .profile-section-head{margin-bottom:16px}.profile-section-head h2{font-size:16px;margin:5px 0}.profile-section-head p{font-size:12px;line-height:1.5;color:var(--muted)}
 .profile-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .profile-field{display:flex;flex-direction:column;gap:7px;min-width:0;color:var(--text);font-size:12px;font-weight:800}
-.profile-field.full{grid-column:1/-1}.profile-field .em-input{margin:0;padding:12px;background:var(--bg);font-family:inherit;font-weight:500;line-height:1.4}
+.profile-field.full{grid-column:1/-1}.profile-field .em-input{margin:0;padding:12px;background:var(--bg);border-radius:9px;font-family:inherit;font-weight:500;line-height:1.4}
 .profile-field textarea{min-height:110px;resize:vertical}.profile-field small{font-weight:500;color:var(--muted);line-height:1.4}
 .profile-links{display:flex;flex-direction:column;gap:10px}.profile-link-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr) auto;gap:10px;align-items:end;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px}
 .profile-link-row .em-input{background:var(--bg2)}.profile-link-remove,.profile-link-add{border:1px solid var(--border);border-radius:8px;background:var(--bg3);color:var(--text);padding:11px 13px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer}.profile-link-add{margin-top:12px}.profile-link-remove:hover,.profile-link-add:hover{border-color:var(--accent)}
@@ -369,10 +369,6 @@ def actor_form_fields(name="", category="actor", bio="", tags="", links=None):
     """Shared, escaped fields keep create and edit forms in sync."""
     links = links or []
     esc = lambda value: html.escape(str(value or ""), quote=True)
-
-    def opt(val, label):
-        return f'<option value="{val}"{" selected" if category == val else ""}>{label}</option>'
-
     link_rows = ''.join(
         '<div class="profile-link-row"><label class="profile-field">Name <span>(optional)</span>'
         f'<input class="em-input" name="link_label" maxlength="200" value="{esc(link.get("label"))}" placeholder="Website, Instagram, shop…"></label>'
@@ -381,13 +377,16 @@ def actor_form_fields(name="", category="actor", bio="", tags="", links=None):
         '<button class="profile-link-remove" type="button" data-link-remove>Remove</button></div>'
         for link in links
     )
-    legacy_category = f'<option value="{esc(category)}" selected>{esc(category)}</option>' if category and category not in ('actor', 'app', 'website') else ''
+    category_field = render_category_picker(
+        [("actor", "🎭 Actor"), ("app", "📱 App"), ("website", "🌐 Website")],
+        category or "actor",
+        field_class="profile-field",
+    )
     return (
         '<section class="profile-section"><div class="profile-section-head"><div class="profile-section-kicker">01 · Identity</div><h2>Profile details</h2><p>Tell visitors who or what this profile represents.</p></div>'
         '<div class="profile-fields">'
         f'<label class="profile-field">Display name<input type="text" name="name" value="{esc(name)}" placeholder="Name of actor, app or website" class="em-input" required></label>'
-        '<label class="profile-field">Category<select name="category" class="em-input" required>'
-        + legacy_category + opt("actor", "🎭 Actor") + opt("app", "📱 App") + opt("website", "🌐 Website") + '</select></label>'
+        + category_field +
         f'<label class="profile-field full">Biography<textarea name="bio" placeholder="Add a short introduction..." class="em-input" required>{esc(bio)}</textarea></label>'
         f'<label class="profile-field full">Search tags<input type="text" name="tags" value="{esc(tags)}" placeholder="e.g. Actor name, Alias, Genre" class="em-input"><small>Separate tags with commas to help match linked videos.</small></label>'
         '</div></section>'
