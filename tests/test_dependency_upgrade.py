@@ -1,4 +1,5 @@
 """Wire-level MongoDB driver and Kurigram one-shot input checks."""
+import importlib.util
 import os
 import unittest
 from types import SimpleNamespace
@@ -17,7 +18,11 @@ from mockupdb import MockupDB
 from pymongo import AsyncMongoClient
 from database import ia_filterdb as db
 from database.users_chats_db import Database
-from plugins import check_db_TEMP, premium
+from plugins import premium
+
+HAS_CHECK_DB_TEMP = importlib.util.find_spec('plugins.temp.check_db_TEMP') is not None
+if HAS_CHECK_DB_TEMP:
+    from plugins.temp import check_db_TEMP
 
 
 class DriverUpgradeTests(unittest.IsolatedAsyncioTestCase):
@@ -118,6 +123,7 @@ class DriverUpgradeTests(unittest.IsolatedAsyncioTestCase):
         receipt.copy.assert_awaited_once()
         premium.VERIFY_CACHE.pop(55, None)
 
+    @unittest.skipUnless(HAS_CHECK_DB_TEMP, 'plugins/temp/check_db_TEMP.py was removed')
     async def test_temporary_migration_closes_clients_on_early_return(self):
         status = SimpleNamespace(edit=AsyncMock())
         message = SimpleNamespace(from_user=SimpleNamespace(id=56), text='mongodb://new test',

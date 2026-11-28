@@ -4,6 +4,7 @@ Pyrogram stops walking a handler group as soon as one handler matches and
 returns.  A catch-all helper that quietly returns would therefore swallow
 /start and plain searches; these tests pin the ContinuePropagation contract.
 """
+import importlib.util
 import os
 import unittest
 from types import SimpleNamespace
@@ -22,9 +23,13 @@ from pyrogram.handlers import MessageHandler
 from pyrogram.types import Chat, Message
 
 from bot import Bot
-from plugins import check_db_TEMP, commands, index
+from plugins import commands, index
 from plugins import filter as filter_plugin
 from utils import temp
+
+HAS_CHECK_DB_TEMP = importlib.util.find_spec('plugins.temp.check_db_TEMP') is not None
+if HAS_CHECK_DB_TEMP:
+    from plugins.temp import check_db_TEMP
 
 
 def _message(text, command=None):
@@ -40,11 +45,13 @@ def _message(text, command=None):
 
 
 class CatchAllHelperTests(unittest.IsolatedAsyncioTestCase):
+    @unittest.skipUnless(HAS_CHECK_DB_TEMP, 'plugins/temp/check_db_TEMP.py was removed')
     async def test_db_migration_helper_releases_unrelated_admin_text(self):
         check_db_TEMP.PENDING.clear()
         with self.assertRaises(ContinuePropagation):
             await check_db_TEMP.receive_new_url(None, _message('Hello'))
 
+    @unittest.skipUnless(HAS_CHECK_DB_TEMP, 'plugins/temp/check_db_TEMP.py was removed')
     async def test_db_migration_helper_releases_new_commands(self):
         check_db_TEMP.PENDING[1] = {'action': 'copy_db', 'collection': None}
         try:

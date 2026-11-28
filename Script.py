@@ -112,7 +112,7 @@ Choose a category below. 👇</b>"""
 • /button_style - Result style""".replace(
         "{repair_command}",
         "• /repair_library - Refresh thumbnails and migrate metadata (temporary)\n"
-        if (Path(__file__).parent / "plugins" / "repair_library_TEMP.py").is_file() else "",
+        if (Path(__file__).parent / "plugins" / "temp" / "repair_library_TEMP.py").is_file() else "",
     )
 
     PLAN_TXT = """💎 <b>Fast Finder Premium Plans</b> 💎

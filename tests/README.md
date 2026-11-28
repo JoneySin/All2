@@ -270,7 +270,9 @@ limits must be measured in the deployment environment.
 
 ## Temporary library repair
 
-`plugins/repair_library_TEMP.py` is an optional, admin-only one-off tool.
+`plugins/temp/repair_library_TEMP.py` is an optional, admin-only one-off tool
+(grouped with `plugins/temp/check_db_TEMP.py` so the whole `plugins/temp/`
+folder can be removed cleanly at any time).
 After deploying and restarting the bot, run `/repair_library` in Telegram. It
 combines metadata migration and thumbnail warmup in a single scan of Primary,
 Cloud and Archive. Existing `TG_ID:`, `NO_THUMB`, and web-custom posters are
@@ -287,7 +289,7 @@ so refresh the affected group cover manually (the bot log records the file ID).
 Some probes fall back to Telegram metadata if byte probing fails. Only one repair can
 run **per bot instance**; don't run it simultaneously from multiple instances.
 
-After checking the results, remove `plugins/repair_library_TEMP.py` and redeploy
+After checking the results, remove `plugins/temp/repair_library_TEMP.py` (or the whole `plugins/temp/` folder) and redeploy
 or restart the bot. The admin help entry disappears on restart; indexing, search,
 streaming and shared metadata/probe helpers remain installed. The regression
 tests for the plugin skip if it has been removed. Live Telegram and MongoDB

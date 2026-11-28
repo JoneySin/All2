@@ -19,9 +19,9 @@ from pyrogram.errors import BadRequest, FloodWait
 from mongomock_motor import AsyncMongoMockClient
 
 # Removing the optional plugin must not make the rest of the test suite fail.
-HAS_PLUGIN = importlib.util.find_spec('plugins.repair_library_TEMP') is not None
+HAS_PLUGIN = importlib.util.find_spec('plugins.temp.repair_library_TEMP') is not None
 if HAS_PLUGIN:
-    from plugins import repair_library_TEMP as repair
+    from plugins.temp import repair_library_TEMP as repair
 
 
 class Video:
@@ -106,7 +106,7 @@ class CombinedRepairTests(unittest.IsolatedAsyncioTestCase):
     async def test_group_revision_failure_is_reported_as_partial(self):
         await self.add('covered')
         with patch.object(self.groups, 'update_many', AsyncMock(side_effect=RuntimeError('offline'))), \
-             self.assertLogs('plugins.repair_library_TEMP', level='WARNING'):
+             self.assertLogs('plugins.temp.repair_library_TEMP', level='WARNING'):
             await repair.run_repair(self.client, self.run)
         self.assertEqual((await self.col.find_one({'_id': 'covered'}))['thumb_url'], 'TG_ID:new_photo_id')
         self.assertEqual((self.run.errors, self.run.group_errors), (1, 1))
@@ -125,7 +125,7 @@ class CombinedRepairTests(unittest.IsolatedAsyncioTestCase):
         await self.add('missing-media')
         self.client.send_cached_media.side_effect = None
         self.client.send_cached_media.return_value = SimpleNamespace(id=51, media=None)
-        with self.assertLogs('plugins.repair_library_TEMP', level='WARNING'):
+        with self.assertLogs('plugins.temp.repair_library_TEMP', level='WARNING'):
             await repair.run_repair(self.client, self.run)
         doc = await self.col.find_one({'_id': 'missing-media'})
         self.assertNotIn('thumb_url', doc)
@@ -173,7 +173,7 @@ class CombinedRepairTests(unittest.IsolatedAsyncioTestCase):
     async def test_bad_requests_do_not_permanently_mark_files(self):
         await self.add('broken')
         self.client.send_cached_media.side_effect = BadRequest('bad request')
-        with self.assertLogs('plugins.repair_library_TEMP', level='WARNING'):
+        with self.assertLogs('plugins.temp.repair_library_TEMP', level='WARNING'):
             await repair.run_repair(self.client, self.run)
         doc = await self.col.find_one({'_id': 'broken'})
         self.assertNotIn('thumb_url', doc)
@@ -184,7 +184,7 @@ class CombinedRepairTests(unittest.IsolatedAsyncioTestCase):
     async def test_upload_error_preserves_completed_meta_and_remains_retryable(self):
         await self.add('upload')
         self.client.send_photo.side_effect = BadRequest('forbidden')
-        with self.assertLogs('plugins.repair_library_TEMP', level='WARNING'):
+        with self.assertLogs('plugins.temp.repair_library_TEMP', level='WARNING'):
             await repair.run_repair(self.client, self.run)
         doc = await self.col.find_one({'_id': 'upload'})
         self.assertEqual(doc['meta']['v'], 2)
@@ -215,7 +215,7 @@ class CombinedRepairTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failure_to_count_is_reported_as_interrupted(self):
         with patch.object(self.col, 'count_documents', AsyncMock(side_effect=RuntimeError('offline'))), \
-             self.assertLogs('plugins.repair_library_TEMP', level='ERROR'):
+             self.assertLogs('plugins.temp.repair_library_TEMP', level='ERROR'):
             await repair.run_repair(self.client, self.run)
         self.assertEqual(self.run.errors, 1)
         self.assertIn('interrupted', self.status.edit.await_args.args[0])
