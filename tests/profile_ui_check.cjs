@@ -16,9 +16,9 @@ const assert = require('node:assert/strict');
   await page.getByRole('button',{name:'Gallery',exact:false}).click();
   assert.equal(await page.locator('.actor-gallery-empty').isVisible(),true);
   assert.equal(await page.locator('.actor-gallery-choose input').getAttribute('multiple'),'');
-  await page.getByRole('button',{name:'Linked Media',exact:false}).click();
+  await page.getByRole('button',{name:'Videos',exact:false}).click();
   assert.equal(await page.locator('#tab-video').isVisible(),true);
-  await page.getByRole('button',{name:'Info',exact:false}).click();
+  await page.getByRole('button',{name:'Overview',exact:false}).click();
   for(const width of [320,1100]){
     await page.setViewportSize({width,height:720});
     for(const theme of ['dark','light']){
