@@ -41,8 +41,8 @@ logger = logging.getLogger(__name__)
 # ==========================================================
 from aiohttp import web
 from pyrogram import Client, types, StopPropagation, idle
-from pyrogram.errors import FloodWait, BadMsgNotification
-from pyrogram.handlers import MessageHandler
+from pyrogram.errors import FloodWait, BadMsgNotification, InternalServerError, ServiceUnavailable
+from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 from web import web_app
 from web.search_api import start_group_scan, stop_group_scan
 from info import (
@@ -199,7 +199,7 @@ class Bot(Client):
                     "Web is still up; do not redeploy repeatedly.", wait, attempt,
                 )
                 await asyncio.sleep(wait)
-            except (TimeoutError, OSError, BadMsgNotification) as e:
+            except (TimeoutError, OSError, BadMsgNotification, InternalServerError, ServiceUnavailable) as e:
                 detail = str(e) or repr(e)
                 # First few retries are close together, then back off to five
                 # minutes. This avoids hammering Telegram while still letting a
@@ -235,9 +235,9 @@ class Bot(Client):
         # 3. Load banned users & chats into Runtime Buckets
         try:
             b_users, b_chats = await db.get_banned()
-            temp.BANNED_USERS = [int(x) for x in b_users]
-            temp.BANNED_CHATS = [int(x) for x in b_chats]
-            logger.info(f"✅ Loaded {len(b_users)} banned users and {len(b_chats)} banned chats")
+            temp.BANNED_USERS = {int(x) for x in b_users}
+            temp.BANNED_CHATS = {int(x) for x in b_chats}
+            logger.info(f"✅ Loaded {len(temp.BANNED_USERS)} banned users and {len(temp.BANNED_CHATS)} banned chats")
         except Exception as e:
             logger.error(f"Error loading banned list: {e}")
 
@@ -247,8 +247,19 @@ class Bot(Client):
             cid = message.chat.id if message.chat else None
             if (uid and int(uid) in temp.BANNED_USERS) or (cid and int(cid) in temp.BANNED_CHATS):
                 raise StopPropagation
-        
+
+        async def ban_check_cb_middleware(client, query):
+            uid = query.from_user.id if query.from_user else None
+            cid = query.message.chat.id if getattr(query, "message", None) and query.message.chat else None
+            if (uid and int(uid) in temp.BANNED_USERS) or (cid and int(cid) in temp.BANNED_CHATS):
+                try:
+                    await query.answer("❌ Access denied.", show_alert=True)
+                except Exception:
+                    pass
+                raise StopPropagation
+
         self.add_handler(MessageHandler(ban_check_middleware), group=-1)
+        self.add_handler(CallbackQueryHandler(ban_check_cb_middleware), group=-1)
         logger.info("🛡️ Premium Global Security Guard Activated")
 
         # 5. Persistent Hard Restart Logic Sync

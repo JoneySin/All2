@@ -81,11 +81,17 @@ PORT = int(environ.get("PORT", 8080)) # कोएब (Koyeb) के डायन
 # ─────────────────────────────────────────────
 # 👑 ADMINS & SECURITY
 # ─────────────────────────────────────────────
-ADMINS = environ.get("ADMINS", "")
-if not ADMINS:
+_raw_admins = environ.get("ADMINS", "")
+if not _raw_admins.strip():
     logger.error("❌ ADMINS environment variable missing")
     exit(1)
-ADMINS = [int(x) for x in ADMINS.split() if x.isnumeric()]
+_invalid_admins = [x for x in _raw_admins.split() if not x.isnumeric()]
+if _invalid_admins:
+    logger.warning("⚠️ Ignoring invalid non-numeric ADMINS token(s): %s", ", ".join(_invalid_admins))
+ADMINS = [int(x) for x in _raw_admins.split() if x.isnumeric()]
+if not ADMINS:
+    logger.error("❌ ADMINS has no valid numeric Telegram user IDs")
+    exit(1)
 
 # ─────────────────────────────────────────────
 # 📢 STORAGE & MICRO-ROUTING CHANNELS SYNC

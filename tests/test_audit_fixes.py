@@ -366,3 +366,107 @@ class ScanBugFixTests(unittest.IsolatedAsyncioTestCase):
             temp.U_NAME = saved_uname
             await client.close()
 
+
+class SecurityHardeningTests(unittest.IsolatedAsyncioTestCase):
+    async def test_banned_user_blocked_on_web_and_init_data_auth_date_enforced(self):
+        import hashlib, hmac, json, time, urllib.parse
+        from web import search_api, web_assets
+        from info import BOT_TOKEN
+        import stream_security
+
+        self.assertIsInstance(temp.BANNED_USERS, set)
+        self.assertIsInstance(temp.BANNED_CHATS, set)
+        self.assertFalse(stream_security.verify(1, 0, "नहीं"))
+
+        def _make_init_data(auth_date: int) -> str:
+            payload = {
+                "auth_date": str(auth_date),
+                "user": json.dumps({"id": 777777}),
+            }
+            dcs = "\n".join(f"{k}={v}" for k, v in sorted(payload.items()))
+            sk = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+            payload["hash"] = hmac.new(sk, dcs.encode(), hashlib.sha256).hexdigest()
+            return urllib.parse.urlencode(payload)
+
+        now = int(time.time())
+        self.assertIsNotNone(search_api.verify_telegram_init_data(_make_init_data(now)))
+        self.assertIsNone(search_api.verify_telegram_init_data(_make_init_data(now - 90000)))
+        self.assertIsNone(search_api.verify_telegram_init_data(_make_init_data(now + 600)))
+
+        temp.BANNED_USERS.add(777777)
+        try:
+            self.assertIsNone(await search_api._resolve_role_for_tg(777777))
+            temp.USER_SESSIONS["ban-tok"] = {"tg_id": 777777, "expiry": time.time() + 300}
+            fake_req = SimpleNamespace(cookies={"user_session": "ban-tok"})
+            self.assertEqual(await web_assets.get_auth(fake_req), (None, None))
+        finally:
+            temp.BANNED_USERS.discard(777777)
+            temp.USER_SESSIONS.pop("ban-tok", None)
+
+    async def test_thumb_missing_db_and_setup_stream_error_sanitization(self):
+        from web import search_api, login_routes
+        search_api._THUMB_RATE_HITS.clear()
+        search_api.thumb_cache.clear()
+        login_routes._AUTH_BUCKETS.clear()
+
+        fake_bot = SimpleNamespace(send_cached_media=AsyncMock())
+        fake_col = SimpleNamespace(find_one=AsyncMock(return_value=None))
+        with patch.object(search_api.temp, "BOT", fake_bot), \
+                patch.dict(search_api.FILE_COLLECTIONS, {"primary": fake_col}):
+            res = await search_api._get_or_fetch_thumb("does-not-exist", "primary")
+        self.assertIsNone(res)
+        fake_bot.send_cached_media.assert_not_awaited()
+
+        app = web.Application()
+        app.add_routes(search_api.search_routes)
+        app.add_routes(login_routes.login_routes)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            with patch.object(search_api, "get_user_role", AsyncMock(return_value=("user", 42))), \
+                    patch.object(search_api, "_tunnel_stream", AsyncMock(side_effect=RuntimeError("secret stack info"))):
+                r = await client.post("/setup_stream", json={"file_id": "abc"})
+                body = await r.json()
+            self.assertEqual(r.status, 500)
+            self.assertNotIn("secret stack info", body["error"])
+
+            with patch.object(login_routes, "web_db", SimpleNamespace(generate_otp=AsyncMock(return_value=None))):
+                fp = await client.post("/api/forgot_password", data={"tg_id": "12345"}, allow_redirects=False)
+            self.assertIn("If+that+Telegram+ID+is+registered", fp.headers["Location"])
+        finally:
+            await client.close()
+            search_api._THUMB_RATE_HITS.clear()
+            login_routes._AUTH_BUCKETS.clear()
+
+    async def test_stream_incomplete_body_aborts_before_eof(self):
+        from web import stream_routes
+        import stream_security
+
+        stream_routes._ACTIVE_STREAMS = 0
+        stream_routes._ACTIVE_BY_IP.clear()
+        fake_info = SimpleNamespace(
+            file_size=100, mime_type="video/mp4", file_name="v.mp4",
+            file_id_obj=SimpleNamespace(dc_id=1),
+        )
+
+        class _TruncatedYield:
+            async def yield_file(self, *args, **kwargs):
+                yield b"12345"  # only 5 of 100 bytes
+
+        app = web.Application()
+        app.add_routes(stream_routes.routes)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            q = stream_security.sign_params(55, 60)
+            with patch.object(stream_routes, "get_media_info", AsyncMock(return_value=fake_info)), \
+                    patch.object(stream_routes, "TGCustomYield", _TruncatedYield):
+                with self.assertRaises(Exception):
+                    resp = await client.get(f"/download/55?{q}")
+                    await resp.read()
+            self.assertEqual(stream_routes._ACTIVE_STREAMS, 0)
+            self.assertEqual(stream_routes._ACTIVE_BY_IP, {})
+        finally:
+            await client.close()
+
+

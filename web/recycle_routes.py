@@ -152,7 +152,7 @@ _JS = """<script>
   }
   function thumb(item){
     var u=String(item.thumb||''),inner;
-    if(/^(https?:\/\/|\/)/i.test(u))inner='<img src="'+esc(u)+'" alt="" loading="lazy" onerror="this.parentNode.textContent=&#39;🎬&#39;">';
+    if(new RegExp('^(https?://|/)','i').test(u))inner='<img src="'+esc(u)+'" alt="" loading="lazy" onerror="this.parentNode.textContent=&#39;🎬&#39;">';
     else inner='🎬';
     return '<div class="rb-thumb-wrap"><div class="rb-thumb">'+inner+'</div>'+
       '<button type="button" class="rb-thumb-trigger" data-menu aria-expanded="false" aria-label="Show restore and delete options for this file"></button></div>';

@@ -1,5 +1,6 @@
 import secrets
 import time
+from collections import deque
 from aiohttp import web
 from web.web_assets import build_page, form_wrapper, get_auth
 from utils import temp
@@ -8,6 +9,46 @@ from database.users_chats_db import web_db, get_local_now, OTPRateLimited  # <--
 login_routes = web.RouteTableDef()
 
 MIN_PASSWORD_LEN = 6
+_AUTH_BUCKETS = {}  # key -> deque[timestamps]
+
+
+def _client_ip(req):
+    fwd = req.headers.get("X-Forwarded-For", "")
+    if fwd:
+        first = fwd.split(",", 1)[0].strip()
+        if first:
+            return first
+    return req.remote or "unknown"
+
+
+def _prune_bucket(key, window):
+    now = time.time()
+    q = _AUTH_BUCKETS.get(key)
+    if q is None:
+        return None
+    while q and now - q[0] >= window:
+        q.popleft()
+    if not q:
+        _AUTH_BUCKETS.pop(key, None)
+        return None
+    return q
+
+
+def _is_throttled(key, limit, window):
+    q = _prune_bucket(key, window)
+    return bool(q and len(q) >= limit)
+
+
+def _record_hit(key, window):
+    if len(_AUTH_BUCKETS) > 4000 and key not in _AUTH_BUCKETS:
+        for k in list(_AUTH_BUCKETS):
+            _prune_bucket(k, window)
+        if len(_AUTH_BUCKETS) > 4000:
+            _AUTH_BUCKETS.clear()
+    q = _AUTH_BUCKETS.get(key)
+    if q is None:
+        q = _AUTH_BUCKETS[key] = deque()
+    q.append(time.time())
 
 
 def _is_https(req):
@@ -26,8 +67,15 @@ async def login_user(req):
 @login_routes.post('/api/login')
 async def api_login_user(req):
     d = await req.post()
+    ip = _client_ip(req)
+    email = str(d.get('email') or '').strip().lower()
+    if _is_throttled(f"login_ip:{ip}", 30, 300) or (email and _is_throttled(f"login:{ip}:{email}", 10, 300)):
+        return web.HTTPFound('/login?err=Too many login attempts. Please try again later.')
     user = await web_db.verify_login(d.get('email'), d.get('password'))
     if user:
+        if int(user['tg_id']) in temp.BANNED_USERS:
+            return web.HTTPFound('/login?err=This account is suspended.')
+        _AUTH_BUCKETS.pop(f"login:{ip}:{email}", None)
         # ✅ LOGIN TRACK ENGINE: डेटाबेस में यूजर का अंतिम लॉगिन टाइमस्टैम्प अभी का सेट करें
         await web_db.col.update_one(
             {"tg_id": user['tg_id']},
@@ -46,6 +94,9 @@ async def api_login_user(req):
         res.set_cookie('user_session', s, max_age=86400 * 7, path='/',
                        httponly=True, secure=_is_https(req), samesite='Lax')
         return res
+    _record_hit(f"login_ip:{ip}", 300)
+    if email:
+        _record_hit(f"login:{ip}:{email}", 300)
     return web.HTTPFound('/login?err=Invalid Email or Password')
 
 @login_routes.get('/register')
@@ -56,14 +107,23 @@ async def register_user(req):
 @login_routes.post('/api/register_step1')
 async def api_register_step1(req):
     d = await req.post()
-    try: tg_id = int(d.get('tg_id'))
-    except: return web.HTTPFound('/register?err=Invalid Telegram ID')
+    try:
+        tg_id = int(d.get('tg_id'))
+        if tg_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return web.HTTPFound('/register?err=Invalid Telegram ID')
+    ip = _client_ip(req)
+    if _is_throttled(f"reg_ip:{ip}", 10, 600) or _is_throttled(f"reg_tg:{tg_id}", 5, 600):
+        return web.HTTPFound('/register?err=Too many registration attempts. Please try again later.')
+    _record_hit(f"reg_ip:{ip}", 600)
+    _record_hit(f"reg_tg:{tg_id}", 600)
     email, password = d.get('email'), d.get('password')
     if not password or len(password) < MIN_PASSWORD_LEN:
         return web.HTTPFound(f'/register?err=Password must be at least {MIN_PASSWORD_LEN} characters')
     
     if await web_db.col.find_one({"$or": [{"tg_id": tg_id}, {"email": email}]}, {"_id": 1}): 
-        return web.HTTPFound('/register?err=Telegram ID or Email already registered!')
+        return web.HTTPFound('/register?err=Unable to register with these details. If you already have an account, please sign in or reset your password.')
         
     otp = str(secrets.randbelow(900000) + 100000)
     now = time.time()
@@ -99,8 +159,12 @@ async def verify_registration_page(req):
 @login_routes.post('/api/register_step2')
 async def api_register_step2(req):
     d = await req.post()
-    try: tg_id = int(d.get('tg_id'))
-    except: return web.HTTPFound('/register?err=Invalid Request')
+    try:
+        tg_id = int(d.get('tg_id'))
+        if tg_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return web.HTTPFound('/register?err=Invalid Request')
     otp = str(d.get('otp') or '').strip()
     if tg_id not in getattr(temp, 'REG_PENDING', {}): return web.HTTPFound('/register?err=Session expired. Try again.')
     pending = temp.REG_PENDING[tg_id]
@@ -130,8 +194,16 @@ async def forgot_password(req):
 
 @login_routes.post('/api/forgot_password')
 async def api_forgot_password(req):
-    try: tg_id = int((await req.post()).get('tg_id'))
-    except: return web.HTTPFound('/forgot_password?err=Invalid Telegram ID')
+    try:
+        tg_id = int((await req.post()).get('tg_id'))
+        if tg_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return web.HTTPFound('/forgot_password?err=Invalid Telegram ID')
+    ip = _client_ip(req)
+    if _is_throttled(f"fp_ip:{ip}", 10, 600):
+        return web.HTTPFound('/forgot_password?err=Too many OTP requests. Please try again later.')
+    _record_hit(f"fp_ip:{ip}", 600)
     try:
         otp = await web_db.generate_otp(tg_id)
     except OTPRateLimited:
@@ -139,15 +211,19 @@ async def api_forgot_password(req):
     if otp:
         try:
             await temp.BOT.send_message(tg_id, f"🔐 **Fast Finder Password Reset**\n\nYour Password Reset OTP is: `{otp}`\n\nValid for 10 minutes. Do not share!")
-            return web.HTTPFound('/forgot_password?msg=OTP sent to your Telegram!')
-        except: return web.HTTPFound('/forgot_password?err=Error sending OTP. Have you started the bot?')
-    return web.HTTPFound('/forgot_password?err=Telegram ID not registered!')
+        except Exception:
+            return web.HTTPFound('/forgot_password?err=Error sending OTP. Have you started the bot?')
+    return web.HTTPFound('/forgot_password?msg=If that Telegram ID is registered, an OTP has been sent to your Telegram.')
 
 @login_routes.post('/api/reset_password')
 async def api_reset_password(req):
     d = await req.post()
-    try: tg_id = int(d.get('tg_id'))
-    except: return web.HTTPFound('/forgot_password?err=Invalid Input')
+    try:
+        tg_id = int(d.get('tg_id'))
+        if tg_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return web.HTTPFound('/forgot_password?err=Invalid Input')
     new_password = d.get('new_password') or ''
     if len(new_password) < MIN_PASSWORD_LEN:
         return web.HTTPFound(f'/forgot_password?err=Password must be at least {MIN_PASSWORD_LEN} characters')

@@ -11,13 +11,19 @@ NOTE: secret badalne par saare purane links turant band ho jaate hain.
 import base64
 import hashlib
 import hmac
+import logging
 import time
 from os import environ
 
 from info import BOT_TOKEN
 
+_logger = logging.getLogger(__name__)
+_RAW_STREAM_SECRET = (environ.get("STREAM_SECRET") or "").strip()
+if not _RAW_STREAM_SECRET:
+    _logger.warning("⚠️ STREAM_SECRET is not set; deriving stream signing key from BOT_TOKEN (rotating BOT_TOKEN will invalidate existing links)")
+
 _SECRET = hashlib.sha256(
-    b"stream-link:" + (environ.get("STREAM_SECRET") or BOT_TOKEN).encode()
+    b"stream-link:" + (_RAW_STREAM_SECRET or BOT_TOKEN).encode()
 ).digest()
 
 # ── Link validity (seconds) ──────────────────────────────────────────
@@ -40,8 +46,11 @@ def sign_params(mid: int, ttl=STREAM_TTL) -> str:
 def verify(mid: int, exp, sig) -> bool:
     try:
         exp = int(exp)
+        sig_str = str(sig or "")
+        if not sig_str.isascii():
+            return False
     except (TypeError, ValueError):
         return False
     if exp < 0 or (exp and exp < time.time()):
         return False
-    return hmac.compare_digest(_sig(mid, exp), str(sig or ""))
+    return hmac.compare_digest(_sig(mid, exp), sig_str)

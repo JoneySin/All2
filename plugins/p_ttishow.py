@@ -6,7 +6,7 @@ import gc
 from pyrogram import Client, filters, enums
 from pyrogram.types import LinkPreviewOptions
 from info import ADMINS, LOG_CHANNEL, IS_PREMIUM
-from database.users_chats_db import db
+from database.users_chats_db import db, web_db
 
 # ✅ FIX: is_premium को अब plugins.premium की जगह utils से इम्पोर्ट किया गया है
 from utils import is_premium, temp, get_settings, is_rate_limited
@@ -110,20 +110,26 @@ async def ban_system(c, m):
         if tgt_id in ADMINS: return await m.reply("❌ Security Core Violation: Cannot ban a designated Bot Admin!")
         if 'unban' in cmd:
             await db.unban_user(tgt_id)
-            if tgt_id in temp.BANNED_USERS: temp.BANNED_USERS.remove(tgt_id)
+            temp.BANNED_USERS.discard(tgt_id)
             await m.reply(f"✅ User `<code>{tgt_id}</code>` Unbanned successfully.")
         else:
             await db.ban_user(tgt_id, rsn)
-            if tgt_id not in temp.BANNED_USERS: temp.BANNED_USERS.append(tgt_id)
+            temp.BANNED_USERS.add(tgt_id)
+            for k in [k for k, v in temp.USER_SESSIONS.items() if v.get('tg_id') == tgt_id]:
+                temp.USER_SESSIONS.pop(k, None)
+            try:
+                await web_db.delete_user_sessions(tgt_id)
+            except Exception:
+                pass
             await m.reply(f"✅ User `<code>{tgt_id}</code>` Banned from Global System.\nReason: <code>{rsn}</code>")
     else:
         if 'unban' in cmd:
             await db.re_enable_chat(tgt_id)
-            if tgt_id in temp.BANNED_CHATS: temp.BANNED_CHATS.remove(tgt_id)
+            temp.BANNED_CHATS.discard(tgt_id)
             await m.reply(f"✅ Group Chat `<code>{tgt_id}</code>` successfully re-enabled.")
         else:
             await db.disable_chat(tgt_id, rsn)
-            if tgt_id not in temp.BANNED_CHATS: temp.BANNED_CHATS.append(tgt_id)
+            temp.BANNED_CHATS.add(tgt_id)
             await m.reply(f"✅ Group Chat `<code>{tgt_id}</code>` Blacklisted & Disabled.\nReason: <code>{rsn}</code>")
             try: await c.leave_chat(tgt_id)
             except: pass

@@ -173,8 +173,19 @@ def parse_range(header, file_size):
 # Ek saath max kitne open stream connections (RAM bachane ke liye; har connection par
 # PREFETCH MB tak buffer rehta hai). Ye sirf connections gino hai — asli speed-control
 # custom_dl.py me STREAM_FETCH_CONCURRENCY se hota hai.
-MAX_CONNS = max(1, int(os.environ.get("STREAM_MAX_CONNS", "15")))
+MAX_CONNS = max(1, int(os.environ.get("STREAM_MAX_CONNS", "30")))
+MAX_CONNS_PER_IP = max(1, int(os.environ.get("STREAM_MAX_CONNS_PER_IP", "8")))
 _ACTIVE_STREAMS = 0
+_ACTIVE_BY_IP = {}
+
+
+def _client_ip(request):
+    fwd = request.headers.get("X-Forwarded-For", "")
+    if fwd:
+        first = fwd.split(",", 1)[0].strip()
+        if first:
+            return first
+    return request.remote or "unknown"
 
 
 
@@ -292,20 +303,26 @@ async def media_download(request, message_id: int):
         await resp.write_eof()
         return resp
 
-    if _ACTIVE_STREAMS >= MAX_CONNS:
+    client_ip = _client_ip(request)
+    if _ACTIVE_STREAMS >= MAX_CONNS or _ACTIVE_BY_IP.get(client_ip, 0) >= MAX_CONNS_PER_IP:
         return web.Response(status=503, text="Server busy, please retry in a few seconds",
                             headers={"Retry-After": "5"})
 
     # ── 2) STREAMING (backpressure ke saath; prefetch custom_dl.yield_file me hota hai) ──
     _ACTIVE_STREAMS += 1
+    _ACTIVE_BY_IP[client_ip] = _ACTIVE_BY_IP.get(client_ip, 0) + 1
     agen = None
+    sent_bytes = 0
     try:
         await resp.prepare(request)
         agen = TGCustomYield().yield_file(
             info.file_id_obj, offset, first_cut, last_cut, parts, ncs
         )
         async for chunk in agen:
+            sent_bytes += len(chunk)
             await resp.write(chunk)
+        if sent_bytes < req_len:
+            raise RuntimeError(f"Incomplete stream for {message_id}: sent {sent_bytes} of {req_len} bytes")
         await resp.write_eof()
     except ConnectionError:
         pass            # viewer ne tab band kar diya / seek kiya — normal hai
@@ -314,6 +331,11 @@ async def media_download(request, message_id: int):
         raise           # connection todo, taaki player ko adhoora data 'poora' na lage
     finally:
         _ACTIVE_STREAMS -= 1
+        rem_ip = _ACTIVE_BY_IP.get(client_ip, 1) - 1
+        if rem_ip > 0:
+            _ACTIVE_BY_IP[client_ip] = rem_ip
+        else:
+            _ACTIVE_BY_IP.pop(client_ip, None)
         if agen is not None:
             try:
                 await agen.aclose()      # pending prefetch tasks cancel

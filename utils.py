@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
 class temp(object):
     START_TIME = 0
-    BANNED_USERS, BANNED_CHATS = [], []
+    BANNED_USERS, BANNED_CHATS = set(), set()
     ME, BOT, U_NAME, B_NAME = None, None, None, None
     # Web thumbnails/streaming depend on the Kurigram client. Keep this flag
     # False until Telegram auth has actually completed.

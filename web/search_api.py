@@ -13,7 +13,7 @@ import asyncio
 import base64
 import logging
 import urllib.parse
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from functools import wraps
@@ -34,7 +34,7 @@ from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
 # ✅ DRY: fast_json भी अब web_assets से ही आता है (पहले search_api/actor_routes/
 # post_routes तीनों में इसकी अलग-अलग copy थी)।
-from web.web_assets import get_auth as web_get_auth, fast_json, DEFAULT_MEDIA_MODE
+from web.web_assets import get_auth as web_get_auth, fast_json, fast_json_response, DEFAULT_MEDIA_MODE
 from web.media_cards import MEDIA_CARD_JS
 from web.brand import BRAND_MARKUP, BRAND_CSS
 from web.player_assets import PLAYER_UI
@@ -117,12 +117,18 @@ async def _get_or_fetch_thumb(fid, col_name="primary", is_retry=False, version="
             return None if cached_val == "NO_THUMB" else cached_val
 
         async def _fetch():
-            target_collection = COLLECTIONS.get(col_name, COLLECTIONS["primary"])
+            if col_name not in FILE_COLLECTIONS:
+                thumb_cache[cache_key] = "NO_THUMB"
+                return None
+            target_collection = FILE_COLLECTIONS[col_name]
             existing = await target_collection.find_one(
                 {"_id": fid},
                 {"thumb_url": 1, "thumb_revision": 1, "is_thumb_permanent": 1,
                  "duration": 1, "meta": 1, "file_ref": 1, "file_size": 1, "file_name": 1}
             )
+            if not existing:
+                thumb_cache[cache_key] = "NO_THUMB"
+                return None
 
             if existing and existing.get("thumb_url", "").startswith("TG_ID:"):
                 saved_thumb_id = existing["thumb_url"].replace("TG_ID:", "")
@@ -356,11 +362,21 @@ async def bg_prefetch_worker(tg_id, q, col, mode, prefetch_offset, lim, group=Fa
 # ─────────────────────────────────────────────────────────
 # 🔒 STRICT SECURITY: Telegram initData HMAC Verification
 # ─────────────────────────────────────────────────────────
+INIT_DATA_MAX_AGE = max(60, int(os.environ.get("INIT_DATA_TTL", "86400")))
+
+
 def verify_telegram_init_data(init_data: str) -> dict | None:
     try:
         parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
         received_hash = parsed.pop("hash", None)
         if not received_hash:
+            return None
+        try:
+            auth_date = int(parsed.get("auth_date", 0))
+        except (TypeError, ValueError):
+            return None
+        now = time.time()
+        if auth_date <= 0 or (now - auth_date) > INIT_DATA_MAX_AGE or (auth_date - now) > 300:
             return None
         data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
         secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
@@ -378,6 +394,7 @@ def verify_telegram_init_data(init_data: str) -> dict | None:
 # rule अलग-अलग न हो जाए (पहले cookie-branch में IS_PREMIUM fallback मिसिंग था)।
 async def _resolve_role_for_tg(tg_id):
     if tg_id in ADMINS: return "admin"
+    if tg_id in temp.BANNED_USERS: return None
     # ℹ️ सुधार: पहले यहाँ लिखा था कि bot arg required है और is_premium(tg_id) क्रैश
     # करेगा — यह गलत था। utils.py में is_premium(user_id, bot=None) है, bot optional
     # है, इसलिए 1-arg कॉल पहले भी सुरक्षित था। premium.py में एक अलग (dead/unused)
@@ -1792,10 +1809,10 @@ async def api_search(req):
         try:
             file_offset = max(0, int(off))
             docs, nxt = await _ordered_file_page(q, col, file_offset, MAX_WEB_RESULTS)
-            return web.json_response({'results': _build_results_list(docs, mode),
-                                      'total': file_offset + len(docs) + (1 if nxt else 0),
-                                      'next_offset': nxt, 'is_admin': role == 'admin',
-                                      'is_recent': not bool(q)}, dumps=fast_json)
+            return fast_json_response({'results': _build_results_list(docs, mode),
+                                       'total': file_offset + len(docs) + (1 if nxt else 0),
+                                       'next_offset': nxt, 'is_admin': role == 'admin',
+                                       'is_recent': not bool(q)})
         except ValueError:
             return web.json_response({'error': 'Invalid file offset. Start the search again.'}, status=400, dumps=fast_json)
         except Exception as exc:
@@ -1815,10 +1832,10 @@ async def api_search(req):
         except Exception as exc:
             logger.warning(f"group search failed: {exc}")
             return web.json_response({"error": "Search is temporarily unavailable."}, status=503, dumps=fast_json)
-        return web.json_response({
+        return fast_json_response({
             "results": cards, "total": len(cards) + (1 if nxt else 0), "next_offset": nxt,
             "is_admin": role == "admin", "is_recent": not bool(q),
-        }, dumps=fast_json)
+        })
 
     try:
         off = max(0, int(off))
@@ -1832,13 +1849,13 @@ async def api_search(req):
         recent_docs, recent_next_offset = await _fetch_page("", col, off, lim, want_group, gf)
         results_list = _build_results_list(recent_docs, mode)
         has_more = bool(recent_next_offset)
-        return web.json_response({
+        return fast_json_response({
             "results": await _finalize(results_list, want_group, gf, mode),
             "total": off + len(results_list) + (1 if has_more else 0),
             "next_offset": recent_next_offset,
             "is_admin": role == "admin",
             "is_recent": True,
-        }, dumps=fast_json)
+        })
 
     cache_epoch = _SEARCH_CACHE_EPOCH
     trend_key = f"{col}_{mode}_{q.lower()}_{gflag}"
@@ -1882,12 +1899,40 @@ async def api_search(req):
             "expiry": time.time() + TRENDING_CACHE_TTL
         }
 
-    return web.json_response({
+    return fast_json_response({
         "results": await _finalize(results_list, want_group, gf, mode),
         "total": off + len(results_list) + (1 if has_more else 0),
         "next_offset": next_offset,
         "is_admin": role == "admin",
-    }, dumps=fast_json)
+    })
+
+
+_THUMB_RATE_WINDOW = 10.0
+_THUMB_RATE_LIMIT = 150
+_THUMB_RATE_HITS = {}
+
+
+def _thumb_rate_limited(req) -> bool:
+    fwd = req.headers.get("X-Forwarded-For", "")
+    ip = fwd.split(",", 1)[0].strip() if fwd else ""
+    ip = ip or req.remote or "unknown"
+    now = time.time()
+    if len(_THUMB_RATE_HITS) > 4000 and ip not in _THUMB_RATE_HITS:
+        for k in list(_THUMB_RATE_HITS):
+            dq = _THUMB_RATE_HITS[k]
+            while dq and now - dq[0] >= _THUMB_RATE_WINDOW:
+                dq.popleft()
+            if not dq:
+                _THUMB_RATE_HITS.pop(k, None)
+    dq = _THUMB_RATE_HITS.get(ip)
+    if dq is None:
+        dq = _THUMB_RATE_HITS[ip] = deque()
+    while dq and now - dq[0] >= _THUMB_RATE_WINDOW:
+        dq.popleft()
+    if len(dq) >= _THUMB_RATE_LIMIT:
+        return True
+    dq.append(now)
+    return False
 
 
 # ─────────────────────────────────────────────────────────
@@ -1900,6 +1945,8 @@ async def get_telegram_thumb(req):
     is_retry = req.query.get("retry", "false").lower() == "true"
     if not fid:
         return web.Response(status=400)
+    if _thumb_rate_limited(req):
+        return web.Response(status=429, headers={"Retry-After": "5", "Cache-Control": "no-store"})
     if await _wait_for_telegram(2.0) is None:
         # The web port is intentionally up before Telegram login (Koyeb health),
         # so thumbnail requests can arrive while the client is still connecting.
@@ -2163,7 +2210,9 @@ async def setup_stream(req):
     try:
         return web.HTTPFound(await _tunnel_stream(fid, mode))
     except Exception as e:
-        return web.Response(text=f"❌ Error Tunneling Stream: {e}", status=500)
+        logger.warning(f"setup_stream failed for {fid}: {e}")
+        msg = str(e) if "still connecting" in str(e).lower() else "Could not prepare stream. Please try again."
+        return web.Response(text=f"❌ {msg}", status=500)
 
 
 @search_routes.post("/setup_stream")
@@ -2183,7 +2232,9 @@ async def setup_stream_post(req):
     try:
         return web.json_response({"url": await _tunnel_stream(fid, mode)}, dumps=fast_json)
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
+        logger.warning(f"setup_stream_post failed for {fid}: {e}")
+        msg = str(e) if "still connecting" in str(e).lower() else "Could not prepare stream. Please try again."
+        return web.json_response({"error": msg}, status=500, dumps=fast_json)
 
 
 # ─────────────────────────────────────────────────────────

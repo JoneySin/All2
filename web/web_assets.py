@@ -18,6 +18,15 @@ def fast_json(data):
     """orjson बाइट्स (bytes) में डेटा देता है, aiohttp के लिए इसे स्ट्रिंग में डिकोड करना होता है"""
     return orjson.dumps(data).decode('utf-8')
 
+
+def fast_json_response(data, status=200, headers=None):
+    """Return an orjson Response with automatic compression for payloads >= 1 KB."""
+    body = orjson.dumps(data)
+    res = web.Response(body=body, status=status, content_type="application/json", headers=headers)
+    if len(body) >= 1024:
+        res.enable_compression()
+    return res
+
 # ─────────────────────────────────────────────
 # 🎛️ One default for every text/poster view; API adapters use legacy values.
 DEFAULT_VIEW_MODE = "text"  # "text" or "poster"
@@ -708,8 +717,9 @@ async def get_auth(req):
         except Exception:
             session = None
     if session and session['expiry'] > time.time():
-        tg_id = session['tg_id']
+        tg_id = int(session['tg_id'])
         if tg_id in ADMINS: return 'admin', tg_id
+        if tg_id in temp.BANNED_USERS: return None, None
         return 'user', tg_id
     return None, None
 
