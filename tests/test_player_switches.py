@@ -230,30 +230,36 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("inline-player-chip-top", PLAYER_UI)
         video = PLAYER_UI.index('<video id="inlinePlayerVideo"')
         self.assertGreater(PLAYER_UI.index('id="inlinePlayerSwitcher"'), video)
+        self.assertIn("inlinePlayerInitWatch", PLAYER_UI)
+        self.assertIn("/api/watch/switch", PLAYER_UI)
+
         with open(MINI_APP, encoding="utf-8") as handle:
             mini = handle.read()
-        self.assertIn('id="psSwitch"', mini)
-        self.assertIn('/api/file/switches?file_id=', mini)
-        self.assertIn("miniSwitchFile", mini)
-        self.assertIn("miniPickEpisode", mini)
-        self.assertIn("miniQualityItem", mini)
-        self.assertIn("miniItemMeta", mini)
-        self.assertGreater(mini.index('id="psSwitch"'), mini.index('<div class="ppl"'))
-        self.assertIn("openStream(f.file_id,f.name)", mini)
-        self.assertIn("Episodes & qualities", mini)
-        self.assertIn("pab-row", mini)
-        self.assertIn("pswc-top", mini)
+        self.assertIn("__PLAYER_UI__", mini)
+        self.assertIn("openInlinePlayer(f.file_id,f.name)", mini)
         self.assertNotIn("plyr", mini.lower())
-        self.assertIn('<video id="pv2" controls playsinline preload="metadata">', mini)
-        from web.utils.render_template import watch_tmplt
-        self.assertIn("inline-player-card", watch_tmplt)
-        self.assertIn("inline-player-head", watch_tmplt)
-        self.assertIn("inline-player-switcher", watch_tmplt)
-        self.assertIn("Episodes & qualities", watch_tmplt)
-        self.assertIn("/api/watch/switch", watch_tmplt)
-        self.assertIn('<video id="player" controls playsinline preload="metadata">', watch_tmplt)
-        self.assertNotIn("plyr", watch_tmplt.lower())
-        self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", watch_tmplt)
+
+        mini_res = await self.client.get("/miniapp")
+        self.assertEqual(mini_res.status, 200)
+        mini_html = await mini_res.text()
+        self.assertIn('id="inlinePlayer"', mini_html)
+        self.assertIn('id="inlinePlayerSwitcher"', mini_html)
+        self.assertIn("Episodes & qualities", mini_html)
+        self.assertIn('<video id="inlinePlayerVideo" controls playsinline preload="metadata">', mini_html)
+        self.assertNotIn("plyr", mini_html.lower())
+
+        from types import SimpleNamespace
+        from web.utils import render_template
+        with patch.object(render_template, "get_media_info", AsyncMock(return_value=SimpleNamespace(mime_type="video/mp4", file_name="Test.mp4"))):
+            watch_html = await render_template.media_watch(123, "e=1&s=abc")
+        self.assertIn("inline-player-card watch-card", watch_html)
+        self.assertIn("inline-player-head watch-head", watch_html)
+        self.assertIn('id="inlinePlayerSwitcher"', watch_html)
+        self.assertIn("Episodes & qualities", watch_html)
+        self.assertIn("/api/watch/switch", watch_html)
+        self.assertIn('<video id="inlinePlayerVideo" controls playsinline preload="metadata">', watch_html)
+        self.assertNotIn("plyr", watch_html.lower())
+        self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", watch_html)
 
     async def test_watch_page_embeds_and_switches_group_versions(self):
         from types import SimpleNamespace

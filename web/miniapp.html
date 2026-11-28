@@ -8,8 +8,8 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;900&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#0a0a0c;--bg2:#111116;--bg3:#1d1d26;--bg4:#2a2a38;--card:#14141f;--ac:#e50914;--txt:#fff;--mu:#a0a0b0;--br:#262636}
-body.light{--bg:#f4f5f7;--bg2:#ffffff;--bg3:#eef0f4;--bg4:#dbdee6;--card:#ffffff;--txt:#0a0a0c;--mu:#62627a;--br:#d2d5df}
+:root{--bg:#0a0a0c;--bg2:#111116;--bg3:#1d1d26;--bg4:#2a2a38;--card:#14141f;--ac:#e50914;--txt:#fff;--mu:#a0a0b0;--br:#262636;--accent:#e50914;--text:#fff;--muted:#a0a0b0;--border:#262636}
+body.light{--bg:#f4f5f7;--bg2:#ffffff;--bg3:#eef0f4;--bg4:#dbdee6;--card:#ffffff;--txt:#0a0a0c;--mu:#62627a;--br:#d2d5df;--text:#0a0a0c;--muted:#62627a;--border:#d2d5df}
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;overflow-x:hidden;padding-bottom:40px;-webkit-user-select:none;user-select:none}
 
 /* topbar */
@@ -137,56 +137,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt);min-
 .ce.cv{animation:cardEnter .6s cubic-bezier(.34,1.2,.64,1) forwards}
 
 /* toast */
-.toast{position:fixed;bottom:68px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--ac);color:#fff;padding:10px 22px;border-radius:30px;font-weight:700;font-size:13px;transition:.3s;z-index:1000;white-space:nowrap;box-shadow:0 4px 15px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.1);pointer-events:none}
+.toast{position:fixed;bottom:68px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--ac);color:#fff;padding:10px 22px;border-radius:30px;font-weight:700;font-size:13px;transition:.3s;z-index:100001;white-space:nowrap;box-shadow:0 4px 15px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.1);pointer-events:none}
 .toast.show{transform:translateX(-50%) translateY(0)}
-
-/* unified player modal */
-.ps{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:12px;pointer-events:none;opacity:0;transition:opacity .22s}
-.ps.open{pointer-events:all;opacity:1}
-.pbd{position:absolute;inset:0;background:rgba(0,0,0,.78);backdrop-filter:blur(10px)}
-.pby{position:relative;width:min(100%,690px);max-height:calc(100dvh - 24px);overflow:auto;background:var(--card);border:1px solid var(--br);border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.62);transform:scale(.97);transition:transform .22s ease;display:flex;flex-direction:column}
-body.light .pby{box-shadow:0 24px 70px rgba(15,23,42,.22)}
-.ps.open .pby{transform:scale(1)}
-.phead{display:flex;align-items:center;gap:12px;padding:13px 15px;background:linear-gradient(125deg,rgba(229,9,20,.1),transparent 55%),var(--card);border-bottom:1px solid var(--br);flex-shrink:0}
-.pmark{display:grid;place-items:center;width:38px;height:38px;flex:none;color:#fff;background:linear-gradient(135deg,var(--ac),#b20710);border-radius:10px;font-size:16px;box-shadow:0 4px 12px rgba(229,9,20,.32)}
-.ptlbox{flex:1;min-width:0}
-.pkick{color:var(--ac);font-size:10px;letter-spacing:1.1px;text-transform:uppercase;font-weight:900}
-.ptl{color:var(--txt);font-size:14px;font-weight:800;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
-.px{display:grid;place-items:center;width:36px;height:36px;flex:none;border:1px solid var(--br);border-radius:10px;color:var(--txt);background:var(--bg3);font-size:20px;line-height:1;cursor:pointer;transition:border-color .16s,color .16s}
-.px:hover{border-color:var(--ac);color:var(--ac)}
-.ppl{width:100%;background:#000;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.ppl video{width:100%;height:100%;max-height:56vh;object-fit:contain;display:block;background:#000}
-.psw{padding:14px 15px 13px;background:var(--card);border-top:1px solid var(--br);display:flex;flex-direction:column;gap:12px;flex-shrink:0}
-.psw[hidden]{display:none}
-.pswb{display:flex;align-items:center;gap:11px}
-.pswi{display:grid;place-items:center;width:38px;height:38px;flex:none;border-radius:11px;background:rgba(229,9,20,.14);color:#ff6b74}
-body.light .pswi{background:rgba(229,9,20,.1);color:var(--ac)}
-.pswt{min-width:0;flex:1}
-.pswt1{color:var(--txt);font-size:15px;font-weight:900;line-height:1.25}
-.pswt2{color:var(--mu);font-size:12px;font-weight:500;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pswg{display:flex;flex-direction:column;gap:8px}
-.pswh{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--mu);font-size:10px;letter-spacing:1.1px;text-transform:uppercase;font-weight:900}
-.pswh span:last-child{letter-spacing:0;text-transform:none;font-size:11px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pswr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;max-height:240px;overflow-y:auto;padding:2px 1px;scrollbar-width:thin}
-.pswr.episodes-row{grid-template-columns:repeat(auto-fill,minmax(94px,1fr));max-height:152px}
-.pswc{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:4px;min-width:0;border:1.5px solid var(--br);background:var(--bg3);color:var(--txt);padding:11px 12px;border-radius:12px;font-size:13.5px;font-weight:800;font-family:inherit;line-height:1.25;cursor:pointer;text-align:left;transition:border-color .16s,background .16s,box-shadow .16s}
-.pswc:hover:not([aria-current="true"]){border-color:var(--ac);background:var(--bg2)}
-.pswc-top{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%}
-.pswc-lbl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:900;color:var(--txt)}
-.pswc-st{display:none;font-size:9.5px;font-weight:900;letter-spacing:.5px;text-transform:uppercase;color:#ff6b74;flex-shrink:0}
-body.light .pswc-st{color:#b91c1c}
-.pswc[aria-current="true"]{background:linear-gradient(135deg,rgba(229,9,20,.26),rgba(229,9,20,.1));border-color:var(--ac);box-shadow:inset 3px 0 0 var(--ac);cursor:default}
-body.light .pswc[aria-current="true"]{background:linear-gradient(135deg,rgba(229,9,20,.14),rgba(229,9,20,.04));box-shadow:inset 3px 0 0 var(--ac)}
-.pswc[aria-current="true"] .pswc-st{display:inline-block}
-.pswc-name{width:100%;font-size:11.5px;font-weight:500;color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pswc-meta{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.pswn{color:var(--mu);font-size:10px}
-.pa{display:flex;flex-direction:column;gap:9px;padding:12px 15px 14px;background:var(--card);border-top:1px solid var(--br);flex-shrink:0}
-.pab-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;width:100%}
-.pab{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:0;color:var(--txt);text-decoration:none;border:1px solid var(--br);background:var(--bg3);padding:10px 8px;border-radius:10px;font:inherit;font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap;transition:border-color .16s,color .16s,background .16s}
-.pab:hover{border-color:var(--ac);color:var(--ac);background:var(--bg2)}
-.pnote{color:var(--mu);font-size:11px;line-height:1.4;text-align:center}
-@media(max-width:340px){.pswr,.pab-row{grid-template-columns:1fr}}
 __BRAND_CSS__
 </style>
 </head>
@@ -235,30 +187,7 @@ __BRAND_CSS__
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-<!-- PLAYER SHEET -->
-<div class="ps" id="playerSheet">
-  <div class="pbd" id="pbd"></div>
-  <div class="pby">
-    <div class="phead">
-      <span class="pmark" aria-hidden="true">&#9654;</span>
-      <div class="ptlbox"><div class="pkick">Now playing</div><div class="ptl" id="ptl"></div></div>
-      <button type="button" class="px" aria-label="Close player" onclick="closePlayer()">&times;</button>
-    </div>
-    <div class="ppl" id="ppl"><video id="pv2" controls playsinline preload="metadata"></video></div>
-    <div class="psw" id="psSwitch" aria-label="Other versions in this group" hidden></div>
-    <div class="pa">
-      <div class="pab-row">
-        <a id="dlBtn" href="#" class="pab dl">&#8595; Download</a>
-        <button type="button" id="cpBtn" onclick="copyLink()" class="pab cp">&#128279; Copy link</button>
-        <button type="button" onclick="closePlayer()" class="pab">Close</button>
-      </div>
-      <span class="pnote">Playback depends on your browser's supported formats.</span>
-    </div>
-  </div>
-</div>
-<div id="cpToast" style="position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(200px);background:var(--ac);color:#fff;padding:10px 22px;border-radius:30px;font-weight:700;font-size:13px;transition:.3s;z-index:10000;white-space:nowrap;pointer-events:none;opacity:0">Link Copied!</div>
-
-
+__PLAYER_UI__
 
 <script>
 __MEDIA_CARD_JS__
@@ -268,12 +197,13 @@ if(tg.colorScheme==='light')document.body.classList.add('light');
 if(typeof tg.onEvent==='function')tg.onEvent('themeChanged',()=>document.body.classList.toggle('light',tg.colorScheme==='light'));
 const ID=tg.initData||'';
 const H={'X-Telegram-Init-Data':ID};
+window.INLINE_PLAYER_HEADERS=H;
 
 // state
 let curOff=0,nextOff='',curCol='all',curPage=1;
 let searchReqId=0;
 let pMode=MediaView.media('__DEFAULT_MEDIA_MODE__'); /* 🎛️ default injected from web_assets.DEFAULT_MEDIA_MODE */
-let streamUrl='',playerReq=0,playerAbort=null,miniMediaFiles={},miniCopyTimer=null;
+let miniMediaFiles={};
 
 
 // init mode
@@ -425,212 +355,9 @@ async function doSearch(off,allowEmpty){
   }catch(e){if(myReq===searchReqId){qWrap.classList.remove('loading');showErr('generic','Connection fail. Dobara try karo.');}}
 }
 
-// Playback uses the same shared card data without embedding filenames in handlers.
-function miniPlayFile(card){let f=miniMediaFiles[card.dataset.fid];if(f)openStream(f.file_id,f.name);}
-
-// player
-// player
-let miniCurrentFileId='',miniSwitchData=null,miniSwitchEpisode='';
-async function openStream(id,name){
-  let request=++playerReq;if(playerAbort)playerAbort.abort();playerAbort=new AbortController();
-  toast('⏳ Loading...');
-  try{
-    let prepared=await miniStream(id);
-    if(request!==playerReq)return;
-    miniCurrentFileId=id;miniSwitchData=null;miniSwitchEpisode='';
-    openSheet(prepared.src,name||id,prepared.download);
-    loadMiniSwitches(id);
-  }catch(e){if(e.name!=='AbortError'&&request===playerReq)toast('❌ '+(e.message||'Connection fail'));}
-}
-async function miniStream(id){
-  let r=await fetch('/setup_stream',{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({file_id:id,mode:'inline'}),signal:playerAbort.signal});
-  let d=await r.json().catch(()=>({}));
-  if(r.status===403)throw new Error('🔒 Access denied');
-  if(!r.ok||d.error)throw new Error(d.error||'Server error');
-  let url=new URL(d.url,location.origin);
-  if(url.origin!==location.origin||!/^\/download\/\d+$/.test(url.pathname))throw new Error('Invalid stream URL');
-  let dl=new URL(url);dl.searchParams.delete('inline');
-  return {src:url.href,download:dl.href};
-}
-function miniBanner(subtitle){
-  let wrap=document.createElement('div');wrap.className='pswb';
-  let ico=document.createElement('span');ico.className='pswi';ico.setAttribute('aria-hidden','true');
-  ico.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="17" y2="13"/><line x1="7" y1="17" x2="13" y2="17"/></svg>';
-  let copy=document.createElement('div');copy.className='pswt';
-  let t1=document.createElement('div');t1.className='pswt1';t1.textContent='Episodes & qualities';
-  let t2=document.createElement('div');t2.className='pswt2';t2.textContent=subtitle||'Choose a version to play';
-  copy.append(t1,t2);wrap.append(ico,copy);return wrap;
-}
-function miniHead(label,detail){
-  let head=document.createElement('div');head.className='pswh';
-  let left=document.createElement('span');left.textContent=label;
-  let right=document.createElement('span');right.textContent=detail||'';
-  head.append(left,right);return head;
-}
-function miniRow(label,extra){
-  let row=document.createElement('div');row.className='pswr'+(extra?' '+extra:'');row.setAttribute('role','group');row.setAttribute('aria-label',label);return row;
-}
-function miniItemMeta(item){
-  let parts=[];if(item.duration)parts.push(item.duration);if(item.size)parts.push(item.size);return parts.join(' · ');
-}
-function miniChip(row,label,meta,current,title,onClick,showName){
-  let chip=document.createElement('button');chip.type='button';chip.className='pswc';
-  let top=document.createElement('div');top.className='pswc-top';
-  let text=document.createElement('span');text.className='pswc-lbl';text.textContent=label||'Version';
-  let st=document.createElement('span');st.className='pswc-st';st.textContent='SELECTED';
-  top.append(text,st);chip.append(top);
-  if(showName&&title){let sub=document.createElement('div');sub.className='pswc-name';sub.textContent=title;chip.append(sub);}
-  if(meta){let small=document.createElement('div');small.className='pswc-meta';small.textContent='⏱ '+meta;chip.append(small);}
-  chip.title=title||'';
-  if(current)chip.setAttribute('aria-current','true');
-  else if(onClick)chip.addEventListener('click',onClick);
-  row.append(chip);return chip;
-}
-function miniQualityItem(episode,preferredLabel){
-  let items=(episode&&episode.items)||[];if(!items.length)return null;
-  if(preferredLabel){for(let i=0;i<items.length;i++){if(items[i].label===preferredLabel)return items[i];}}
-  return items[items.length-1];
-}
-function miniQualityLabelForFile(id,data){
-  let episodes=(data&&data.episodes)||[];
-  for(let i=0;i<episodes.length;i++){let items=episodes[i].items||[];
-    for(let j=0;j<items.length;j++){if(items[j].file_id===id)return items[j].label||'';}}
-  return '';
-}
-function miniPaintSwitches(){
-  let box=Q1('#psSwitch');if(!box)return;
-  box.innerHTML='';let data=miniSwitchData;
-  if(!data||!data.group){box.hidden=true;return;}
-  let group=data.group;
-  if(group.type==='series'&&data.episodes&&data.episodes.length){
-    let episodes=data.episodes,current=null,i;
-    if(!miniSwitchEpisode)miniSwitchEpisode=data.current_episode||episodes[0].key;
-    for(i=0;i<episodes.length;i++){if(episodes[i].key===miniSwitchEpisode){current=episodes[i];break;}}
-    if(!current){current=episodes[0];miniSwitchEpisode=current.key;}
-    box.append(miniBanner(group.name?'Choose a version · '+group.name:'Choose a version to play'));
-    let epSec=document.createElement('div');epSec.className='pswg';
-    epSec.append(miniHead('Episodes',episodes.length+(group.truncated?' of '+group.episode_count:'')+' episodes'));
-    let episodeRow=miniRow('Episodes','episodes-row');
-    for(i=0;i<episodes.length;i++){
-      let episode=episodes[i],key=episode.key;
-      miniChip(episodeRow,episode.label,'',key===miniSwitchEpisode,episode.label,function(){miniPickEpisode(key);},false);
-    }
-    epSec.append(episodeRow);box.append(epSec);
-    let qSec=document.createElement('div');qSec.className='pswg';
-    qSec.append(miniHead('Quality',current.label||''));
-    let qualityRow=miniRow('Quality versions of this episode'),items=current.items||[];
-    for(i=0;i<items.length;i++){
-      let item=items[i];
-      miniChip(qualityRow,item.label,miniItemMeta(item),item.file_id===miniCurrentFileId,item.name,function(){miniSwitchFile(item.file_id,item.name,false);},true);
-    }
-    qSec.append(qualityRow);box.append(qSec);
-    if(group.truncated){let note=document.createElement('div');note.className='pswn';note.textContent='Only the first '+episodes.length+' episodes are listed here.';box.append(note);}
-  }else{
-    let items=data.items||[];
-    if(items.length<2){box.hidden=true;return;}
-    box.append(miniBanner(group.name?'Choose a version · '+group.name:'Choose a version to play'));
-    let qOnly=document.createElement('div');qOnly.className='pswg';
-    let row=miniRow('Quality versions');
-    for(let i=0;i<items.length;i++){
-      let item=items[i];
-      miniChip(row,item.label,miniItemMeta(item),item.file_id===miniCurrentFileId,item.name,function(){miniSwitchFile(item.file_id,item.name,false);},true);
-    }
-    qOnly.append(row);box.append(qOnly);
-    if(group.truncated){let note=document.createElement('div');note.className='pswn';note.textContent='Only the first '+items.length+' files are listed here.';box.append(note);}
-  }
-  box.hidden=false;
-}
-function miniRenderSwitches(data){
-  miniSwitchData=data&&data.group?data:null;
-  miniSwitchEpisode=miniSwitchData?String(miniSwitchData.current_episode||''):'';
-  miniPaintSwitches();
-}
-async function loadMiniSwitches(id){
-  let box=Q1('#psSwitch');if(box){box.hidden=true;box.innerHTML='';}
-  miniSwitchData=null;let request=playerReq;
-  try{
-    let r=await fetch('/api/file/switches?file_id='+encodeURIComponent(id),{cache:'no-store',signal:playerAbort.signal});
-    if(!r.ok)return;
-    let d=await r.json().catch(()=>null);
-    if(request!==playerReq||miniCurrentFileId!==id)return;
-    miniRenderSwitches(d);
-  }catch(e){}
-}
-async function miniPickEpisode(key){
-  let data=miniSwitchData,episodes=(data&&data.episodes)||[],target=null,previous=miniSwitchEpisode;
-  for(let i=0;i<episodes.length;i++){if(episodes[i].key===key){target=episodes[i];break;}}
-  if(!target||key===previous)return;
-  let item=miniQualityItem(target,miniQualityLabelForFile(miniCurrentFileId,data));
-  if(!item)return;
-  miniSwitchEpisode=key;miniPaintSwitches();
-  let switched=await miniSwitchFile(item.file_id,item.name,true);
-  if(!switched&&miniSwitchEpisode===key){miniSwitchEpisode=previous;miniPaintSwitches();}
-}
-async function miniSwitchFile(id,name,reset){
-  if(!id)return false;
-  if(id===miniCurrentFileId)return true;
-  let video=Q1('#pv2'),resume=reset?0:(video&&isFinite(video.currentTime)?video.currentTime:0);
-  let request=++playerReq;if(playerAbort)playerAbort.abort();playerAbort=new AbortController();
-  toast(reset?'⏳ Loading episode...':'⏳ Switching...');
-  try{
-    let prepared=await miniStream(id);
-    if(request!==playerReq)return false;
-    miniCurrentFileId=id;
-    openSheet(prepared.src,name||id,prepared.download,resume);
-    miniPaintSwitches();
-    return true;
-  }catch(e){
-    if(e.name!=='AbortError'&&request===playerReq)toast('❌ '+(e.message||'Connection fail'));
-    return false;
-  }
-}
-function openSheet(url,title,downloadUrl,resume){
-  streamUrl=downloadUrl||url;
-  Q1('#ptl').textContent=title;
-  Q1('#dlBtn').href=downloadUrl||url;
-  let cp=Q1('#cpBtn');if(cp)cp.textContent='🔗 Copy link';
-  let video=Q1('#pv2');
-  if(!video){
-    Q1('#ppl').innerHTML='<video id="pv2" controls playsinline preload="metadata"></video>';
-    video=Q1('#pv2');
-  }
-  video.pause();
-  if(resume>0.5)video.addEventListener('loadedmetadata',function(){if(isFinite(video.duration)&&video.duration>0)video.currentTime=Math.min(resume,Math.max(0,video.duration-1));},{once:true});
-  video.src=url;
-  video.load();
-  Q1('#playerSheet').classList.add('open');
-  document.body.style.overflow='hidden';
-  let play=video.play();if(play&&play.catch)play.catch(()=>{});
-}
-function closePlayer(){
-  ++playerReq;if(playerAbort){playerAbort.abort();playerAbort=null;}
-  Q1('#playerSheet').classList.remove('open');
-  document.body.style.overflow='';
-  let video=Q1('#pv2');if(video){video.pause();video.removeAttribute('src');video.load();}
-  miniCurrentFileId='';miniSwitchData=null;miniSwitchEpisode='';
-  let box=Q1('#psSwitch');if(box){box.hidden=true;box.innerHTML='';}
-}
-Q1('#pbd').addEventListener('click',function(e){if(e.target===this)closePlayer();});
-function copyLink(){
-  let url=streamUrl?new URL(streamUrl,window.location.origin).href:'';
-  if(!url)return;
-  function done(){
-    let cp=Q1('#cpBtn');if(cp)cp.textContent='✓ Copied!';
-    clearTimeout(miniCopyTimer);
-    miniCopyTimer=setTimeout(()=>{if(cp&&cp.isConnected)cp.textContent='🔗 Copy link';},1800);
-    let t=Q1('#cpToast');t.style.opacity='1';t.style.transform='translateX(-50%) translateY(0)';
-    setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(-50%) translateY(200px)';},2500);
-  }
-  if(navigator.clipboard&&navigator.clipboard.writeText){
-    navigator.clipboard.writeText(url).then(done).catch(()=>{fallback();});
-  }else{fallback();}
-  function fallback(){
-    let ta=document.createElement('textarea');ta.value=url;ta.style.position='fixed';ta.style.opacity='0';
-    document.body.appendChild(ta);ta.select();
-    try{document.execCommand('copy');done();}catch(_){}
-    document.body.removeChild(ta);
-  }
-}
+// Playback uses the shared unified player from web/player_assets.py.
+window.showToast=toast;
+function miniPlayFile(card){let f=miniMediaFiles[card.dataset.fid];if(f)openInlinePlayer(f.file_id,f.name);}
 
 function next(){if(nextOff){curPage++;doSearch(nextOff);}}
 function prev(){if(curPage>1){curPage--;doSearch(Math.max(0,curOff-21));}}

@@ -11,10 +11,10 @@ const assert=require('node:assert/strict');
  // Record a tiny, local browser-generated video; no Telegram or remote media involved.
  async function videoUrl(){return page.evaluate(async()=>{const c=document.createElement('canvas');c.width=160;c.height=90;const ctx=c.getContext('2d');ctx.fillStyle='red';ctx.fillRect(0,0,160,90);const stream=c.captureStream(10);const chunks=[];const rec=new MediaRecorder(stream,{mimeType:'video/webm'});rec.ondataavailable=e=>chunks.push(e.data);rec.start();let n=0;const tick=setInterval(()=>{ctx.fillStyle=(n++%2?'red':'blue');ctx.fillRect(0,0,160,90);},50);await new Promise(r=>setTimeout(r,1000));clearInterval(tick);await new Promise(r=>{rec.onstop=r;rec.stop();});stream.getTracks().forEach(t=>t.stop());return URL.createObjectURL(new Blob(chunks,{type:'video/webm'}));});}
  async function confirmPlaying(selector){await page.evaluate(async sel=>{const v=document.querySelector(sel);v.muted=true;v.loop=true;await v.play();},selector);await page.waitForFunction(sel=>{const v=document.querySelector(sel);return v&&!v.paused&&v.readyState>=2;},selector);}
- await page.goto(base+'/fixture/watch',{waitUntil:'domcontentloaded'});await page.waitForSelector('#player[controls]');
- const watchUrl=await videoUrl();await page.evaluate(url=>{const v=document.querySelector('#player');v.src=url;v.load();},watchUrl);await confirmPlaying('#player');
+ await page.goto(base+'/fixture/watch',{waitUntil:'domcontentloaded'});await page.waitForSelector('#inlinePlayerVideo[controls]');
+ const watchUrl=await videoUrl();await page.evaluate(url=>{const v=document.querySelector('#inlinePlayerVideo');v.src=url;v.load();},watchUrl);await confirmPlaying('#inlinePlayerVideo');
  await page.goto(base+'/miniapp',{waitUntil:'domcontentloaded'});
- const miniUrl=await videoUrl();await page.evaluate(url=>openSheet(url,'Test',url),miniUrl);await page.waitForSelector('#playerSheet #pv2[controls]');await confirmPlaying('#pv2');
- await page.evaluate(()=>closePlayer());assert.equal(await page.locator('#playerSheet').evaluate(e=>e.classList.contains('open')),false);
+ const miniUrl=await videoUrl();await page.evaluate(url=>{const m=document.querySelector('#inlinePlayer'),v=document.querySelector('#inlinePlayerVideo');m.hidden=false;v.src=url;v.load();},miniUrl);await page.waitForSelector('#inlinePlayer #inlinePlayerVideo[controls]');await confirmPlaying('#inlinePlayerVideo');
+ await page.evaluate(()=>closeInlinePlayer());assert.equal(await page.locator('#inlinePlayer').evaluate(e=>e.hidden),true);
  assert.deepEqual(errors,[]);await browser.close();console.log('Watch and mini-app players: local playback and controls OK');
 })().catch(e=>{console.error(e);process.exit(1);});

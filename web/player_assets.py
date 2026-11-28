@@ -1,11 +1,11 @@
-"""Small same-page player shared by the dashboard, profiles and posts."""
+"""Unified video player UI shared by the web app, mini app, and watch page."""
 
-PLAYER_UI = r'''
-<style>
+PLAYER_CSS = r'''
 .inline-player-backdrop{position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.78);backdrop-filter:blur(10px)}
 .inline-player-backdrop[hidden]{display:none}
 .inline-player-card{width:min(100%,690px);max-height:calc(100dvh - 36px);overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.62)}
-body.light .inline-player-card{box-shadow:0 24px 70px rgba(15,23,42,.22)}
+.inline-player-card.watch-card{width:100%;max-height:none;overflow:hidden}
+body.light .inline-player-card,html.light .inline-player-card{box-shadow:0 24px 70px rgba(15,23,42,.22)}
 .inline-player-head{display:flex;align-items:center;gap:12px;padding:14px 17px;background:linear-gradient(125deg,rgba(229,9,20,.1),transparent 55%),var(--card);border-bottom:1px solid var(--border)}
 .inline-player-mark{display:grid;place-items:center;width:38px;height:38px;flex:none;color:#fff;background:linear-gradient(135deg,var(--accent),#b20710);border-radius:10px;font-size:16px;box-shadow:0 4px 12px rgba(229,9,20,.32)}
 .inline-player-titlebox{flex:1;min-width:0}.inline-player-kicker{color:var(--accent);font-size:10px;letter-spacing:1.1px;text-transform:uppercase;font-weight:900}
@@ -13,16 +13,16 @@ body.light .inline-player-card{box-shadow:0 24px 70px rgba(15,23,42,.22)}
 .inline-player-close{display:grid;place-items:center;width:36px;height:36px;flex:none;border:1px solid var(--border);border-radius:10px;color:var(--text);background:var(--bg3);font-size:22px;line-height:1;cursor:pointer;transition:border-color .16s,background .16s,color .16s}
 .inline-player-close:hover{border-color:var(--accent);color:var(--accent);background:var(--bg2)}
 .inline-player-screen{background:#000;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;position:relative}
-.inline-player-screen video{width:100%;height:100%;max-height:56vh;object-fit:contain;background:#000}
+.inline-player-screen video{width:100%;height:100%;max-height:56vh;object-fit:contain;background:#000;display:block}
 .inline-player-status{padding:9px 17px;color:var(--muted);font-size:12px;font-weight:600;line-height:1.45;background:var(--bg2);border-top:1px solid var(--border)}
 .inline-player-status:empty{display:none}
 .inline-player-status.error{color:#ffb4a9;background:rgba(229,9,20,.12)}
-body.light .inline-player-status.error{color:#b91c1c;background:rgba(229,9,20,.08)}
+body.light .inline-player-status.error,html.light .inline-player-status.error{color:#b91c1c;background:rgba(229,9,20,.08)}
 .inline-player-switcher{padding:15px 17px 14px;background:var(--card);border-top:1px solid var(--border);display:flex;flex-direction:column;gap:12px}
 .inline-player-switcher[hidden]{display:none}
 .inline-player-switch-banner{display:flex;align-items:center;gap:11px}
 .inline-player-switch-ico{display:grid;place-items:center;width:38px;height:38px;flex:none;border-radius:11px;background:rgba(229,9,20,.14);color:#ff6b74}
-body.light .inline-player-switch-ico{background:rgba(229,9,20,.1);color:var(--accent)}
+body.light .inline-player-switch-ico,html.light .inline-player-switch-ico{background:rgba(229,9,20,.1);color:var(--accent)}
 .inline-player-switch-copy{min-width:0;flex:1}
 .inline-player-switch-title{color:var(--text);font-size:15px;font-weight:900;line-height:1.25}
 .inline-player-switch-sub{color:var(--muted);font-size:12px;font-weight:500;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -37,9 +37,9 @@ body.light .inline-player-switch-ico{background:rgba(229,9,20,.1);color:var(--ac
 .inline-player-chip-top{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%}
 .inline-player-chip-lbl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:900;color:var(--text)}
 .inline-player-chip-state{display:none;font-size:9.5px;font-weight:900;letter-spacing:.5px;text-transform:uppercase;color:#ff6b74;flex-shrink:0}
-body.light .inline-player-chip-state{color:#b91c1c}
+body.light .inline-player-chip-state,html.light .inline-player-chip-state{color:#b91c1c}
 .inline-player-chip[aria-current="true"]{background:linear-gradient(135deg,rgba(229,9,20,.26),rgba(229,9,20,.1));border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent);cursor:default}
-body.light .inline-player-chip[aria-current="true"]{background:linear-gradient(135deg,rgba(229,9,20,.14),rgba(229,9,20,.04));box-shadow:inset 3px 0 0 var(--accent)}
+body.light .inline-player-chip[aria-current="true"],html.light .inline-player-chip[aria-current="true"]{background:linear-gradient(135deg,rgba(229,9,20,.14),rgba(229,9,20,.04));box-shadow:inset 3px 0 0 var(--accent)}
 .inline-player-chip[aria-current="true"] .inline-player-chip-state{display:inline-block}
 .inline-player-chip-name{width:100%;font-size:11.5px;font-weight:500;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .inline-player-chip-meta{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
@@ -52,31 +52,69 @@ body.light .inline-player-chip[aria-current="true"]{background:linear-gradient(1
 .inline-player-action-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .inline-player-note{color:var(--muted);font-size:11px;line-height:1.4;text-align:center}
 @media(max-width:500px){.inline-player-backdrop{padding:10px}.inline-player-card{border-radius:14px}.inline-player-head{padding:12px 13px}.inline-player-switcher{padding:13px 13px 12px}.inline-player-actions{padding:11px 13px 13px}.inline-player-screen video{max-height:50vh}}
-@media(max-width:340px){.inline-player-switch-row{grid-template-columns:1fr}.inline-player-btn-row{grid-template-columns:1fr}}
-</style>
-<div id="inlinePlayer" class="inline-player-backdrop" role="dialog" aria-modal="true" aria-labelledby="inlinePlayerTitle" hidden>
-  <div class="inline-player-card">
-    <div class="inline-player-head">
-      <span class="inline-player-mark" aria-hidden="true">&#9654;</span>
-      <div class="inline-player-titlebox"><div class="inline-player-kicker">Now playing</div><div id="inlinePlayerTitle" class="inline-player-title"></div></div>
-      <button type="button" class="inline-player-close" aria-label="Close player" onclick="closeInlinePlayer()">&times;</button>
-    </div>
-    <div class="inline-player-screen"><video id="inlinePlayerVideo" controls playsinline preload="metadata"></video></div>
-    <div id="inlinePlayerStatus" class="inline-player-status" role="status" aria-live="polite"></div>
-    <div id="inlinePlayerSwitcher" class="inline-player-switcher" aria-label="Other versions in this group" hidden></div>
-    <div class="inline-player-actions">
-      <div class="inline-player-btn-row">
-        <a id="inlinePlayerDownload" class="inline-player-download inline-player-action-btn" hidden>&#8595; Download</a>
-        <button type="button" id="inlinePlayerCopy" class="inline-player-action-btn" onclick="inlinePlayerCopyLink()" hidden>&#128279; Copy link</button>
-        <button type="button" class="inline-player-action-btn" onclick="closeInlinePlayer()">Close</button>
-      </div>
-      <span class="inline-player-note">Playback depends on your browser's supported formats.</span>
-    </div>
-  </div>
-</div>
-<script>
+@media(max-width:340px){.inline-player-switch-row,.inline-player-btn-row{grid-template-columns:1fr}}
+'''
+
+
+def build_player_card_html(mode="modal", title="", src="", mime_type="video/mp4"):
+    """Build the unified player card markup for either modal or watch-page mode."""
+    is_watch = mode == "watch"
+    card_cls = "inline-player-card watch-card" if is_watch else "inline-player-card"
+    head_cls = "inline-player-head watch-head" if is_watch else "inline-player-head"
+    close_btn = "" if is_watch else '\n      <button type="button" class="inline-player-close" aria-label="Close player" onclick="closeInlinePlayer()">&times;</button>'
+    source_tag = f'<source src="{src}" type="{mime_type}">' if is_watch and src else ""
+    dl_attr = f' href="{src}"' if is_watch and src else " hidden"
+    copy_attr = "" if is_watch else " hidden"
+    third_btn = (
+        '<a href="/dashboard" class="inline-player-action-btn">&#8592; Home</a>'
+        if is_watch
+        else '<button type="button" class="inline-player-action-btn" onclick="closeInlinePlayer()">Close</button>'
+    )
+    return (
+        f'<div class="{card_cls}">\n'
+        f'    <div class="{head_cls}">\n'
+        '      <span class="inline-player-mark" aria-hidden="true">&#9654;</span>\n'
+        f'      <div class="inline-player-titlebox"><div class="inline-player-kicker">Now playing</div><div id="inlinePlayerTitle" class="inline-player-title">{title}</div></div>'
+        f'{close_btn}\n'
+        '    </div>\n'
+        f'    <div class="inline-player-screen"><video id="inlinePlayerVideo" controls playsinline preload="metadata">{source_tag}</video></div>\n'
+        '    <div id="inlinePlayerStatus" class="inline-player-status" role="status" aria-live="polite"></div>\n'
+        '    <div id="inlinePlayerSwitcher" class="inline-player-switcher" aria-label="Other versions in this group" hidden></div>\n'
+        '    <div class="inline-player-actions">\n'
+        '      <div class="inline-player-btn-row">\n'
+        f'        <a id="inlinePlayerDownload" class="inline-player-download inline-player-action-btn"{dl_attr}>&#8595; Download</a>\n'
+        f'        <button type="button" id="inlinePlayerCopy" class="inline-player-action-btn" onclick="inlinePlayerCopyLink()"{copy_attr}>&#128279; Copy link</button>\n'
+        f'        {third_btn}\n'
+        '      </div>\n'
+        '      <span class="inline-player-note">Playback depends on your browser\'s supported formats.</span>\n'
+        '    </div>\n'
+        '  </div>'
+    )
+
+
+PLAYER_MODAL_HTML = (
+    '<div id="inlinePlayer" class="inline-player-backdrop" role="dialog" aria-modal="true" aria-labelledby="inlinePlayerTitle" hidden>\n'
+    f'  {build_player_card_html("modal")}\n'
+    '</div>'
+)
+
+PLAYER_JS = r'''
 var inlinePlayerRequest=0, inlinePlayerAbort=null, inlinePlayerPreviousFocus=null, inlinePlayerOverflow='';
-var inlinePlayerFileId='', inlinePlayerSwitches=null, inlinePlayerEpisode='';
+var inlinePlayerFileId='', inlinePlayerSwitches=null, inlinePlayerEpisode='', inlinePlayerWatch=null;
+function inlinePlayerHeaders(extra){
+    var headers={};
+    if(window.INLINE_PLAYER_HEADERS){
+        for(var k in window.INLINE_PLAYER_HEADERS){
+            if(Object.prototype.hasOwnProperty.call(window.INLINE_PLAYER_HEADERS,k))headers[k]=window.INLINE_PLAYER_HEADERS[k];
+        }
+    }
+    if(extra){
+        for(var j in extra){
+            if(Object.prototype.hasOwnProperty.call(extra,j))headers[j]=extra[j];
+        }
+    }
+    return headers;
+}
 function closeInlinePlayer(){
     var modal=document.getElementById('inlinePlayer'), video=document.getElementById('inlinePlayerVideo');
     if(!modal||modal.hidden)return;
@@ -120,11 +158,14 @@ function inlinePlayerCopyLink(){
     }
 }
 async function inlinePlayerPrepareStream(fileId,recycle){
-    var endpoint=recycle?'/api/recycle/stream':'/setup_stream';
-    var payload=recycle?{id:fileId}:{file_id:fileId,mode:'inline'};
-    var response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},
+    var endpoint=inlinePlayerWatch?'/api/watch/switch':(recycle?'/api/recycle/stream':'/setup_stream');
+    var payload=inlinePlayerWatch
+        ?{mid:inlinePlayerWatch.mid,e:inlinePlayerWatch.e,s:inlinePlayerWatch.s,file_id:fileId}
+        :(recycle?{id:fileId}:{file_id:fileId,mode:'inline'});
+    var response=await fetch(endpoint,{method:'POST',headers:inlinePlayerHeaders({'Content-Type':'application/json'}),
         body:JSON.stringify(payload),signal:inlinePlayerAbort.signal});
     var data=await response.json().catch(function(){return {};});
+    if(response.status===403)throw new Error(data.error||'🔒 Access denied');
     if(!response.ok||data.error)throw new Error(data.error||'Unable to prepare this video.');
     var url=new URL(data.url,window.location.origin);
     if(url.origin!==window.location.origin||!/^\/download\/\d+$/.test(url.pathname))throw new Error('Invalid video link.');
@@ -186,7 +227,7 @@ function inlinePlayerPaintSwitches(){
     box.textContent='';
     var data=inlinePlayerSwitches;
     if(!data||!data.group){box.hidden=true;return;}
-    var group=data.group, name=group.name?group.name+' · ':'';
+    var group=data.group;
     if(group.type==='series'&&data.episodes&&data.episodes.length){
         var episodes=data.episodes, current=null, i;
         if(!inlinePlayerEpisode){inlinePlayerEpisode=data.current_episode||episodes[0].key;}
@@ -241,7 +282,7 @@ async function inlinePlayerLoadSwitches(fileId,request){
     inlinePlayerSwitches=null;
     try{
         var response=await fetch('/api/file/switches?file_id='+encodeURIComponent(fileId),
-            {cache:'no-store',signal:inlinePlayerAbort.signal});
+            {cache:'no-store',headers:inlinePlayerHeaders(),signal:inlinePlayerAbort.signal});
         if(!response.ok)return;
         var data=await response.json().catch(function(){return null;});
         if(request!==inlinePlayerRequest)return;
@@ -264,7 +305,8 @@ async function inlinePlayerPickEpisode(key){
 async function switchInlinePlayer(fileId,title,resetPosition){
     var modal=document.getElementById('inlinePlayer'),video=document.getElementById('inlinePlayerVideo');
     var status=document.getElementById('inlinePlayerStatus');
-    if(!modal||modal.hidden||!fileId)return false;
+    var isWatch=!!inlinePlayerWatch;
+    if(!video||(!isWatch&&(!modal||modal.hidden))||!fileId)return false;
     if(fileId===inlinePlayerFileId)return true;
     if(inlinePlayerAbort)inlinePlayerAbort.abort();
     var request=++inlinePlayerRequest;
@@ -274,22 +316,22 @@ async function switchInlinePlayer(fileId,title,resetPosition){
     status.className='inline-player-status';status.textContent=resetPosition?'Loading episode…':'Switching…';
     try{
         var prepared=await inlinePlayerPrepareStream(fileId);
-        if(request!==inlinePlayerRequest||modal.hidden)return false;
+        if(request!==inlinePlayerRequest||(!isWatch&&modal.hidden))return false;
         inlinePlayerFileId=fileId;
         document.getElementById('inlinePlayerTitle').textContent=title||'Video';
         inlinePlayerPaintSwitches();
         video.pause();
         inlinePlayerDownloadLink(prepared.download);
-        // Resume at the same position when only the quality changes; an episode
-        // change starts from the beginning unless someone seeks.
         video.addEventListener('loadedmetadata',function(){
             if(request!==inlinePlayerRequest)return;
             if(resetPosition){video.currentTime=0;return;}
             if(resume>0.5&&isFinite(video.duration)&&video.duration>0)video.currentTime=Math.min(resume,Math.max(0,video.duration-1));
         },{once:true});
+        video.innerHTML='';
         video.src=prepared.src;
+        if(isWatch)video.load();
         status.textContent='Loading video…';
-        if(wasPlaying){var playing=video.play();if(playing&&playing.catch)playing.catch(function(){if(request===inlinePlayerRequest&&!video.error)status.textContent='Press play to start.';});}
+        if(wasPlaying||isWatch){var playing=video.play();if(playing&&playing.catch)playing.catch(function(){if(request===inlinePlayerRequest&&!video.error)status.textContent='Press play to start.';});}
         return true;
     }catch(error){
         if(error.name==='AbortError'||request!==inlinePlayerRequest)return false;
@@ -303,6 +345,7 @@ async function openInlinePlayer(fileId,title,recycle){
     var modal=document.getElementById('inlinePlayer'),video=document.getElementById('inlinePlayerVideo');
     var status=document.getElementById('inlinePlayerStatus');
     if(!modal||!fileId)return;
+    inlinePlayerWatch=null;
     if(inlinePlayerAbort)inlinePlayerAbort.abort();
     if(modal.hidden){inlinePlayerPreviousFocus=document.activeElement;inlinePlayerOverflow=document.body.style.overflow;document.body.style.overflow='hidden';}
     var request=++inlinePlayerRequest;
@@ -328,6 +371,20 @@ async function openInlinePlayer(fileId,title,recycle){
         status.className='inline-player-status error';status.textContent=error.message||'Unable to load the video.';
     }
 }
+function inlinePlayerBindVideo(video,isModal){
+    if(!video||video.dataset.ipBound)return;
+    video.dataset.ipBound='1';
+    var isActive=function(){return isModal?(document.getElementById('inlinePlayer')&&!document.getElementById('inlinePlayer').hidden):true;};
+    video.addEventListener('playing',function(){if(isActive()){var s=document.getElementById('inlinePlayerStatus');if(s){s.className='inline-player-status';s.textContent='';}}});
+    video.addEventListener('error',function(){if(isActive()&&(video.getAttribute('src')||video.querySelector('source'))){var s=document.getElementById('inlinePlayerStatus');if(s){s.className='inline-player-status error';s.textContent='This video could not be played. Try downloading it or use a supported browser format.';}}});
+}
+function inlinePlayerInitWatch(cfg){
+    inlinePlayerWatch=cfg||null;
+    inlinePlayerFileId=(cfg&&cfg.fileId)||'';
+    inlinePlayerDownloadLink((cfg&&cfg.downloadUrl)||'');
+    inlinePlayerRenderSwitches((cfg&&cfg.switches)||null);
+    inlinePlayerBindVideo(document.getElementById('inlinePlayerVideo'),false);
+}
 document.addEventListener('DOMContentLoaded',function(){
     var modal=document.getElementById('inlinePlayer'),video=document.getElementById('inlinePlayerVideo');
     if(!modal||!video)return;
@@ -343,8 +400,8 @@ document.addEventListener('DOMContentLoaded',function(){
             else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
         }
     });
-    video.addEventListener('playing',function(){if(!modal.hidden){var s=document.getElementById('inlinePlayerStatus');s.className='inline-player-status';s.textContent='';}});
-    video.addEventListener('error',function(){if(!modal.hidden&&video.getAttribute('src')){var s=document.getElementById('inlinePlayerStatus');s.className='inline-player-status error';s.textContent='This video could not be played. Try downloading it or use a supported browser format.';}});
+    inlinePlayerBindVideo(video,true);
 });
-</script>
 '''
+
+PLAYER_UI = f"<style>\n{PLAYER_CSS}\n</style>\n{PLAYER_MODAL_HTML}\n<script>\n{PLAYER_JS}\n</script>"
