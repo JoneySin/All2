@@ -5,7 +5,7 @@ import aiohttp
 from aiohttp import web
 from bson.objectid import ObjectId
 from utils import temp
-from info import THUMBNAIL_STORAGE_CHANNEL
+from info import MEDIA_STORAGE_CHANNEL
 # ✅ DRY: Posts collection handle अब ia_filterdb से आता है — पहले यहाँ अलग से
 # `motor_db.db["Posts"]` बनाया जाता था, जबकि ia_filterdb.py में वही collection
 # पहले से मौजूद था (और उस पर text index भी बनता है)। दो handle एक ही collection
@@ -117,7 +117,7 @@ async def process_multipart_post(req, action="publish"):
                 raise ValueError('The selected cover image is empty.')
             with io.BytesIO(img_bytes) as img_buf:
                 img_buf.name = "cover.jpg"
-                msg = await temp.BOT.send_photo(chat_id=THUMBNAIL_STORAGE_CHANNEL, photo=img_buf)
+                msg = await temp.BOT.send_photo(chat_id=MEDIA_STORAGE_CHANNEL, photo=img_buf)
             if not msg or not msg.photo:
                 raise RuntimeError('Cover image upload failed. Please retry.')
             tg_id = msg.photo.sizes[-1].file_id if hasattr(msg.photo, "sizes") and msg.photo.sizes else msg.photo.file_id
@@ -129,7 +129,7 @@ async def process_multipart_post(req, action="publish"):
                 raise ValueError('A selected screenshot is empty.')
             with io.BytesIO(img_bytes) as img_buf:
                 img_buf.name = f"ss_{int(time.time())}.jpg"
-                msg = await temp.BOT.send_photo(chat_id=THUMBNAIL_STORAGE_CHANNEL, photo=img_buf)
+                msg = await temp.BOT.send_photo(chat_id=MEDIA_STORAGE_CHANNEL, photo=img_buf)
             if not msg or not msg.photo:
                 raise RuntimeError('Screenshot upload failed. Please retry.')
             tg_id = msg.photo.sizes[-1].file_id if hasattr(msg.photo, "sizes") and msg.photo.sizes else msg.photo.file_id

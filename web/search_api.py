@@ -23,9 +23,8 @@ from pymongo import ReturnDocument, UpdateMany
 
 # कस्टमाइज्ड कोर यूटिल्स और कन्फर्म कंट्रोल्स इम्पोर्ट्स
 from utils import temp, get_size, is_premium, get_duration_str
-# ✅ SYNC: THUMBNAIL_STORAGE_CHANNEL को इम्पोर्ट किया गया है पृथक स्टोरेज के लिए
 from stream_security import sign_params, STREAM_TTL, verify
-from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
+from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, MEDIA_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
 from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, group_search_cursors, get_files_by_ids, find_phrase_files, search_groups, get_groups_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media, FILE_PROJECTION, FILE_PROJECTION_SCORED, GROUP_PROJECTION, _build_regex, _strict_text_query, build_query_filter, build_actor_search_filter, unpack_new_file_id
 from web.utils.custom_dl import TGCustomYield
@@ -3104,7 +3103,7 @@ async def api_group_upload_thumb(req):
 
         with io.BytesIO(image_bytes) as buf:
             buf.name = "group_poster.jpg"
-            msg = await temp.BOT.send_photo(chat_id=THUMBNAIL_STORAGE_CHANNEL, photo=buf)
+            msg = await temp.BOT.send_photo(chat_id=MEDIA_STORAGE_CHANNEL, photo=buf)
         if not msg or not msg.photo:
             return web.json_response({"error": "Telegram Node failed!"}, status=500, dumps=fast_json)
         try:
@@ -3190,8 +3189,7 @@ async def api_upload_thumb(req):
 
         with io.BytesIO(image_bytes) as img_buffer:
             img_buffer.name = "poster.jpg"
-            # ✅ UPGRADE: पुराने मिक्स्ड 'BIN_CHANNEL' के बजाय पृथक 'THUMBNAIL_STORAGE_CHANNEL' का उपयोग
-            msg = await temp.BOT.send_photo(chat_id=THUMBNAIL_STORAGE_CHANNEL, photo=img_buffer)
+            msg = await temp.BOT.send_photo(chat_id=MEDIA_STORAGE_CHANNEL, photo=img_buffer)
 
         if not msg or not msg.photo:
             return web.json_response({"error": "Telegram Node failed!"}, status=500, dumps=fast_json)

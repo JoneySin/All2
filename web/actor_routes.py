@@ -3,7 +3,7 @@ from urllib.parse import urlencode, urlsplit
 from aiohttp import web
 from bson.objectid import ObjectId
 from utils import temp
-from info import MAX_WEB_RESULTS, ACTOR_STORAGE_CHANNEL
+from info import MAX_WEB_RESULTS, MEDIA_STORAGE_CHANNEL
 from database.ia_filterdb import actors, get_actor_search_results, delete_actor_profile, delete_gallery_image_by_index
 # ✅ DRY: fast_json + DIRECTORY_CSS अब web_assets से आते हैं (पहले दोनों यहाँ copy थे)
 from web.web_assets import build_page, get_auth, require_active_plan, fast_json, DIRECTORY_CSS, DIRECTORY_FILTER_CSS, DEFAULT_CATALOG_MODE, DEFAULT_MEDIA_MODE, render_category_picker
@@ -456,7 +456,7 @@ async def api_create_actor(req):
 
         with io.BytesIO(image_bytes) as img_buffer:
             img_buffer.name = f"{name.replace(' ', '_')}.jpg"
-            msg = await temp.BOT.send_photo(chat_id=ACTOR_STORAGE_CHANNEL, photo=img_buffer)
+            msg = await temp.BOT.send_photo(chat_id=MEDIA_STORAGE_CHANNEL, photo=img_buffer)
         if not msg or not msg.photo:
             return _actor_result(req, '/admin/create_actor', 'Profile photo upload failed. Please retry.', 500)
         
@@ -876,8 +876,7 @@ async def api_actor_update_avatar(req):
             
         with io.BytesIO(data.get("photo").file.read()) as img_buffer:
             img_buffer.name = f"avatar_{data.get('actor_id')}_{int(time.time())}.jpg"
-            # ✅ UPGRADE: पुराने मिक्स्ड 'BIN_CHANNEL' के बजाय पृथक 'ACTOR_STORAGE_CHANNEL' का उपयोग
-            msg = await temp.BOT.send_photo(chat_id=ACTOR_STORAGE_CHANNEL, photo=img_buffer)
+            msg = await temp.BOT.send_photo(chat_id=MEDIA_STORAGE_CHANNEL, photo=img_buffer)
             
         if not msg or not msg.photo: return web.json_response({"success": False, "error": "Telegram upload failed"}, dumps=fast_json)
         tg_photo_id = msg.photo.sizes[-1].file_id if hasattr(msg.photo, "sizes") and msg.photo.sizes else msg.photo.file_id
@@ -922,8 +921,7 @@ async def api_actor_gallery_upload(req):
         for image_number, image_bytes in enumerate(image_bytes_list, start=1):
             with io.BytesIO(image_bytes) as img_buffer:
                 img_buffer.name = f"gallery_{actor_id}_{int(time.time())}_{image_number}.jpg"
-                # ✅ UPGRADE: पुराने मिक्स्ड 'BIN_CHANNEL' के बजाय पृथक 'ACTOR_STORAGE_CHANNEL' का उपयोग
-                msg = await temp.BOT.send_photo(chat_id=ACTOR_STORAGE_CHANNEL, photo=img_buffer)
+                msg = await temp.BOT.send_photo(chat_id=MEDIA_STORAGE_CHANNEL, photo=img_buffer)
 
             if not msg or not msg.photo:
                 return web.HTTPFound(f'/actor/{actor_id}?err=Telegram Node Gallery Upload Failed ({image_number}/{len(image_bytes_list)})')

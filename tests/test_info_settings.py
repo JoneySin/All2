@@ -121,6 +121,17 @@ class AutoDeleteSettingTests(unittest.IsolatedAsyncioTestCase):
         timer = await self._run(True)
         timer.assert_awaited_once()
 
+    def test_merged_media_storage_channel_resolution(self):
+        import info
+        with patch.dict(os.environ, {"MEDIA_STORAGE_CHANNEL": "", "THUMBNAIL_STORAGE_CHANNEL": "", "ACTOR_STORAGE_CHANNEL": ""}):
+            self.assertEqual(info._resolve_media_storage_channel(), info.BIN_CHANNEL)
+        with patch.dict(os.environ, {"MEDIA_STORAGE_CHANNEL": "-100999", "THUMBNAIL_STORAGE_CHANNEL": "-100888", "ACTOR_STORAGE_CHANNEL": "-100777"}):
+            self.assertEqual(info._resolve_media_storage_channel(), -100999)
+        with patch.dict(os.environ, {"MEDIA_STORAGE_CHANNEL": "", "THUMBNAIL_STORAGE_CHANNEL": "-100888", "ACTOR_STORAGE_CHANNEL": "-100777"}):
+            self.assertEqual(info._resolve_media_storage_channel(), -100888)
+        with patch.dict(os.environ, {"MEDIA_STORAGE_CHANNEL": "", "THUMBNAIL_STORAGE_CHANNEL": "", "ACTOR_STORAGE_CHANNEL": "-100777"}):
+            self.assertEqual(info._resolve_media_storage_channel(), -100777)
+
 
 if __name__ == "__main__":
     unittest.main()

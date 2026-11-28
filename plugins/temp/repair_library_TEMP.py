@@ -19,7 +19,7 @@ from database.ia_filterdb import (
     FILE_COLLECTIONS, META_SCHEMA_VERSION, apply_media_meta_update, groups,
     build_meta_migration_query, msg_media,
 )
-from info import ADMINS, BIN_CHANNEL, LOG_CHANNEL, THUMBNAIL_STORAGE_CHANNEL
+from info import ADMINS, BIN_CHANNEL, LOG_CHANNEL, MEDIA_STORAGE_CHANNEL
 from media_probe import probe_telegram_file, should_probe_media
 from utils import get_readable_time
 from web.search_api import _invalidate_search_caches, thumb_cache
@@ -196,7 +196,7 @@ async def _repair_file(client, collection, doc, run, pending):
                         raise RuntimeError("Thumbnail download returned no data")
                     try:
                         buffer.seek(0)
-                        uploaded = await client.send_photo(chat_id=THUMBNAIL_STORAGE_CHANNEL, photo=buffer)
+                        uploaded = await client.send_photo(chat_id=MEDIA_STORAGE_CHANNEL, photo=buffer)
                     finally:
                         buffer.close()
                     photo = getattr(uploaded, "photo", None)

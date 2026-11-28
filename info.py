@@ -105,15 +105,22 @@ if not BIN_CHANNEL:
     logger.error("❌ BIN_CHANNEL missing")
     exit(1)
 
-# ⚡ [NEW FEATURE] नए पृथक मीडिया और थंबनेल स्टोरेज चैनल्स
-# (यदि पर्यावरण वेरिएबल्स सेट नहीं हैं, तो यह सुरक्षित रूप से BIN_CHANNEL पर फॉल-बैक करेगा)
-ACTOR_STORAGE_CHANNEL = int(environ.get("ACTOR_STORAGE_CHANNEL", BIN_CHANNEL))
-THUMBNAIL_STORAGE_CHANNEL = int(environ.get("THUMBNAIL_STORAGE_CHANNEL", BIN_CHANNEL))
+# ⚡ [MERGED] एक्टर फोटोज़, गैलरी, पोस्ट कवर व थंबनेल के लिए एक ही मीडिया स्टोरेज चैनल
+# (यदि MEDIA_STORAGE_CHANNEL सेट नहीं है — या पुराना THUMBNAIL_STORAGE_CHANNEL /
+# ACTOR_STORAGE_CHANNEL भी खाली है — तो सुरक्षित रूप से BIN_CHANNEL, अन्यथा LOG_CHANNEL पर जाएगा)
+def _resolve_media_storage_channel():
+    for key in ("MEDIA_STORAGE_CHANNEL", "THUMBNAIL_STORAGE_CHANNEL", "ACTOR_STORAGE_CHANNEL"):
+        raw = (environ.get(key) or "").strip()
+        if raw:
+            return int(raw)
+    return BIN_CHANNEL or LOG_CHANNEL
+
+MEDIA_STORAGE_CHANNEL = _resolve_media_storage_channel()
 
 # 🗑️ [NEW FEATURE] डिलीट-बैकअप चैनल — बॉट या वेब से कोई फाइल डिलीट होने से पहले
 # यहाँ फॉरवर्ड/रीसेंड की जाती है ताकि गलती से डिलीट होने पर भी फाइल रिकवर हो सके।
 # (सेट नहीं है तो सुरक्षित रूप से LOG_CHANNEL पर फॉल-बैक होगा)
-DELETE_CHANNEL = int(environ.get("DELETE_CHANNEL", LOG_CHANNEL))
+DELETE_CHANNEL = int((environ.get("DELETE_CHANNEL") or "").strip() or LOG_CHANNEL)
 
 # ─────────────────────────────────────────────
 # 🗄️ DATABASE CONNECTION URL
