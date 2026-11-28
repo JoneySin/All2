@@ -194,16 +194,13 @@ CSS = """
 /* act-card uses .card-enter (shared) */
 .act-poster{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:transform .4s cubic-bezier(.4,0,.2,1)}
 .act-card:hover .act-poster{transform:scale(1.1)}
-.act-text-card:active{transform:scale(0.97);transition:transform .1s}
-@keyframes actorNameRedBounce{0%{transform:scale(1) translateY(0);color:var(--accent)}35%{transform:scale(1.16) translateY(-5px);color:#ff2a38;text-shadow:0 2px 14px rgba(229,9,20,.65)}70%{transform:scale(.96) translateY(1px);color:var(--accent)}100%{transform:scale(1.06) translateY(-2px);color:var(--accent)}}
-.act-card.is-opening,.act-text-card.is-opening{border-color:var(--accent)!important;box-shadow:0 0 0 2px rgba(229,9,20,.32),0 10px 26px rgba(229,9,20,.32)}
-.act-card.is-opening .act-name{color:var(--accent)!important;transform-origin:center;animation:actorNameRedBounce .22s cubic-bezier(.34,1.56,.64,1) both;will-change:transform,color}
-.act-text-card.is-opening .act-name{color:var(--accent)!important;transform-origin:left center;animation:actorNameRedBounce .22s cubic-bezier(.34,1.56,.64,1) both;will-change:transform,color}
-@keyframes backBtnRedBounce{0%{transform:scale(1) translateX(0);color:#fff;background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 0 rgba(229,9,20,.65)}38%{transform:scale(1.08) translateX(-4px);color:#fff;background:#ff2a38;border-color:#ff2a38;box-shadow:0 0 22px 4px rgba(229,9,20,.65)}72%{transform:scale(.96) translateX(1px);color:#fff;background:var(--accent);border-color:var(--accent);box-shadow:0 0 14px 2px rgba(229,9,20,.45)}100%{transform:scale(1.03) translateX(-2px);color:#fff;background:var(--accent);border-color:var(--accent);box-shadow:0 0 18px 3px rgba(229,9,20,.5)}}
-.back-pill-btn{display:inline-flex;align-items:center;gap:7px;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:10px;padding:9px 16px;font-size:13px;font-weight:800;font-family:inherit;text-decoration:none;cursor:pointer;white-space:nowrap;transition:border-color .18s,color .18s,background .18s,box-shadow .18s,transform .15s}
-.back-pill-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(229,9,20,.08);box-shadow:0 4px 14px rgba(229,9,20,.22);transform:translateX(-2px)}
+.act-text-card:active{transform:scale(0.98);transition:transform .06s}
+.act-card:active,.act-card.is-opening,.act-text-card:active,.act-text-card.is-opening{border-color:var(--accent)!important;box-shadow:0 0 0 2px rgba(229,9,20,.4),0 0 20px rgba(229,9,20,.45)!important}
+.act-card:active .act-name,.act-card.is-opening .act-name,.act-text-card:active .act-name,.act-text-card.is-opening .act-name{color:var(--accent)!important;text-shadow:0 0 12px rgba(229,9,20,.75)}
+.back-pill-btn{display:inline-flex;align-items:center;gap:7px;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:10px;padding:9px 16px;font-size:13px;font-weight:800;font-family:inherit;text-decoration:none;cursor:pointer;white-space:nowrap;transition:border-color .15s,color .15s,background .15s,box-shadow .15s}
+.back-pill-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(229,9,20,.08);box-shadow:0 0 14px rgba(229,9,20,.28)}
 .back-pill-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.back-pill-btn.is-backing{animation:backBtnRedBounce .24s cubic-bezier(.34,1.56,.64,1) both;will-change:transform,box-shadow}
+.back-pill-btn:active,.back-pill-btn.is-backing{color:#fff!important;background:var(--accent)!important;border-color:var(--accent)!important;box-shadow:0 0 20px 3px rgba(229,9,20,.65)!important}
 """
 
 JS = """
@@ -567,23 +564,18 @@ function openCatalogCard(el,url,ev){
     if(ev&&(ev.metaKey||ev.ctrlKey||ev.shiftKey||ev.altKey||ev.button===1)){
         window.open(url,'_blank','noopener');return;
     }
-    if(el&&el.dataset.opening==='1')return;
-    if(el){el.dataset.opening='1';el.classList.add('is-opening');}
+    if(el)el.classList.add('is-opening');
     prefetchCatalogUrl(url);
-    setTimeout(function(){window.location.href=url;},180);
+    window.location.href=url;
 }
 function openBackNav(el,ev){
     if(!el)return true;
     var url=el.getAttribute('href');
     if(!url)return true;
     if(ev&&(ev.metaKey||ev.ctrlKey||ev.shiftKey||ev.altKey||ev.button===1))return true;
-    if(ev)ev.preventDefault();
-    if(el.dataset.backing==='1')return false;
-    el.dataset.backing='1';
     el.classList.add('is-backing');
     prefetchCatalogUrl(url);
-    setTimeout(function(){window.location.href=url;},180);
-    return false;
+    return true;
 }
 window.addEventListener('pageshow',function(){
     document.querySelectorAll('.act-card.is-opening,.act-text-card.is-opening').forEach(function(c){

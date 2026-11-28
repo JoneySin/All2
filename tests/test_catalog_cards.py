@@ -26,14 +26,16 @@ class CatalogCardTests(unittest.TestCase):
         self.assertIn('act-text-card', render_catalog_card(item, 'actor', 'text'))
         self.assertIn('act-poster', render_catalog_card(item, 'actor', 'poster'))
 
-    def test_actor_name_bounce_css_and_gzip_helper(self):
+    def test_actor_name_glow_css_and_gzip_helper(self):
         from web import web_assets
-        self.assertIn('actorNameRedBounce', web_assets.CSS)
-        self.assertIn('backBtnRedBounce', web_assets.CSS)
-        self.assertIn('.back-pill-btn', web_assets.CSS)
+        self.assertNotIn('actorNameRedBounce', web_assets.CSS)
+        self.assertNotIn('backBtnRedBounce', web_assets.CSS)
+        self.assertIn('.is-opening .act-name', web_assets.CSS)
+        self.assertIn('.back-pill-btn.is-backing', web_assets.CSS)
         self.assertIn('openCatalogCard', web_assets.JS)
         self.assertIn('openBackNav', web_assets.JS)
         self.assertIn('prefetchCatalogUrl', web_assets.JS)
+        self.assertNotIn('setTimeout(function(){window.location.href', web_assets.JS)
         res = web_assets._h('<html>test</html>')
         self.assertTrue(res.compression)
 
