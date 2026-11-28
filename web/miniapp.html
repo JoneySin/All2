@@ -6,11 +6,10 @@
 <title>Fast Finder</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/plyr@3.8.5/dist/plyr.css">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#141414;--bg2:#000;--bg3:#2b2b2b;--bg4:#1f1f1f;--card:#181818;--ac:#e50914;--txt:#fff;--mu:#808080;--br:rgba(128,128,128,.2)}
-body.light{--bg:#f4f6f9;--bg2:#ffffff;--bg3:#eff2f7;--bg4:#e4e8f0;--card:#ffffff;--txt:#111827;--mu:#64748b;--br:rgba(15,23,42,.12)}
+:root{--bg:#0a0a0c;--bg2:#111116;--bg3:#1d1d26;--bg4:#2a2a38;--card:#14141f;--ac:#e50914;--txt:#fff;--mu:#a0a0b0;--br:#262636}
+body.light{--bg:#f4f5f7;--bg2:#ffffff;--bg3:#eef0f4;--bg4:#dbdee6;--card:#ffffff;--txt:#0a0a0c;--mu:#62627a;--br:#d2d5df}
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;overflow-x:hidden;padding-bottom:40px;-webkit-user-select:none;user-select:none}
 
 /* topbar */
@@ -155,10 +154,8 @@ body.light .pby{box-shadow:0 24px 70px rgba(15,23,42,.22)}
 .ptl{color:var(--txt);font-size:14px;font-weight:800;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
 .px{display:grid;place-items:center;width:36px;height:36px;flex:none;border:1px solid var(--br);border-radius:10px;color:var(--txt);background:var(--bg3);font-size:20px;line-height:1;cursor:pointer;transition:border-color .16s,color .16s}
 .px:hover{border-color:var(--ac);color:var(--ac)}
-.ppl{width:100%;background:#000;flex-shrink:0}
-.ppl video{width:100%;max-height:52vh;display:block;background:#000}
-.plyr--video{--plyr-color-main:#e50914;--plyr-video-background:#000}
-.plyr__control--overlaid,.plyr__control:hover{background:rgba(229,9,20,.9)!important}
+.ppl{width:100%;background:#000;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.ppl video{width:100%;height:100%;max-height:56vh;object-fit:contain;display:block;background:#000}
 .psw{padding:14px 15px 13px;background:var(--card);border-top:1px solid var(--br);display:flex;flex-direction:column;gap:12px;flex-shrink:0}
 .psw[hidden]{display:none}
 .pswb{display:flex;align-items:center;gap:11px}
@@ -169,8 +166,6 @@ body.light .pswi{background:rgba(229,9,20,.1);color:var(--ac)}
 .pswt2{color:var(--mu);font-size:12px;font-weight:500;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pswg{display:flex;flex-direction:column;gap:8px}
 .pswh{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--mu);font-size:10px;letter-spacing:1.1px;text-transform:uppercase;font-weight:900}
-.pswh span:first-child{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
-.pswh span:first-child::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--ac);display:inline-block}
 .pswh span:last-child{letter-spacing:0;text-transform:none;font-size:11px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pswr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;max-height:240px;overflow-y:auto;padding:2px 1px;scrollbar-width:thin}
 .pswr.episodes-row{grid-template-columns:repeat(auto-fill,minmax(94px,1fr));max-height:152px}
@@ -249,12 +244,12 @@ __BRAND_CSS__
       <div class="ptlbox"><div class="pkick">Now playing</div><div class="ptl" id="ptl"></div></div>
       <button type="button" class="px" aria-label="Close player" onclick="closePlayer()">&times;</button>
     </div>
-    <div class="ppl" id="ppl"><video id="pv2" playsinline controls></video></div>
+    <div class="ppl" id="ppl"><video id="pv2" controls playsinline preload="metadata"></video></div>
     <div class="psw" id="psSwitch" aria-label="Other versions in this group" hidden></div>
     <div class="pa">
       <div class="pab-row">
         <a id="dlBtn" href="#" class="pab dl">&#8595; Download</a>
-        <button type="button" onclick="copyLink()" class="pab cp">&#128279; Copy link</button>
+        <button type="button" id="cpBtn" onclick="copyLink()" class="pab cp">&#128279; Copy link</button>
         <button type="button" onclick="closePlayer()" class="pab">Close</button>
       </div>
       <span class="pnote">Playback depends on your browser's supported formats.</span>
@@ -278,7 +273,7 @@ const H={'X-Telegram-Init-Data':ID};
 let curOff=0,nextOff='',curCol='all',curPage=1;
 let searchReqId=0;
 let pMode=MediaView.media('__DEFAULT_MEDIA_MODE__'); /* 🎛️ default injected from web_assets.DEFAULT_MEDIA_MODE */
-let plyr=null,streamUrl='',playerReq=0,playerAbort=null,miniMediaFiles={};
+let streamUrl='',playerReq=0,playerAbort=null,miniMediaFiles={},miniCopyTimer=null;
 
 
 // init mode
@@ -590,37 +585,51 @@ async function miniSwitchFile(id,name,reset){
   }
 }
 function openSheet(url,title,downloadUrl,resume){
-  streamUrl=url;
+  streamUrl=downloadUrl||url;
   Q1('#ptl').textContent=title;
-  Q1('#dlBtn').href=downloadUrl;
-  if(plyr){try{plyr.destroy();}catch{}plyr=null;}
-  let c=Q1('#ppl');c.innerHTML='<video id="pv2" playsinline controls></video>';
+  Q1('#dlBtn').href=downloadUrl||url;
+  let cp=Q1('#cpBtn');if(cp)cp.textContent='🔗 Copy link';
   let video=Q1('#pv2');
+  if(!video){
+    Q1('#ppl').innerHTML='<video id="pv2" controls playsinline preload="metadata"></video>';
+    video=Q1('#pv2');
+  }
+  video.pause();
   if(resume>0.5)video.addEventListener('loadedmetadata',function(){if(isFinite(video.duration)&&video.duration>0)video.currentTime=Math.min(resume,Math.max(0,video.duration-1));},{once:true});
   video.src=url;
+  video.load();
   Q1('#playerSheet').classList.add('open');
   document.body.style.overflow='hidden';
-  if(typeof Plyr==='function'){
-    plyr=new Plyr('#pv2',{iconUrl:'https://cdn.jsdelivr.net/npm/plyr@3.8.5/dist/plyr.svg',controls:['play-large','play','progress','current-time','mute','settings','fullscreen'],settings:['speed'],autoplay:true});
-    plyr.on('enterfullscreen',()=>screen.orientation?.lock?.('landscape').catch(()=>{}));
-    plyr.on('exitfullscreen',()=>screen.orientation?.unlock?.());
-  }else{let play=video.play();if(play&&play.catch)play.catch(()=>{});}
+  let play=video.play();if(play&&play.catch)play.catch(()=>{});
 }
 function closePlayer(){
   ++playerReq;if(playerAbort){playerAbort.abort();playerAbort=null;}
   Q1('#playerSheet').classList.remove('open');
   document.body.style.overflow='';
-  if(plyr){try{plyr.pause();plyr.destroy();}catch{}plyr=null;}
   let video=Q1('#pv2');if(video){video.pause();video.removeAttribute('src');video.load();}
-  Q1('#ppl').innerHTML='<video id="pv2" playsinline controls></video>';
   miniCurrentFileId='';miniSwitchData=null;miniSwitchEpisode='';
   let box=Q1('#psSwitch');if(box){box.hidden=true;box.innerHTML='';}
 }
 Q1('#pbd').addEventListener('click',function(e){if(e.target===this)closePlayer();});
 function copyLink(){
-  navigator.clipboard.writeText(streamUrl).catch(()=>{});
-  let t=Q1('#cpToast');t.style.opacity='1';t.style.transform='translateX(-50%) translateY(0)';
-  setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(-50%) translateY(200px)';},2500);
+  let url=streamUrl?new URL(streamUrl,window.location.origin).href:'';
+  if(!url)return;
+  function done(){
+    let cp=Q1('#cpBtn');if(cp)cp.textContent='✓ Copied!';
+    clearTimeout(miniCopyTimer);
+    miniCopyTimer=setTimeout(()=>{if(cp&&cp.isConnected)cp.textContent='🔗 Copy link';},1800);
+    let t=Q1('#cpToast');t.style.opacity='1';t.style.transform='translateX(-50%) translateY(0)';
+    setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(-50%) translateY(200px)';},2500);
+  }
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(done).catch(()=>{fallback();});
+  }else{fallback();}
+  function fallback(){
+    let ta=document.createElement('textarea');ta.value=url;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');done();}catch(_){}
+    document.body.removeChild(ta);
+  }
 }
 
 function next(){if(nextOff){curPage++;doSearch(nextOff);}}
@@ -634,6 +643,5 @@ if(ID){
 
 
 </script>
-<script src="https://cdn.jsdelivr.net/npm/plyr@3.8.5/dist/plyr.min.js"></script>
 </body>
 </html>

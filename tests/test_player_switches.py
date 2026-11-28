@@ -243,10 +243,62 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Episodes & qualities", mini)
         self.assertIn("pab-row", mini)
         self.assertIn("pswc-top", mini)
+        self.assertNotIn("plyr", mini.lower())
+        self.assertIn('<video id="pv2" controls playsinline preload="metadata">', mini)
         from web.utils.render_template import watch_tmplt
-        self.assertIn("watch-card", watch_tmplt)
-        self.assertIn("watch-head", watch_tmplt)
+        self.assertIn("inline-player-card", watch_tmplt)
+        self.assertIn("inline-player-head", watch_tmplt)
+        self.assertIn("inline-player-switcher", watch_tmplt)
+        self.assertIn("Episodes & qualities", watch_tmplt)
+        self.assertIn("/api/watch/switch", watch_tmplt)
+        self.assertIn('<video id="player" controls playsinline preload="metadata">', watch_tmplt)
+        self.assertNotIn("plyr", watch_tmplt.lower())
         self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", watch_tmplt)
+
+    async def test_watch_page_embeds_and_switches_group_versions(self):
+        from types import SimpleNamespace
+        from bson import ObjectId
+        from stream_security import sign_params
+        from web.utils import render_template
+
+        await self.cols["primary"].insert_many([
+            {"_id": "f720", "file_name": "3 idiots 2009 720p mkv", "file_size": 850 * 1024 * 1024, "duration": 10267},
+            {"_id": "f1080", "file_name": "3 idiots 2009 1080p mkv", "file_size": 1400 * 1024 * 1024, "duration": 10807},
+            {"_id": "other", "file_name": "Other movie mkv", "file_size": 500 * 1024 * 1024, "duration": 5000},
+        ])
+        await self.groups.insert_one({
+            "_id": ObjectId(), "num": 1, "name": "3 idiots 2009", "group_type": "quality",
+            "members": ["f720", "f1080"],
+        })
+        signed = sign_params(555)
+        qs = dict(part.split("=", 1) for part in signed.split("&"))
+        info = SimpleNamespace(file_id="raw_tg_720", mime_type="video/mp4", file_name="3 idiots 2009 720p .mkv")
+
+        with patch.object(render_template, "get_media_info", AsyncMock(return_value=info)), \
+             patch.object(db, "unpack_new_file_id", return_value="f720"):
+            html_out = await render_template.media_watch(555, signed)
+        self.assertIn("3 idiots 2009 720p mkv", html_out)
+        self.assertIn('"fileId": "f720"', html_out)
+        self.assertIn('"file_id": "f1080"', html_out)
+        self.assertIn("Episodes & qualities", html_out)
+
+        with patch.object(api, "get_media_info", AsyncMock(return_value=info)), \
+             patch.object(api, "unpack_new_file_id", return_value="f720"), \
+             patch.object(api, "_tunnel_stream", AsyncMock(return_value="/download/777?e=1&s=sig&inline=1")) as tunnel:
+            bad_sig = await self.client.post("/api/watch/switch", json={
+                "mid": 555, "e": qs["e"], "s": "bad", "file_id": "f1080",
+            })
+            self.assertEqual(bad_sig.status, 403)
+            outside = await self.client.post("/api/watch/switch", json={
+                "mid": 555, "e": qs["e"], "s": qs["s"], "file_id": "other",
+            })
+            self.assertEqual(outside.status, 403)
+            ok = await self.client.post("/api/watch/switch", json={
+                "mid": 555, "e": qs["e"], "s": qs["s"], "file_id": "f1080",
+            })
+            self.assertEqual(ok.status, 200)
+            self.assertEqual(await ok.json(), {"url": "/download/777?e=1&s=sig&inline=1"})
+            tunnel.assert_awaited_once_with("f1080", "inline")
 
 
 if __name__ == "__main__":

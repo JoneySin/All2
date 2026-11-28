@@ -24,10 +24,11 @@ from pymongo import ReturnDocument, UpdateMany
 # कस्टमाइज्ड कोर यूटिल्स और कन्फर्म कंट्रोल्स इम्पोर्ट्स
 from utils import temp, get_size, is_premium, get_duration_str
 # ✅ SYNC: THUMBNAIL_STORAGE_CHANNEL को इम्पोर्ट किया गया है पृथक स्टोरेज के लिए
-from stream_security import sign_params, STREAM_TTL
+from stream_security import sign_params, STREAM_TTL, verify
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
-from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, group_search_cursors, get_files_by_ids, find_phrase_files, search_groups, get_groups_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media, FILE_PROJECTION, FILE_PROJECTION_SCORED, GROUP_PROJECTION, _build_regex, _strict_text_query, build_query_filter, build_actor_search_filter
+from database.ia_filterdb import COLLECTIONS, FILE_COLLECTIONS, groups, group_seq, group_search_cursors, get_files_by_ids, find_phrase_files, search_groups, get_groups_by_ids, get_search_results, get_recent_files, db as filter_db, delete_single_file, build_media_meta, doc_resolution_text, msg_media, FILE_PROJECTION, FILE_PROJECTION_SCORED, GROUP_PROJECTION, _build_regex, _strict_text_query, build_query_filter, build_actor_search_filter, unpack_new_file_id
+from web.utils.media_info import get_media_info
 from media_probe import probe_telegram_file, should_probe_media
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
@@ -2037,6 +2038,53 @@ async def api_file_switches(req):
         logger.warning("in-player switch lookup failed", exc_info=True)
         return respond({"error": "Could not load other versions. Please try again."}, status=503)
     return respond(result or {"group": None, "items": []})
+
+
+@search_routes.post("/api/watch/switch")
+async def api_watch_switch(req):
+    """Switch quality or episode inside a signed /watch/{mid} page."""
+    def respond(data, status=200):
+        return web.json_response(data, status=status, dumps=fast_json, headers={"Cache-Control": "no-store"})
+
+    try:
+        data = await req.json()
+    except Exception:
+        return respond({"error": "Invalid request."}, status=400)
+    try:
+        mid = int(data.get("mid"))
+    except (TypeError, ValueError):
+        return respond({"error": "Invalid message id."}, status=400)
+    e = data.get("e")
+    s = data.get("s")
+    target_fid = str(data.get("file_id") or "").strip()
+    if not target_fid or len(target_fid) > 200:
+        return respond({"error": "Enter a valid file."}, status=400)
+    if not verify(mid, e, s):
+        return respond({"error": "Watch link expired or invalid."}, status=403)
+    try:
+        info = await get_media_info(mid)
+        raw_fid = getattr(info, "file_id", None) if info else None
+        origin_fid = unpack_new_file_id(raw_fid) if raw_fid else None
+        if not origin_fid:
+            return respond({"error": "Original file not found."}, status=404)
+        switches = await _switches_for(origin_fid)
+        if not switches:
+            return respond({"error": "No versions available for this file."}, status=404)
+        allowed = {origin_fid}
+        for item in switches.get("items") or []:
+            if item.get("file_id"):
+                allowed.add(item["file_id"])
+        for ep in switches.get("episodes") or []:
+            for item in ep.get("items") or []:
+                if item.get("file_id"):
+                    allowed.add(item["file_id"])
+        if target_fid not in allowed:
+            return respond({"error": "Requested file is not part of this group."}, status=403)
+        url = await _tunnel_stream(target_fid, "inline")
+        return respond({"url": url})
+    except Exception as exc:
+        logger.warning("watch page switch failed", exc_info=True)
+        return respond({"error": str(exc) or "Could not switch version."}, status=503)
 
 
 # ─────────────────────────────────────────────────────────
