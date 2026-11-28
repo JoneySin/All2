@@ -211,8 +211,17 @@ class ActorSearchSyncTests(unittest.IsolatedAsyncioTestCase):
             'id="cddColWrapActor"', 'id="cddModeWrapActor"',
             'class="cdd-kicker"', 'filter-active', 'scrollActorVideoTop',
             'pickActorGF', 'pickActorCol', 'pickActorMode', 'groupHtml(', 'cardHtml(',
+            'width:100%;max-width:100%;height:auto;aspect-ratio:3/4',
+            'class="actor-tab active" aria-pressed="true"',
+            'class="actor-tab-label"',
         ):
             self.assertIn(needle, html)
+        self.assertNotIn('@media(max-width:600px){.actor-page{padding:20px 14px 50px}.actor-header-wrap{flex-direction:column;align-items:stretch;gap:18px;padding:17px;margin-bottom:20px}.avatar-box-master{width:100%;max-width:260px', html)
+
+        # Gallery badge renders count when gallery items exist
+        await self.actors.update_one({'_id': ObjectId(self.actor_id)}, {'$set': {'gallery': ['TG_ID:g1', 'TG_ID:g2']}})
+        resp2 = await self.client.get(f'/actor/{self.actor_id}')
+        self.assertIn('<span class="actor-tab-badge">2</span>', await resp2.text())
 
     async def test_actor_search_group_filters_and_collections(self):
         await self._seed_media()
