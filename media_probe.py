@@ -25,6 +25,7 @@
 """
 
 import asyncio
+from contextlib import aclosing
 import json
 import logging
 import shutil
@@ -665,15 +666,18 @@ async def fetch_file_range(client, file_ref, file_size, offset_mb, chunks_mb,
     cap = chunks_mb * 1024 * 1024
     try:
         async def _collect():
-            async for chunk in client.get_file(
+            # Kurigram 2.2.28's get_file() holds get_file_semaphore and prefetches
+            # up to 8 chunks; aclosing() releases them immediately on early break.
+            async with aclosing(client.get_file(
                 fid, file_size=file_size or 0,
                 limit=chunks_mb, offset=offset_mb,
-            ):
-                if not chunk:
-                    break
-                out.extend(chunk)
-                if len(out) >= cap:
-                    break
+            )) as chunks:
+                async for chunk in chunks:
+                    if not chunk:
+                        break
+                    out.extend(chunk)
+                    if len(out) >= cap:
+                        break
         await asyncio.wait_for(_collect(), timeout=timeout)
     except FloodWait:
         raise

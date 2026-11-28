@@ -67,7 +67,7 @@ layout still need manual checks.
 
 Telegram's Bot API supports coloured inline buttons through the optional
 `style` field (`primary`, `success`, `danger`); clients released before
-9 February 2026 ignore it. The bot runs on Kurigram 2.2.27, which exposes the
+9 February 2026 ignore it. The bot runs on Kurigram 2.2.28, which exposes the
 field natively as `InlineKeyboardButton(style=enums.ButtonStyle.X)`. All plugins
 build keyboards with `keyboards.py` (`ui_button` / `ui_keyboard`), so every
 screen gets a colour without patching third-party classes. A row of up to three

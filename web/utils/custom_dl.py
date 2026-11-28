@@ -33,8 +33,14 @@ def _sem() -> asyncio.Semaphore:
 
 
 # Network/Telegram ke temporary errors — inpar chunk dobara mangwaya jaata hai
-_RETRY_ERRORS = (asyncio.TimeoutError, OSError) + (
-    (_herr.InternalServerError,) if hasattr(_herr, "InternalServerError") else ()
+_RETRY_ERRORS = tuple(
+    err for err in (
+        asyncio.TimeoutError,
+        OSError,
+        getattr(_herr, "InternalServerError", None),
+        getattr(_herr, "ServiceUnavailable", None),
+        getattr(_herr, "BadMsgNotification", None),
+    ) if err is not None
 )
 
 
@@ -90,8 +96,12 @@ class TGCustomYield:
                     access_hash=f.chat_access_hash
                 )
             return raw.types.InputPeerPhotoFileLocation(
-                peer=peer, volume_id=f.volume_id, local_id=f.local_id,
-                big=f.thumbnail_source == ThumbnailSource.CHAT_PHOTO_BIG
+                peer=peer,
+                photo_id=f.media_id,
+                big=f.thumbnail_source in (
+                    ThumbnailSource.CHAT_PHOTO_BIG,
+                    getattr(ThumbnailSource, "CHAT_PHOTO_BIG_LEGACY", ThumbnailSource.CHAT_PHOTO_BIG),
+                ),
             )
         elif f.file_type == FileType.PHOTO:
             return raw.types.InputPhotoFileLocation(
@@ -107,21 +117,24 @@ class TGCustomYield:
     # 📦 EK CHUNK — retry + global concurrency limit
     # ─────────────────────────────────────────────────────────
     async def _get_chunk(self, ms, loc, offset, limit) -> bytes:
+        query = raw.functions.upload.GetFile(location=loc, offset=offset, limit=limit)
         for attempt in range(4):
             try:
                 async with _sem():
-                    r = await ms.send(
-                        raw.functions.upload.GetFile(location=loc, offset=offset, limit=limit)
-                    )
+                    if hasattr(ms, "invoke"):
+                        r = await ms.invoke(query, sleep_threshold=0)
+                    else:
+                        r = await ms.send(query)
                 if isinstance(r, raw.types.upload.File):
                     return r.bytes
                 logger.warning(f"GetFile unexpected response {type(r).__name__} @ {offset}")
                 return b""
             except FloodWait as e:
-                if attempt == 3 or e.value > 20:
+                wait = int(getattr(e, "value", None) or getattr(e, "seconds", 0) or 0)
+                if attempt == 3 or wait > 20:
                     raise
-                logger.warning(f"GetFile FloodWait {e.value}s @ {offset}")
-                await asyncio.sleep(e.value + 0.5)
+                logger.warning(f"GetFile FloodWait {wait}s @ {offset}")
+                await asyncio.sleep(wait + 0.5)
             except _RETRY_ERRORS as e:
                 if attempt == 3:
                     raise

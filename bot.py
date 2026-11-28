@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # ==========================================================
 from aiohttp import web
 from pyrogram import Client, types, StopPropagation, idle
-from pyrogram.errors import FloodWait
+from pyrogram.errors import FloodWait, BadMsgNotification
 from pyrogram.handlers import MessageHandler
 from web import web_app
 from web.search_api import start_group_scan, stop_group_scan
@@ -171,7 +171,7 @@ class Bot(Client):
         attempt = 0
         while True:
             attempt += 1
-            # Kurigram 2.2.27's Client.start() calls self.load_plugins() before
+            # Kurigram 2.2.28's Client.start() calls self.load_plugins() before
             # connect()/authorize() (initialize() only starts the dispatcher).
             # A retry must therefore skip plugin loading only when the dispatcher
             # actually contains handlers; otherwise re-enable plugins so a failure
@@ -199,7 +199,7 @@ class Bot(Client):
                     "Web is still up; do not redeploy repeatedly.", wait, attempt,
                 )
                 await asyncio.sleep(wait)
-            except (TimeoutError, OSError) as e:
+            except (TimeoutError, OSError, BadMsgNotification) as e:
                 detail = str(e) or repr(e)
                 # First few retries are close together, then back off to five
                 # minutes. This avoids hammering Telegram while still letting a
