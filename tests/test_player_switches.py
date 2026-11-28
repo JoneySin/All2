@@ -258,6 +258,8 @@ class SwitchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Episodes & qualities", watch_html)
         self.assertIn("/api/watch/switch", watch_html)
         self.assertIn('<video id="inlinePlayerVideo" controls playsinline preload="metadata">', watch_html)
+        self.assertIn('onclick="closeInlinePlayer()">Close</button>', watch_html)
+        self.assertNotIn('&#8592; Home', watch_html)
         self.assertNotIn("plyr", watch_html.lower())
         self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", watch_html)
 

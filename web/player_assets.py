@@ -61,21 +61,15 @@ def build_player_card_html(mode="modal", title="", src="", mime_type="video/mp4"
     is_watch = mode == "watch"
     card_cls = "inline-player-card watch-card" if is_watch else "inline-player-card"
     head_cls = "inline-player-head watch-head" if is_watch else "inline-player-head"
-    close_btn = "" if is_watch else '\n      <button type="button" class="inline-player-close" aria-label="Close player" onclick="closeInlinePlayer()">&times;</button>'
     source_tag = f'<source src="{src}" type="{mime_type}">' if is_watch and src else ""
     dl_attr = f' href="{src}"' if is_watch and src else " hidden"
     copy_attr = "" if is_watch else " hidden"
-    third_btn = (
-        '<a href="/dashboard" class="inline-player-action-btn">&#8592; Home</a>'
-        if is_watch
-        else '<button type="button" class="inline-player-action-btn" onclick="closeInlinePlayer()">Close</button>'
-    )
     return (
         f'<div class="{card_cls}">\n'
         f'    <div class="{head_cls}">\n'
         '      <span class="inline-player-mark" aria-hidden="true">&#9654;</span>\n'
-        f'      <div class="inline-player-titlebox"><div class="inline-player-kicker">Now playing</div><div id="inlinePlayerTitle" class="inline-player-title">{title}</div></div>'
-        f'{close_btn}\n'
+        f'      <div class="inline-player-titlebox"><div class="inline-player-kicker">Now playing</div><div id="inlinePlayerTitle" class="inline-player-title">{title}</div></div>\n'
+        '      <button type="button" class="inline-player-close" aria-label="Close player" onclick="closeInlinePlayer()">&times;</button>\n'
         '    </div>\n'
         f'    <div class="inline-player-screen"><video id="inlinePlayerVideo" controls playsinline preload="metadata">{source_tag}</video></div>\n'
         '    <div id="inlinePlayerStatus" class="inline-player-status" role="status" aria-live="polite"></div>\n'
@@ -84,7 +78,7 @@ def build_player_card_html(mode="modal", title="", src="", mime_type="video/mp4"
         '      <div class="inline-player-btn-row">\n'
         f'        <a id="inlinePlayerDownload" class="inline-player-download inline-player-action-btn"{dl_attr}>&#8595; Download</a>\n'
         f'        <button type="button" id="inlinePlayerCopy" class="inline-player-action-btn" onclick="inlinePlayerCopyLink()"{copy_attr}>&#128279; Copy link</button>\n'
-        f'        {third_btn}\n'
+        '        <button type="button" class="inline-player-action-btn" onclick="closeInlinePlayer()">Close</button>\n'
         '      </div>\n'
         '      <span class="inline-player-note">Playback depends on your browser\'s supported formats.</span>\n'
         '    </div>\n'
@@ -117,6 +111,21 @@ function inlinePlayerHeaders(extra){
 }
 function closeInlinePlayer(){
     var modal=document.getElementById('inlinePlayer'), video=document.getElementById('inlinePlayerVideo');
+    if(inlinePlayerWatch){
+        ++inlinePlayerRequest;
+        if(inlinePlayerAbort){inlinePlayerAbort.abort();inlinePlayerAbort=null;}
+        if(video){video.pause();video.innerHTML='';video.removeAttribute('src');video.load();}
+        if(window.Telegram&&window.Telegram.WebApp&&typeof window.Telegram.WebApp.close==='function'){
+            try{window.Telegram.WebApp.close();}catch(_){}
+        }
+        try{window.close();}catch(_){}
+        if(window.history.length>1){window.history.back();return;}
+        var card=document.querySelector('.inline-player-card.watch-card');
+        if(card){
+            card.innerHTML='<div style="padding:36px 20px;text-align:center;color:var(--text)"><div style="font-size:28px;margin-bottom:10px">✓</div><div style="font-size:16px;font-weight:800;margin-bottom:6px">Player closed</div><div style="font-size:13px;color:var(--muted);margin-bottom:16px">You can close this tab or reopen the video below.</div><button type="button" class="inline-player-action-btn" onclick="location.reload()">Reopen player</button></div>';
+        }
+        return;
+    }
     if(!modal||modal.hidden)return;
     ++inlinePlayerRequest;
     if(inlinePlayerAbort){inlinePlayerAbort.abort();inlinePlayerAbort=null;}
