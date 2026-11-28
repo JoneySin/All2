@@ -195,6 +195,10 @@ CSS = """
 .act-poster{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:transform .4s cubic-bezier(.4,0,.2,1)}
 .act-card:hover .act-poster{transform:scale(1.1)}
 .act-text-card:active{transform:scale(0.97);transition:transform .1s}
+@keyframes actorNameRedBounce{0%{transform:scale(1) translateY(0);color:var(--accent)}35%{transform:scale(1.16) translateY(-5px);color:#ff2a38;text-shadow:0 2px 14px rgba(229,9,20,.65)}70%{transform:scale(.96) translateY(1px);color:var(--accent)}100%{transform:scale(1.06) translateY(-2px);color:var(--accent)}}
+.act-card.is-opening,.act-text-card.is-opening{border-color:var(--accent)!important;box-shadow:0 0 0 2px rgba(229,9,20,.32),0 10px 26px rgba(229,9,20,.32)}
+.act-card.is-opening .act-name{color:var(--accent)!important;transform-origin:center;animation:actorNameRedBounce .22s cubic-bezier(.34,1.56,.64,1) both;will-change:transform,color}
+.act-text-card.is-opening .act-name{color:var(--accent)!important;transform-origin:left center;animation:actorNameRedBounce .22s cubic-bezier(.34,1.56,.64,1) both;will-change:transform,color}
 """
 
 JS = """
@@ -543,9 +547,37 @@ function staggerCards(container){
     },{threshold:0.08});
     cards.forEach(function(c){ obs.observe(c); });
 }
+var _prefetchedCatalog={};
+function prefetchCatalogUrl(url){
+    if(!url||_prefetchedCatalog[url])return;
+    _prefetchedCatalog[url]=1;
+    try{
+        var l=document.createElement('link');
+        l.rel='prefetch';l.as='document';l.href=url;
+        document.head.appendChild(l);
+    }catch(_){}
+}
+function openCatalogCard(el,url,ev){
+    if(!url)return;
+    if(ev&&(ev.metaKey||ev.ctrlKey||ev.shiftKey||ev.altKey||ev.button===1)){
+        window.open(url,'_blank','noopener');return;
+    }
+    if(el&&el.dataset.opening==='1')return;
+    if(el){el.dataset.opening='1';el.classList.add('is-opening');}
+    prefetchCatalogUrl(url);
+    setTimeout(function(){window.location.href=url;},180);
+}
+window.addEventListener('pageshow',function(){
+    document.querySelectorAll('.act-card.is-opening,.act-text-card.is-opening').forEach(function(c){
+        c.classList.remove('is-opening');delete c.dataset.opening;
+    });
+});
 """
 
-def _h(html): return web.Response(text=html.encode('utf-8','replace').decode('utf-8'), content_type='text/html', charset='utf-8')
+def _h(html):
+    res = web.Response(text=html.encode('utf-8','replace').decode('utf-8'), content_type='text/html', charset='utf-8')
+    res.enable_compression()
+    return res
 
 async def get_auth(req):
     s_user = req.cookies.get('user_session')

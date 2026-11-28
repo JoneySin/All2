@@ -20,8 +20,19 @@ class CatalogCardTests(unittest.TestCase):
             self.assertIn('&lt;Profile&gt;', card)
             self.assertIn('&lt;actor&gt;', card.lower())
             self.assertNotIn('<Profile>', card)
+            self.assertIn('class="act-name"', card)
+            self.assertIn('openCatalogCard(', card)
+            self.assertIn('prefetchCatalogUrl(', card)
         self.assertIn('act-text-card', render_catalog_card(item, 'actor', 'text'))
         self.assertIn('act-poster', render_catalog_card(item, 'actor', 'poster'))
+
+    def test_actor_name_bounce_css_and_gzip_helper(self):
+        from web import web_assets
+        self.assertIn('actorNameRedBounce', web_assets.CSS)
+        self.assertIn('openCatalogCard', web_assets.JS)
+        self.assertIn('prefetchCatalogUrl', web_assets.JS)
+        res = web_assets._h('<html>test</html>')
+        self.assertTrue(res.compression)
 
     def test_post_escapes_content_and_rejects_unsafe_image_url(self):
         card = render_catalog_card({'_id': 'two', 'title': '<script>', 'category': 'A&B',
